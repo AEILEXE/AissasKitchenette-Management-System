@@ -1,0 +1,13 @@
+"""
+Aissas Kitchenette POS System - Requirements
+
+Python package dependencies.
+"""
+
+# Core dependencies
+# Tkinter is built-in with Python, no need to install
+
+# Optional dependencies for enhanced features
+Pillow>=9.0.0  # For image handling
+matplotlib>=3.5.0  # For reporting and charts
+pyinstaller>=5.0.0  # For building standalone executables

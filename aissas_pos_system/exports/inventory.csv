@@ -1,0 +1,89 @@
+product_id,name,category,price,stock_qty,low_stock,active
+48,Beef Garlic Mushroom,Beef Silog,95.0,40,5,1
+50,Beef Hickory Stir Fry,Beef Silog,95.0,33,5,1
+51,Beef Shawarma,Beef Silog,95.0,40,5,1
+52,Beef Stir Fry,Beef Silog,95.0,38,5,1
+49,Beef Tapa Teriyaki,Beef Silog,95.0,40,5,1
+53,Cheesy Beef Caldereta,Beef Silog,95.0,40,5,1
+57,Biryani,Chicken Pastil/Poppers Silog,85.0,40,5,1
+58,Cheesy Teriyaki Poppers,Chicken Pastil/Poppers Silog,95.0,28,5,1
+55,Chili Garlic,Chicken Pastil/Poppers Silog,75.0,40,5,1
+60,House Gravy Poppers,Chicken Pastil/Poppers Silog,95.0,40,5,1
+59,Korean Gochujang Poppers,Chicken Pastil/Poppers Silog,95.0,40,5,1
+54,Original Pastil,Chicken Pastil/Poppers Silog,75.0,40,5,1
+56,Sweet and Chili Garlic,Chicken Pastil/Poppers Silog,85.0,40,5,1
+44,Blue Lemonade (L),Coolers,55.0,50,5,1
+43,Blue Lemonade (M),Coolers,45.0,50,5,1
+42,Blue Lemonade (S),Coolers,35.0,50,5,1
+47,Green Cucumber (L),Coolers,55.0,50,5,1
+46,Green Cucumber (M),Coolers,45.0,50,5,1
+45,Green Cucumber (S),Coolers,35.0,50,5,1
+38,Pink Lychee (L),Coolers,55.0,50,5,1
+37,Pink Lychee (M),Coolers,45.0,50,5,1
+36,Pink Lychee (S),Coolers,35.0,50,5,1
+41,Red Strawberry (L),Coolers,55.0,50,5,1
+40,Red Strawberry (M),Coolers,45.0,50,5,1
+39,Red Strawberry (S),Coolers,35.0,50,5,1
+1,Cafe Latte,Hot Coffee,40.0,50,5,1
+2,Hot Choco,Hot Coffee,65.0,50,5,1
+6,Matcha Latte,Hot Coffee,75.0,50,5,1
+4,Mochaccino,Hot Coffee,70.0,50,5,1
+5,Salted Caramel,Hot Coffee,75.0,50,5,1
+3,Spanish Latte,Hot Coffee,70.0,50,5,1
+33,Green Tea,Hot Tea,30.0,50,5,1
+35,Hibiscus Tea,Hot Tea,30.0,50,5,1
+32,Jasmine Tea,Hot Tea,30.0,50,5,1
+34,Oolong Tea,Hot Tea,30.0,50,5,1
+7,Cafe Latte,Iced Coffee,65.0,50,5,1
+13,Coffee Matcha,Iced Coffee,90.0,50,5,1
+8,Iced Choco,Iced Coffee,75.0,50,5,1
+12,Matcha Latte,Iced Coffee,85.0,50,5,1
+10,Mochaccino,Iced Coffee,80.0,50,5,1
+11,Salted Caramel,Iced Coffee,85.0,50,5,1
+9,Spanish Latte,Iced Coffee,80.0,50,5,1
+28,Cookies and Cream (L),Milktea,65.0,50,5,1
+27,Cookies and Cream (M),Milktea,55.0,50,5,1
+26,Cookies and Cream (S),Milktea,45.0,50,5,1
+16,Dark Choco (L),Milktea,65.0,50,5,1
+15,Dark Choco (M),Milktea,55.0,50,5,1
+14,Dark Choco (S),Milktea,45.0,50,5,1
+19,Matcha (L),Milktea,65.0,50,5,1
+18,Matcha (M),Milktea,55.0,50,5,1
+17,Matcha (S),Milktea,45.0,50,5,1
+22,Okinawa (L),Milktea,65.0,50,5,1
+21,Okinawa (M),Milktea,55.0,50,5,1
+20,Okinawa (S),Milktea,45.0,50,5,1
+31,Taro (L),Milktea,65.0,50,5,1
+30,Taro (M),Milktea,55.0,50,5,1
+29,Taro (S),Milktea,45.0,50,5,1
+25,Wintermelon (L),Milktea,65.0,50,5,1
+24,Wintermelon (M),Milktea,55.0,50,5,1
+23,Wintermelon (S),Milktea,45.0,50,5,1
+70,Beef Bolognese,Pasta,95.0,30,5,1
+69,Cheesy Carbonara,Pasta,90.0,30,5,1
+68,Chicken Pesto,Pasta,95.0,30,5,1
+71,Mac & Cheese,Pasta,95.0,30,5,1
+85,Big Fries,Pizza/Burrito/Pica,70.0,50,5,1
+86,Cheesy Beef Fries,Pizza/Burrito/Pica,90.0,50,5,1
+87,Cheesy Beef Hickory BBQ Fries,Pizza/Burrito/Pica,100.0,50,5,1
+88,Cheesy Chicken BBQ Poppers and Fries,Pizza/Burrito/Pica,120.0,50,5,1
+84,Regular Fries,Pizza/Burrito/Pica,50.0,50,5,1
+72,Spaghetti Bolognese with Bechamel Sauce,Premium Pasta,105.0,30,5,1
+76,Beef Burger Steak,Premium Silog,115.0,30,5,1
+75,Chicken Steak Silog,Premium Silog,110.0,30,5,1
+74,Liempo Silog,Premium Silog,120.0,30,5,1
+73,Porkchop Silog,Premium Silog,110.0,30,5,1
+78,Beef Quesadilla,Quesadilla/Sandwich,80.0,30,5,1
+82,Beef Steak Hickory Sandwich,Quesadilla/Sandwich,95.0,30,5,1
+77,Chicken Sisig Quesadilla,Quesadilla/Sandwich,80.0,30,5,1
+81,Chicken and Egg Club,Quesadilla/Sandwich,85.0,30,5,1
+80,Ham and Egg Club,Quesadilla/Sandwich,75.0,30,5,1
+83,Korean Spam Club Sandwich,Quesadilla/Sandwich,95.0,30,5,1
+79,Mexican Chicken Quesadilla,Quesadilla/Sandwich,85.0,30,5,1
+63,Bangus Sisig,Special Sisig,95.0,40,5,1
+61,Chicken Sisig,Special Sisig,90.0,40,5,1
+64,Fish Fillet Sisig,Special Sisig,95.0,40,5,1
+67,Pork Garlic Mushroom,Special Sisig,95.0,40,5,1
+62,Pork Sisig,Special Sisig,90.0,40,5,1
+65,Pork Stir Fry Hickory,Special Sisig,95.0,40,5,1
+66,Pork Tapa Teriyaki,Special Sisig,95.0,60,5,1
