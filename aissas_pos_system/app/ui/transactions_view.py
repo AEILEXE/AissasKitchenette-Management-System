@@ -258,26 +258,19 @@ class TransactionDetailsDialog(tk.Toplevel):
         try:
             data = self.orders.get_order(self.order_id)
             items = self.orders.get_order_items(self.order_id)
-            
             if not data:
                 messagebox.showerror("Receipt", "Order not found.")
                 return
-            
             # Convert sqlite3.Row to dict for ReceiptService
-            order_dict = {}
-            for key in data.keys():
-                order_dict[key] = data[key]
-            
-            # Convert items rows to dicts
-            items_list = []
-            for item in items:
-                item_dict = {}
-                for key in item.keys():
-                    item_dict[key] = item[key]
-                items_list.append(item_dict)
-            
-            # Generate receipt file
+            order_dict = {k: data[k] for k in data.keys()}
+            items_list = [{k: item[k] for k in item.keys()} for item in items]
             receipt_path = ReceiptService.generate_receipt(order_dict, items_list)
+            # Auto-open receipt file
+            opened = ReceiptService.open_file(receipt_path)
+            if not opened:
+                messagebox.showinfo("Receipt", f"Receipt saved at {receipt_path}\nCould not auto-open file.")
+        except Exception as e:
+            messagebox.showerror("Receipt", f"Failed to generate receipt: {e}")
             
             # Try to open it
             if ReceiptService.open_file(receipt_path):

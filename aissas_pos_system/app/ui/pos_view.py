@@ -72,9 +72,10 @@ class POSView(tk.Frame):
         self._img_cache: dict[str, tk.PhotoImage] = {}
 
         self._build()
-        self._refresh_categories()
+        self.search_var.set("")  # Ensure search is empty on startup
+        self.after(50, self._refresh_categories)
         self._refresh_drafts_panel()
-        self._refresh_products()
+        self.after(100, self._refresh_products)
         self._refresh_cart()
 
     # ---------------- Mousewheel helpers ----------------
@@ -154,21 +155,30 @@ class POSView(tk.Frame):
             widget.insert(0, placeholder)
             widget.config(fg=THEME["muted"])
 
+
     # ---------------- Image helpers ----------------
-    def _load_default_image(self) -> tk.PhotoImage | None:
+    def _load_default_image(self) -> object:
         key = "__default__"
         if key in self._img_cache:
             return self._img_cache[key]
 
         path = os.path.join(os.getcwd(), "product_images", "images.png")
         try:
-            img = tk.PhotoImage(file=path)
-            self._img_cache[key] = img
-            return img
+            from PIL import Image, ImageTk
+            img = Image.open(path)
+            img = img.resize((64, 64), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self._img_cache[key] = photo
+            return photo
         except Exception:
-            return None
+            try:
+                img = tk.PhotoImage(file=path)
+                self._img_cache[key] = img
+                return img
+            except Exception:
+                return None
 
-    def _load_image(self, rel_path: str | None) -> tk.PhotoImage | None:
+    def _load_image(self, rel_path: str | None) -> object:
         if not rel_path:
             return self._load_default_image()
 
@@ -178,11 +188,19 @@ class POSView(tk.Frame):
 
         abs_path = os.path.join(os.getcwd(), rel_path)
         try:
-            img = tk.PhotoImage(file=abs_path)
-            self._img_cache[key] = img
-            return img
+            from PIL import Image, ImageTk
+            img = Image.open(abs_path)
+            img = img.resize((64, 64), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self._img_cache[key] = photo
+            return photo
         except Exception:
-            return self._load_default_image()
+            try:
+                img = tk.PhotoImage(file=abs_path)
+                self._img_cache[key] = img
+                return img
+            except Exception:
+                return self._load_default_image()
 
     # ---------------- UI ----------------
     def _build(self):
@@ -190,38 +208,32 @@ class POSView(tk.Frame):
         style = ttk.Style()
         style.theme_use('clam')
         style.configure('Thick.Vertical.TScrollbar', arrowcolor=THEME["text"], troughcolor=THEME["panel"], 
-                        bordercolor=THEME["panel"], background=THEME["panel2"], darkcolor=THEME["panel2"], 
-                        lightcolor=THEME["panel2"], width=14)  # width=14 makes scrollbar thicker
+                bordercolor=THEME["panel"], background=THEME["panel2"], darkcolor=THEME["panel2"], 
+                lightcolor=THEME["panel2"], width=16)  # width=16 makes scrollbar thicker
         
         # Header title
+        # Removed POS title for vertical space
         header = tk.Frame(self, bg=THEME["bg"])
-        header.pack(fill="x", padx=18, pady=(14, 8))
-        tk.Label(
-            header,
-            text="POS",
-            bg=THEME["bg"],
-            fg=THEME["text"],
-            font=("Segoe UI", 18, "bold"),
-        ).pack(side="left")
+        header.pack(fill="x", padx=18, pady=(8, 4))
 
         body = tk.Frame(self, bg=THEME["bg"])
         body.pack(fill="both", expand=True, padx=18, pady=(0, 18))
         body.rowconfigure(0, weight=1)
 
-        body.columnconfigure(0, weight=1, minsize=140)   # categories (reduced)
-        body.columnconfigure(1, weight=8, minsize=800)   # items (expanded)
-        body.columnconfigure(2, weight=2, minsize=320)   # right
+        body.columnconfigure(0, weight=1, minsize=90)   # categories (slimmer)
+        body.columnconfigure(1, weight=8, minsize=800)
+        body.columnconfigure(2, weight=2, minsize=320)
 
         # ---------------- Left: Categories ----------------
         left = tk.Frame(body, bg=THEME["panel"])
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         tk.Label(
             left,
             text="Categories",
             bg=THEME["panel"],
             fg=THEME["text"],
-            font=("Segoe UI", 14, "bold"),
-        ).pack(anchor="w", padx=14, pady=(12, 8))
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w", padx=8, pady=(8, 4))
 
         self.cat_canvas = tk.Canvas(left, bg=THEME["panel"], highlightthickness=0)
         self.cat_canvas.pack(fill="both", expand=True, padx=14, pady=(0, 12))
@@ -260,11 +272,7 @@ class POSView(tk.Frame):
         search = tk.Entry(mid, textvariable=self.search_var, bd=0, bg=THEME["panel2"], fg=THEME["text"])
         search.pack(fill="x", padx=14, pady=(0, 10), ipady=8)
         search.bind("<KeyRelease>", lambda _e: self._refresh_products())
-        search.bind("<FocusIn>", lambda _e: self._clear_placeholder(search, "Search…"))
-        search.bind("<FocusOut>", lambda _e: self._restore_placeholder(search, "Search…"))
-        # Set initial placeholder
-        search.insert(0, "Search…")
-        search.config(fg=THEME["muted"])
+        # Remove placeholder text from Entry; visual placeholder can be added if needed
 
         self.prod_canvas = tk.Canvas(mid, bg=THEME["panel"], highlightthickness=0)
         self.prod_canvas.pack(fill="both", expand=True, padx=8, pady=(0, 10))
@@ -296,17 +304,17 @@ class POSView(tk.Frame):
         uname = u.username if u else "—"
         role = u.role.upper() if u else "—"
         user_card = tk.Frame(right, bg=THEME["panel2"])
-        user_card.pack(fill="x", padx=14, pady=(12, 10))
+        user_card.pack(fill="x", padx=14, pady=(6, 4))
         tk.Label(
             user_card, text=role,
             bg=THEME["panel2"], fg=THEME["muted"],
             font=("Segoe UI", 9, "bold")
-        ).pack(anchor="w", padx=12, pady=(10, 0))
+        ).pack(anchor="w", padx=8, pady=(4, 0))
         tk.Label(
             user_card, text=uname,
             bg=THEME["panel2"], fg=THEME["text"],
             font=("Segoe UI", 12, "bold")
-        ).pack(anchor="w", padx=12, pady=(0, 10))
+        ).pack(anchor="w", padx=8, pady=(0, 6))
 
         tk.Label(
             right, text="Draft orders",
@@ -384,7 +392,7 @@ class POSView(tk.Frame):
         ).pack(anchor="w", padx=14, pady=(8, 6))
 
         self.cart_tbl = tk.Frame(right, bg=THEME["panel2"])
-        self.cart_tbl.pack(fill="both", expand=True, padx=14, pady=(0, 10))
+        self.cart_tbl.pack(fill="both", expand=True, padx=14, pady=(0, 4))
 
         # Two-row footer: Total on top row, buttons on bottom row
         footer_top = tk.Frame(right, bg=THEME["panel"])
@@ -397,8 +405,10 @@ class POSView(tk.Frame):
         )
         self.total_lbl.pack(side="left")
 
+        # Ensure footer is always visible and not clipped
         footer_btns = tk.Frame(right, bg=THEME["panel"])
-        footer_btns.pack(fill="x", padx=14, pady=(0, 14))
+        footer_btns.pack(fill="x", padx=14, pady=(0, 12))
+        footer_btns.update_idletasks()
 
         tk.Button(
             footer_btns,
@@ -481,18 +491,22 @@ class POSView(tk.Frame):
 
     # ---------------- Products ----------------
     def _filter_products(self, search_text: str = ""):
-        if not search_text:
-            q = (self.search_var.get() or "").strip().lower()
-        else:
-            q = search_text.lower()
+        from tkinter import messagebox
+        q = (search_text or "").strip().lower()
+        # Treat whitespace and placeholder as empty
+        if not q or q in ["search", "search…"]:
+            q = ""
         cat_name = self._selected_category or "All"
-
-        if cat_name == "All":
-            rows = self.prod_dao.list_all_active()
-        else:
-            c = self.cat_dao.get_by_name(cat_name)
-            rows = self.prod_dao.list_by_category(int(c["category_id"])) if c else []
-
+        try:
+            if cat_name == "All":
+                rows = self.prod_dao.list_all_active()
+            else:
+                c = self.cat_dao.get_by_name(cat_name)
+                rows = self.prod_dao.list_by_category(int(c["category_id"])) if c else []
+        except Exception as e:
+            print("Product query failed:", e)
+            messagebox.showerror("DB Error", str(e))
+            return []
         out = []
         for r in rows:
             name = str(r["name"]).lower()
@@ -529,7 +543,14 @@ class POSView(tk.Frame):
         if rebuild_cards:
             for w in self.prod_inner.winfo_children():
                 w.destroy()
-            self._product_card_widgets = [self._product_card(self.prod_inner, r) for r in self._products_cache]
+            if not self._products_cache:
+                # Show 'No items found' label
+                lbl = tk.Label(self.prod_inner, text="No items found. Clear search or seed products.",
+                              bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 12, "bold"))
+                lbl.pack(pady=40)
+                self._product_card_widgets = []
+            else:
+                self._product_card_widgets = [self._product_card(self.prod_inner, r) for r in self._products_cache]
 
         cards = self._product_card_widgets
         cols = self._calc_product_cols()
@@ -560,21 +581,22 @@ class POSView(tk.Frame):
 
         card = tk.Frame(parent, bg=THEME["panel2"], bd=0, cursor="hand2" if is_available else "arrow")
         card.columnconfigure(1, weight=1)
-        
         # Make card clickable if available
         if is_available:
             card.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price))
-            # Change cursor on hover
             card.bind("<Enter>", lambda _e: card.config(cursor="hand2"))
             card.bind("<Leave>", lambda _e: card.config(cursor="arrow"))
-
+            # Make all child widgets clickable
+            def bind_card_click(w):
+                w.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price))
+                w.bind("<Enter>", lambda _e: card.config(cursor="hand2"))
+                w.bind("<Leave>", lambda _e: card.config(cursor="arrow"))
+            # Bind click to image, name, price, etc.
         img_frame = tk.Frame(card, bg=THEME["panel"], width=64, height=64, cursor="hand2" if is_available else "arrow")
-        img_frame.grid(row=0, column=0, rowspan=3, padx=12, pady=12, sticky="n")
+        img_frame.grid(row=0, column=0, rowspan=3, padx=8, pady=8, sticky="n")
         img_frame.grid_propagate(False)
-        
-        # Make image frame clickable too
         if is_available:
-            img_frame.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price))
+            bind_card_click(img_frame)
 
         img_rel = _row_get(r, "image_path", None)
         if not img_rel:

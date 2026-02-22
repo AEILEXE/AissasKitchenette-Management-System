@@ -4,7 +4,7 @@ import tkinter as tk
 
 from app.config import APP_NAME, APP_VERSION
 from app.db.database import Database
-from app.db.seed_menu import seed_menu
+from app.db.seed_menu import seed_menu, seed_menu_if_empty
 from app.db.seed_users import seed_admin_user
 from app.services.auth_service import AuthService
 from app.ui.app_window import AppWindow
@@ -13,7 +13,7 @@ from app.ui.app_window import AppWindow
 def init_db(db: Database) -> None:
     db.connect()
     db.initialize_schema()
-    seed_menu(db)
+    seed_menu_if_empty(db)
     seed_admin_user(db)
 
 

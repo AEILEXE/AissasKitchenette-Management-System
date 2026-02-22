@@ -178,23 +178,31 @@ class TextPromptDialog(tk.Toplevel):
         tk.Label(self, text=label, bg=THEME["panel"], fg=THEME["text"],
                  font=("Segoe UI", 10, "bold")).pack(padx=18, pady=(16, 6), anchor="w")
 
-        self.var = tk.StringVar(value=default)
-        self.entry = tk.Entry(self, textvariable=self.var, font=("Segoe UI", 11),
-                              bg=THEME["panel2"], bd=0)
-        self.entry.pack(padx=18, pady=(0, 12), fill="x", ipady=8)
-        self.entry.focus_set()
-        self.entry.select_range(0, "end")
+
+        # Reference Number label and entry
+        tk.Label(self, text="Reference Number", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 10, "bold")).pack(padx=18, pady=(16, 6), anchor="w")
+        self.ref_var = tk.StringVar(value="")
+        self.ref_entry = tk.Entry(self, textvariable=self.ref_var, font=("Segoe UI", 11), bg=THEME["panel2"], bd=0)
+        self.ref_entry.pack(padx=18, pady=(0, 12), fill="x", ipady=8)
+        self.ref_entry.focus_set()
+        self.ref_entry.select_range(0, "end")
+
+        # Amount Paid label and entry
+        tk.Label(self, text="Amount Paid", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 10, "bold")).pack(padx=18, pady=(0, 6), anchor="w")
+        self.amount_var = tk.StringVar(value="")
+        self.amount_entry = tk.Entry(self, textvariable=self.amount_var, font=("Segoe UI", 11), bg=THEME["panel2"], bd=0)
+        self.amount_entry.pack(padx=18, pady=(0, 12), fill="x", ipady=8)
 
         btns = tk.Frame(self, bg=THEME["panel"])
         btns.pack(padx=18, pady=(0, 16), fill="x")
 
         tk.Button(btns, text="Close", command=self.destroy,
-                  bg=THEME["panel2"], fg=THEME["text"], bd=0,
-                  padx=14, pady=8, cursor="hand2").pack(side="right")
+              bg=THEME["panel2"], fg=THEME["text"], bd=0,
+              padx=14, pady=8, cursor="hand2").pack(side="right")
 
         tk.Button(btns, text="Confirm", command=self._confirm,
-                  bg=THEME["brown2"], fg="white", bd=0,
-                  padx=14, pady=8, cursor="hand2").pack(side="right", padx=(0, 8))
+              bg=THEME["brown2"], fg="white", bd=0,
+              padx=14, pady=8, cursor="hand2").pack(side="right", padx=(0, 8))
 
         self.bind("<Return>", lambda e: self._confirm())
         self.bind("<Escape>", lambda e: self.destroy())
