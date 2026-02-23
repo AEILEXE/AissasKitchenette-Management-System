@@ -28,6 +28,19 @@ class TransactionsView(tk.Frame):
         self._build()
         self.refresh()
 
+    # FIX: Add placeholder helper methods
+    def _clear_placeholder(self, widget: tk.Entry, placeholder: str):
+        """Clear placeholder text when entry is focused."""
+        if widget.get() == placeholder:
+            widget.delete(0, tk.END)
+            widget.config(fg=THEME["text"])
+
+    def _restore_placeholder(self, widget: tk.Entry, placeholder: str):
+        """Restore placeholder text if entry is empty and loses focus."""
+        if widget.get() == "":
+            widget.insert(0, placeholder)
+            widget.config(fg=THEME["muted"])
+
     def _build(self):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
@@ -42,7 +55,11 @@ class TransactionsView(tk.Frame):
 
         ent = tk.Entry(filters, textvariable=self.var_search, bd=0, bg=THEME["panel2"], fg=THEME["text"])
         ent.grid(row=0, column=0, sticky="ew", ipady=8)
+        # FIX: Add placeholder behavior for search entry
         ent.insert(0, "Search by ID")
+        ent.config(fg=THEME["muted"])
+        ent.bind("<FocusIn>", lambda e: self._clear_placeholder(ent, "Search by ID"))
+        ent.bind("<FocusOut>", lambda e: self._restore_placeholder(ent, "Search by ID"))
         ent.bind("<KeyRelease>", lambda _e: self.refresh())
 
         status = ttk.Combobox(filters, textvariable=self.var_status, values=["All", "Pending", "Cancelled", "Completed"], state="readonly", width=16)
@@ -53,14 +70,26 @@ class TransactionsView(tk.Frame):
         pay.grid(row=0, column=2, padx=10)
         pay.bind("<<ComboboxSelected>>", lambda _e: self.refresh())
 
+        # FIX: Add labels for date filters
+        tk.Label(filters, text="From:", bg=THEME["bg"], fg=THEME["text"], font=("Segoe UI", 9)).grid(row=1, column=3, sticky="w", padx=(10, 0))
         ent_from = tk.Entry(filters, textvariable=self.var_from, bd=0, bg=THEME["panel2"], fg=THEME["text"], width=14)
-        ent_from.grid(row=0, column=3, padx=10, ipady=8)
+        ent_from.grid(row=2, column=3, padx=10, ipady=8)
+        # FIX: Add placeholder for date entry
         ent_from.insert(0, "YYYY-MM-DD")
+        ent_from.config(fg=THEME["muted"])
+        ent_from.bind("<FocusIn>", lambda e: self._clear_placeholder(ent_from, "YYYY-MM-DD"))
+        ent_from.bind("<FocusOut>", lambda e: self._restore_placeholder(ent_from, "YYYY-MM-DD"))
         ent_from.bind("<KeyRelease>", lambda _e: self.refresh())
 
+        # FIX: Add label for To date
+        tk.Label(filters, text="To:", bg=THEME["bg"], fg=THEME["text"], font=("Segoe UI", 9)).grid(row=1, column=4, sticky="w", padx=(10, 0))
         ent_to = tk.Entry(filters, textvariable=self.var_to, bd=0, bg=THEME["panel2"], fg=THEME["text"], width=14)
-        ent_to.grid(row=0, column=4, padx=10, ipady=8)
+        ent_to.grid(row=2, column=4, padx=10, ipady=8)
+        # FIX: Add placeholder for date entry
         ent_to.insert(0, "YYYY-MM-DD")
+        ent_to.config(fg=THEME["muted"])
+        ent_to.bind("<FocusIn>", lambda e: self._clear_placeholder(ent_to, "YYYY-MM-DD"))
+        ent_to.bind("<FocusOut>", lambda e: self._restore_placeholder(ent_to, "YYYY-MM-DD"))
         ent_to.bind("<KeyRelease>", lambda _e: self.refresh())
 
         wrap = tk.Frame(self, bg=THEME["bg"])
@@ -108,9 +137,11 @@ class TransactionsView(tk.Frame):
         for iid in self.tbl.get_children():
             self.tbl.delete(iid)
 
+        # FIX: Ignore placeholder in search
         q = self.var_search.get().replace("Search by ID", "").strip()
         status = self.var_status.get()
         payment = self.var_payment.get()
+        # FIX: Ignore placeholders in date filters
         date_from = self.var_from.get().replace("YYYY-MM-DD", "").strip()
         date_to = self.var_to.get().replace("YYYY-MM-DD", "").strip()
 
@@ -255,6 +286,7 @@ class TransactionDetailsDialog(tk.Toplevel):
 
     def _print_receipt(self):
         """Generate receipt and open it."""
+        # FIX: Clean up receipt generation and auto-open
         try:
             data = self.orders.get_order(self.order_id)
             items = self.orders.get_order_items(self.order_id)
@@ -266,17 +298,10 @@ class TransactionDetailsDialog(tk.Toplevel):
             items_list = [{k: item[k] for k in item.keys()} for item in items]
             receipt_path = ReceiptService.generate_receipt(order_dict, items_list)
             # Auto-open receipt file
-            opened = ReceiptService.open_file(receipt_path)
-            if not opened:
-                messagebox.showinfo("Receipt", f"Receipt saved at {receipt_path}\nCould not auto-open file.")
-        except Exception as e:
-            messagebox.showerror("Receipt", f"Failed to generate receipt: {e}")
-            
-            # Try to open it
             if ReceiptService.open_file(receipt_path):
                 messagebox.showinfo("Receipt", f"Receipt opened successfully.\n\nSaved to:\n{receipt_path}")
             else:
-                messagebox.showwarning("Receipt", f"Receipt generated but could not open.\n\nSaved to:\n{receipt_path}")
+                messagebox.showwarning("Receipt", f"Receipt generated but could not open automatically.\n\nSaved to:\n{receipt_path}")
         except Exception as e:
             messagebox.showerror("Receipt Error", f"Failed to generate receipt.\n\n{e}")
 
@@ -296,9 +321,21 @@ class ResolveDialog(tk.Toplevel):
         self.grab_set()
 
         self.var_ref = tk.StringVar()
-        self.var_paid = tk.StringVar()
 
         self._build()
+
+    # FIX: Add placeholder helper methods
+    def _clear_placeholder(self, widget: tk.Entry, placeholder: str):
+        """Clear placeholder text when entry is focused."""
+        if widget.get() == placeholder:
+            widget.delete(0, tk.END)
+            widget.config(fg=THEME["text"])
+
+    def _restore_placeholder(self, widget: tk.Entry, placeholder: str):
+        """Restore placeholder text if entry is empty and loses focus."""
+        if widget.get() == "":
+            widget.insert(0, placeholder)
+            widget.config(fg=THEME["muted"])
 
     def _build(self):
         tk.Label(self, text="Resolve Transaction", bg=THEME["bg"], fg=THEME["text"], font=("Segoe UI", 14, "bold")).pack(
@@ -311,11 +348,16 @@ class ResolveDialog(tk.Toplevel):
         box = tk.Frame(self, bg=THEME["panel2"])
         box.pack(fill="both", expand=True, padx=18, pady=(0, 12))
 
-        tk.Entry(box, textvariable=self.var_ref, bd=0, bg="white", fg=THEME["text"]).pack(fill="x", padx=14, pady=(14, 8), ipady=8)
+        # FIX: Add label for reference number
+        tk.Label(box, text="Reference Number:", bg=THEME["panel2"], fg=THEME["text"], font=("Segoe UI", 10)).pack(anchor="w", padx=14, pady=(14, 4))
+        ent_ref = tk.Entry(box, textvariable=self.var_ref, bd=0, bg="white", fg=THEME["text"])
+        ent_ref.pack(fill="x", padx=14, pady=(0, 14), ipady=8)
+        # FIX: Add placeholder for reference entry
+        ent_ref.insert(0, "Reference No.")
+        ent_ref.config(fg=THEME["muted"])
+        ent_ref.bind("<FocusIn>", lambda e: self._clear_placeholder(ent_ref, "Reference No."))
+        ent_ref.bind("<FocusOut>", lambda e: self._restore_placeholder(ent_ref, "Reference No."))
         self.var_ref.set("")
-
-        tk.Entry(box, textvariable=self.var_paid, bd=0, bg="white", fg=THEME["text"]).pack(fill="x", padx=14, pady=(0, 14), ipady=8)
-        self.var_paid.set("0")
 
         footer = tk.Frame(self, bg=THEME["bg"])
         footer.pack(fill="x", padx=18, pady=(0, 14))
@@ -343,11 +385,12 @@ class ResolveDialog(tk.Toplevel):
         if not ref:
             messagebox.showerror("Reference", "Reference number is required.")
             return
-        try:
-            paid = float(self.var_paid.get().strip())
-        except Exception:
-            messagebox.showerror("Amount", "Invalid amount paid.")
+        # FIX: Use existing amount_paid or order total
+        data = self.orders.get_order(self.order_id)
+        if not data:
+            messagebox.showerror("Error", "Order not found.")
             return
+        paid = float(data["amount_paid"]) if data["amount_paid"] else float(data["total"])
 
         self.orders.resolve_pending(self.order_id, ref, paid)
         if self.on_done:

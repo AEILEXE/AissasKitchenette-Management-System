@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 # ---------------- App Info ----------------
-APP_NAME = "Alissa's Kitchenette POS"
+APP_NAME = "Aissas Kitchenette"
 APP_VERSION = "1.0"
 
 # Backwards-compat aliases (some modules import these)

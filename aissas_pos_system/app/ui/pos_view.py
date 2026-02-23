@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -9,12 +10,11 @@ from app.config import THEME
 from app.db.database import Database
 from app.db.dao import CategoryDAO, ProductDAO, DraftDAO, OrderDAO
 from app.services.auth_service import AuthService
-from app.ui.dialogs import DiscountDialog, TextPromptDialog
+from app.ui.dialogs import DiscountDialog
 from app.utils import money
 
 
 def _row_get(r, key: str, default=None):
-    """Safe access for sqlite3.Row (no .get())."""
     try:
         v = r[key]
         return default if v is None else v
@@ -23,23 +23,77 @@ def _row_get(r, key: str, default=None):
 
 
 def _truncate_text(text: str, max_len: int = 20, suffix: str = "…") -> str:
-    """Truncate text with ellipsis if longer than max_len."""
     if len(text) <= max_len:
         return text
     return text[:max_len].rstrip() + suffix
 
 
+class SimpleDraftTitleDialog(tk.Toplevel):
+    def __init__(
+        self,
+        parent: tk.Widget,
+        title: str = "Save order as draft",
+        prompt: str = "Draft title (example: Table 3 / Takeout):",
+    ):
+        super().__init__(parent)
+        self.configure(bg=THEME["bg"])
+        self.title(title)
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self.result: str | None = None
+        self.var = tk.StringVar()
+
+        wrap = tk.Frame(self, bg=THEME["bg"])
+        wrap.pack(fill="both", expand=True, padx=18, pady=16)
+
+        tk.Label(wrap, text=prompt, bg=THEME["bg"], fg=THEME["text"], font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ent = tk.Entry(wrap, textvariable=self.var, bd=0, bg=THEME["panel2"], fg=THEME["text"])
+        ent.pack(fill="x", pady=(8, 14), ipady=10)
+        ent.focus_set()
+
+        btns = tk.Frame(wrap, bg=THEME["bg"])
+        btns.pack(fill="x")
+
+        tk.Button(
+            btns,
+            text="Confirm",
+            bg=THEME.get("brown", "#6b4a3a"),
+            fg="white",
+            bd=0,
+            padx=18,
+            pady=10,
+            cursor="hand2",
+            command=self._ok,
+        ).pack(side="left")
+
+        tk.Button(
+            btns,
+            text="Close",
+            bg=THEME["panel2"],
+            fg=THEME["text"],
+            bd=0,
+            padx=18,
+            pady=10,
+            cursor="hand2",
+            command=self.destroy,
+        ).pack(side="right")
+
+        self.bind("<Return>", lambda _e: self._ok(), add="+")
+        self.bind("<Escape>", lambda _e: self.destroy(), add="+")
+
+    def _ok(self):
+        val = self.var.get().strip()
+        if not val:
+            messagebox.showerror("Draft title", "Please enter a draft title.")
+            return
+        self.result = val
+        self.destroy()
+
+
 class POSView(tk.Frame):
-    """
-    POS View:
-    - Categories are buttons (compact height)
-    - Items responsive grid (2–3 per row; can fallback to 1)
-    - Mousewheel scrolling for Categories + Items + Draft list
-    - Add discount + Save draft beside Checkout
-    - Save draft clears current order, Load restores
-    - Checkout opens Confirm Order modal (Cash -> Completed, Bank/E-Wallet -> Pending)
-    - Customer Name REQUIRED always; Contact removed
-    """
+    SCROLL_SPEED_UNITS = 10
 
     def __init__(self, parent: tk.Frame, db: Database, auth: AuthService):
         super().__init__(parent, bg=THEME["bg"])
@@ -51,110 +105,139 @@ class POSView(tk.Frame):
         self.draft_dao = DraftDAO(db)
         self.order_dao = OrderDAO(db)
 
-        # cart: {product_id: (name, price, qty, note)}
         self.cart: dict[int, tuple[str, float, int, str]] = {}
-
-        self.discount_mode: str = "amount"  # amount|percent
+        self.discount_mode: str = "amount"
         self.discount_value: float = 0.0
 
         self._draft_id_by_index: list[int] = []
-
-        # categories
         self._cat_buttons: dict[str, tk.Button] = {}
         self._selected_category: str = "All"
 
-        # products responsive
         self._products_cache = []
         self._product_card_widgets: list[tk.Frame] = []
         self._prod_resize_after = None
 
-        # image cache
         self._img_cache: dict[str, tk.PhotoImage] = {}
 
+        self._scroll_targets: list[tuple[tk.Widget, tk.Canvas]] = []
+        self._scroll_enabled: dict[tk.Canvas, bool] = {}
+        self.bind_all("<MouseWheel>", self._route_mousewheel, add="+")
+
+        self._search_entry: tk.Entry | None = None
+        self._active_tooltip: tk.Toplevel | None = None
+
+        self._discount_visible = False
+
         self._build()
-        self.search_var.set("")  # Ensure search is empty on startup
+        self.search_var.set("")
         self.after(50, self._refresh_categories)
         self._refresh_drafts_panel()
         self.after(100, self._refresh_products)
         self._refresh_cart()
 
-    # ---------------- Mousewheel helpers ----------------
-    def _on_mousewheel(self, event, canvas: tk.Canvas):
-        try:
-            # Check if canvas still exists before scrolling
-            if not canvas.winfo_exists():
-                return
-            delta = -3 if event.delta > 0 else 3  # Increased from ±1 to ±3 for faster scrolling
-            canvas.yview_scroll(delta, "units")
-        except tk.TclError:
-            # Widget was destroyed, silently ignore
-            pass
-
+    # ---------------- Tooltip ----------------
     def _add_tooltip(self, widget: tk.Widget, text: str):
-        """Simple tooltip on hover."""
-        def on_enter(event):
-            tooltip = tk.Toplevel(widget)
-            tooltip.wm_overrideredirect(True)
-            tooltip.wm_geometry(f"+{event.x_root + 10}+{event.y_root + 10}")
-            label = tk.Label(tooltip, text=text, bg="#ffffe0", fg="black", padx=6, pady=3, font=("Segoe UI", 9))
-            label.pack()
-            
-            def on_leave(e):
-                tooltip.destroy()
-            
-            widget.tooltip = tooltip
-            widget.bind("<Leave>", on_leave)
-        
-        widget.bind("<Enter>", on_enter)
-
-    def _bind_mousewheel_to_canvas(self, bind_widget: tk.Widget, canvas: tk.Canvas):
-        # Windows/macOS
-        bind_widget.bind(
-            "<Enter>",
-            lambda _e: canvas.bind_all("<MouseWheel>", lambda e: self._on_mousewheel(e, canvas)),
-        )
-        bind_widget.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
-
-        # Linux - also protected against destroyed widgets
-        def _linux_scroll_up(e):
+        def _show(_e=None):
             try:
-                if canvas.winfo_exists():
-                    canvas.yview_scroll(-3, "units")
-            except tk.TclError:
+                self._hide_tooltip()
+                tip = tk.Toplevel(widget)
+                tip.wm_overrideredirect(True)
+                x = widget.winfo_pointerx() + 12
+                y = widget.winfo_pointery() + 12
+                tip.wm_geometry(f"+{x}+{y}")
+                tk.Label(
+                    tip,
+                    text=text,
+                    bg="#ffffe0",
+                    fg="black",
+                    padx=8,
+                    pady=4,
+                    font=("Segoe UI", 9),
+                    relief="solid",
+                    borderwidth=1,
+                ).pack()
+                self._active_tooltip = tip
+            except Exception:
                 pass
-        
-        def _linux_scroll_down(e):
-            try:
-                if canvas.winfo_exists():
-                    canvas.yview_scroll(3, "units")
-            except tk.TclError:
-                pass
-        
-        bind_widget.bind(
-            "<Enter>",
-            lambda _e: (
-                canvas.bind_all("<Button-4>", _linux_scroll_up),
-                canvas.bind_all("<Button-5>", _linux_scroll_down),
-            ),
-        )
-        bind_widget.bind(
-            "<Leave>",
-            lambda _e: (canvas.unbind_all("<Button-4>"), canvas.unbind_all("<Button-5>")),
-        )
 
-    # ---------------- Placeholder helpers ----------------
+        def _move(_e=None):
+            try:
+                if self._active_tooltip and self._active_tooltip.winfo_exists():
+                    x = widget.winfo_pointerx() + 12
+                    y = widget.winfo_pointery() + 12
+                    self._active_tooltip.wm_geometry(f"+{x}+{y}")
+            except Exception:
+                pass
+
+        def _hide(_e=None):
+            self._hide_tooltip()
+
+        widget.bind("<Enter>", _show, add="+")
+        widget.bind("<Motion>", _move, add="+")
+        widget.bind("<Leave>", _hide, add="+")
+
+    def _hide_tooltip(self):
+        try:
+            if self._active_tooltip and self._active_tooltip.winfo_exists():
+                self._active_tooltip.destroy()
+        except Exception:
+            pass
+        self._active_tooltip = None
+
+    # ---------------- Mousewheel routing ----------------
+    def _register_scroll_panel(self, panel_root: tk.Widget, canvas: tk.Canvas):
+        self._scroll_targets.append((panel_root, canvas))
+        self._scroll_enabled[canvas] = True
+
+    def _set_scroll_enabled(self, canvas: tk.Canvas, enabled: bool):
+        self._scroll_enabled[canvas] = bool(enabled)
+
+    def _is_descendant(self, widget: tk.Widget | None, ancestor: tk.Widget) -> bool:
+        w = widget
+        while w is not None:
+            if w is ancestor:
+                return True
+            try:
+                w = w.master  # type: ignore[attr-defined]
+            except Exception:
+                return False
+        return False
+
+    def _route_mousewheel(self, event):
+        try:
+            hovered = self.winfo_toplevel().winfo_containing(event.x_root, event.y_root)
+            if hovered is None:
+                return
+            for panel_root, canvas in self._scroll_targets:
+                if self._is_descendant(hovered, panel_root):
+                    if not canvas.winfo_exists():
+                        return
+                    if not self._scroll_enabled.get(canvas, True):
+                        return
+                    step = -1 if event.delta > 0 else 1
+                    canvas.yview_scroll(step * self.SCROLL_SPEED_UNITS, "units")
+                    return
+        except tk.TclError:
+            return
+
+    # ---------------- Search caret fix ----------------
     def _clear_placeholder(self, widget: tk.Entry, placeholder: str):
-        """Clear placeholder text when entry is focused."""
         if widget.get() == placeholder:
             widget.delete(0, tk.END)
             widget.config(fg=THEME["text"])
 
     def _restore_placeholder(self, widget: tk.Entry, placeholder: str):
-        """Restore placeholder text if entry is empty and loses focus."""
         if widget.get() == "":
             widget.insert(0, placeholder)
             widget.config(fg=THEME["muted"])
 
+    def _on_global_click(self, event):
+        if not self._search_entry or not self._search_entry.winfo_exists():
+            return
+        if event.widget is self._search_entry:
+            return
+        self.focus_set()
+        self._restore_placeholder(self._search_entry, "Search…")
 
     # ---------------- Image helpers ----------------
     def _load_default_image(self) -> object:
@@ -165,6 +248,7 @@ class POSView(tk.Frame):
         path = os.path.join(os.getcwd(), "product_images", "images.png")
         try:
             from PIL import Image, ImageTk
+
             img = Image.open(path)
             img = img.resize((64, 64), Image.LANCZOS)
             photo = ImageTk.PhotoImage(img)
@@ -189,6 +273,7 @@ class POSView(tk.Frame):
         abs_path = os.path.join(os.getcwd(), rel_path)
         try:
             from PIL import Image, ImageTk
+
             img = Image.open(abs_path)
             img = img.resize((64, 64), Image.LANCZOS)
             photo = ImageTk.PhotoImage(img)
@@ -204,247 +289,171 @@ class POSView(tk.Frame):
 
     # ---------------- UI ----------------
     def _build(self):
-        # Configure thicker scrollbar style
         style = ttk.Style()
-        style.theme_use('clam')
-        style.configure('Thick.Vertical.TScrollbar', arrowcolor=THEME["text"], troughcolor=THEME["panel"], 
-                bordercolor=THEME["panel"], background=THEME["panel2"], darkcolor=THEME["panel2"], 
-                lightcolor=THEME["panel2"], width=16)  # width=16 makes scrollbar thicker
-        
-        # Header title
-        # Removed POS title for vertical space
-        header = tk.Frame(self, bg=THEME["bg"])
-        header.pack(fill="x", padx=18, pady=(8, 4))
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+
+        style.configure(
+            "Thick.Vertical.TScrollbar",
+            troughcolor=THEME["panel"],
+            bordercolor=THEME["panel"],
+            background=THEME["panel2"],
+            darkcolor=THEME["panel2"],
+            lightcolor=THEME["panel2"],
+            arrowcolor=THEME["text"],
+            gripcount=0,
+            width=18,
+        )
 
         body = tk.Frame(self, bg=THEME["bg"])
-        body.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+        body.pack(fill="both", expand=True, padx=18, pady=(10, 18))
         body.rowconfigure(0, weight=1)
 
-        body.columnconfigure(0, weight=1, minsize=90)   # categories (slimmer)
+        body.columnconfigure(0, weight=1, minsize=90)
         body.columnconfigure(1, weight=8, minsize=800)
         body.columnconfigure(2, weight=2, minsize=320)
+
+        self.winfo_toplevel().bind("<Button-1>", self._on_global_click, add="+")
 
         # ---------------- Left: Categories ----------------
         left = tk.Frame(body, bg=THEME["panel"])
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        tk.Label(
-            left,
-            text="Categories",
-            bg=THEME["panel"],
-            fg=THEME["text"],
-            font=("Segoe UI", 12, "bold"),
-        ).pack(anchor="w", padx=8, pady=(8, 4))
+        tk.Label(left, text="Categories", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 12, "bold")).pack(
+            anchor="w", padx=8, pady=(8, 4)
+        )
 
-        self.cat_canvas = tk.Canvas(left, bg=THEME["panel"], highlightthickness=0)
-        self.cat_canvas.pack(fill="both", expand=True, padx=14, pady=(0, 12))
+        cat_panel = tk.Frame(left, bg=THEME["panel"])
+        cat_panel.pack(fill="both", expand=True, padx=10, pady=(0, 12))
+        cat_panel.rowconfigure(0, weight=1)
+        cat_panel.columnconfigure(0, weight=1)
 
-        cat_sb = ttk.Scrollbar(left, orient="vertical", command=self.cat_canvas.yview, style='Thick.Vertical.TScrollbar')
-        cat_sb.pack(side="right", fill="y")
+        self.cat_canvas = tk.Canvas(cat_panel, bg=THEME["panel"], highlightthickness=0)
+        self.cat_canvas.grid(row=0, column=0, sticky="nsew")
+
+        cat_sb = ttk.Scrollbar(cat_panel, orient="vertical", command=self.cat_canvas.yview, style="Thick.Vertical.TScrollbar")
+        cat_sb.grid(row=0, column=1, sticky="ns")
         self.cat_canvas.configure(yscrollcommand=cat_sb.set)
 
         self.cat_inner = tk.Frame(self.cat_canvas, bg=THEME["panel"])
         self._cat_window_id = self.cat_canvas.create_window((0, 0), window=self.cat_inner, anchor="nw")
-
-        self.cat_inner.bind("<Configure>", lambda _e: self.cat_canvas.configure(scrollregion=self.cat_canvas.bbox("all")))
-
-        def _cat_canvas_resize(e):
-            self.cat_canvas.itemconfigure(self._cat_window_id, width=e.width)
-
-        self.cat_canvas.bind("<Configure>", _cat_canvas_resize)
-
-        self._bind_mousewheel_to_canvas(self.cat_canvas, self.cat_canvas)
-        self._bind_mousewheel_to_canvas(self.cat_inner, self.cat_canvas)
+        self.cat_inner.bind("<Configure>", lambda _e: self.cat_canvas.configure(scrollregion=self.cat_canvas.bbox("all")), add="+")
+        self.cat_canvas.bind("<Configure>", lambda e: self.cat_canvas.itemconfigure(self._cat_window_id, width=e.width), add="+")
+        self._register_scroll_panel(cat_panel, self.cat_canvas)
 
         # ---------------- Middle: Products ----------------
         mid = tk.Frame(body, bg=THEME["panel"])
         mid.grid(row=0, column=1, sticky="nsew", padx=(0, 12))
-        mid.rowconfigure(3, weight=1)
+        mid.rowconfigure(2, weight=1)
 
-        tk.Label(
-            mid,
-            text="All Items",
-            bg=THEME["panel"],
-            fg=THEME["text"],
-            font=("Segoe UI", 14, "bold"),
-        ).pack(anchor="w", padx=14, pady=(12, 6))
+        tk.Label(mid, text="All Items", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=14, pady=(12, 6)
+        )
 
         self.search_var = tk.StringVar()
         search = tk.Entry(mid, textvariable=self.search_var, bd=0, bg=THEME["panel2"], fg=THEME["text"])
         search.pack(fill="x", padx=14, pady=(0, 10), ipady=8)
-        search.bind("<KeyRelease>", lambda _e: self._refresh_products())
-        # Remove placeholder text from Entry; visual placeholder can be added if needed
+        self._search_entry = search
 
-        self.prod_canvas = tk.Canvas(mid, bg=THEME["panel"], highlightthickness=0)
-        self.prod_canvas.pack(fill="both", expand=True, padx=8, pady=(0, 10))
+        search.insert(0, "Search…")
+        search.config(fg=THEME["muted"])
+        search.bind("<FocusIn>", lambda _e: self._clear_placeholder(search, "Search…"), add="+")
+        search.bind("<FocusOut>", lambda _e: self._restore_placeholder(search, "Search…"), add="+")
+        search.bind("<KeyRelease>", lambda _e: self._refresh_products(), add="+")
 
-        prod_sb = ttk.Scrollbar(mid, orient="vertical", command=self.prod_canvas.yview, style='Thick.Vertical.TScrollbar')
-        prod_sb.pack(side="right", fill="y")
+        prod_panel = tk.Frame(mid, bg=THEME["panel"])
+        prod_panel.pack(fill="both", expand=True, padx=8, pady=(0, 10))
+        prod_panel.rowconfigure(0, weight=1)
+        prod_panel.columnconfigure(0, weight=1)
+
+        self.prod_canvas = tk.Canvas(prod_panel, bg=THEME["panel"], highlightthickness=0)
+        self.prod_canvas.grid(row=0, column=0, sticky="nsew")
+
+        prod_sb = ttk.Scrollbar(prod_panel, orient="vertical", command=self.prod_canvas.yview, style="Thick.Vertical.TScrollbar")
+        prod_sb.grid(row=0, column=1, sticky="ns")
         self.prod_canvas.configure(yscrollcommand=prod_sb.set)
 
         self.prod_inner = tk.Frame(self.prod_canvas, bg=THEME["panel"])
         self._prod_window_id = self.prod_canvas.create_window((0, 0), window=self.prod_inner, anchor="nw")
+        self.prod_inner.bind("<Configure>", lambda _e: self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all")), add="+")
+        self.prod_canvas.bind("<Configure>", self._on_prod_canvas_configure, add="+")
+        self._register_scroll_panel(prod_panel, self.prod_canvas)
 
-        self.prod_inner.bind("<Configure>", lambda _e: self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all")))
-
-        def _prod_canvas_configure(e):
-            self.prod_canvas.itemconfigure(self._prod_window_id, width=e.width)
-            self._debounced_relayout()
-
-        self.prod_canvas.bind("<Configure>", _prod_canvas_configure)
-
-        self._bind_mousewheel_to_canvas(self.prod_canvas, self.prod_canvas)
-        self._bind_mousewheel_to_canvas(self.prod_inner, self.prod_canvas)
-
-        # ---------------- Right: Draft + Cart ----------------
+        # ---------------- Right: Cart + Drafts ----------------
         right = tk.Frame(body, bg=THEME["panel"])
         right.grid(row=0, column=2, sticky="nsew")
-        right.rowconfigure(5, weight=1)
+        right.rowconfigure(99, weight=1)
 
-        u = self.auth.get_current_user()
-        uname = u.username if u else "—"
-        role = u.role.upper() if u else "—"
-        user_card = tk.Frame(right, bg=THEME["panel2"])
-        user_card.pack(fill="x", padx=14, pady=(6, 4))
-        tk.Label(
-            user_card, text=role,
-            bg=THEME["panel2"], fg=THEME["muted"],
-            font=("Segoe UI", 9, "bold")
-        ).pack(anchor="w", padx=8, pady=(4, 0))
-        tk.Label(
-            user_card, text=uname,
-            bg=THEME["panel2"], fg=THEME["text"],
-            font=("Segoe UI", 12, "bold")
-        ).pack(anchor="w", padx=8, pady=(0, 6))
-
-        tk.Label(
-            right, text="Draft orders",
-            bg=THEME["panel"], fg=THEME["text"],
-            font=("Segoe UI", 14, "bold")
-        ).pack(anchor="w", padx=14, pady=(0, 6))
-
-        self.draft_list = tk.Listbox(
-            right,
-            height=6,
-            bd=0,
-            highlightthickness=0,
-            bg=THEME["panel2"],
-            fg=THEME["text"],
-            activestyle="none",
+        tk.Label(right, text="Current order", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 12, "bold")).pack(
+            anchor="w", padx=14, pady=(8, 6)
         )
-        self.draft_list.pack(fill="x", padx=14)
-        self.draft_list.bind("<Double-Button-1>", lambda _e: self._load_selected_draft())
 
-        # Safe scroll handlers for draft list
-        def _draft_mousewheel(e):
-            try:
-                if self.draft_list.winfo_exists():
-                    self.draft_list.yview_scroll((-3 if e.delta > 0 else 3), "units")
-            except tk.TclError:
-                pass
-        
-        def _draft_scroll_up(_e):
-            try:
-                if self.draft_list.winfo_exists():
-                    self.draft_list.yview_scroll(-3, "units")
-            except tk.TclError:
-                pass
-        
-        def _draft_scroll_down(_e):
-            try:
-                if self.draft_list.winfo_exists():
-                    self.draft_list.yview_scroll(3, "units")
-            except tk.TclError:
-                pass
+        cart_panel = tk.Frame(right, bg=THEME["panel"])
+        cart_panel.pack(fill="both", expand=True, padx=14, pady=(0, 4))
+        cart_panel.rowconfigure(0, weight=1)
+        cart_panel.columnconfigure(0, weight=1)
 
-        self.draft_list.bind("<MouseWheel>", _draft_mousewheel)
-        self.draft_list.bind("<Button-4>", _draft_scroll_up)
-        self.draft_list.bind("<Button-5>", _draft_scroll_down)
+        self.cart_canvas = tk.Canvas(cart_panel, bg=THEME["panel2"], highlightthickness=0, height=200)
+        self.cart_canvas.grid(row=0, column=0, sticky="nsew")
 
-        draft_btns = tk.Frame(right, bg=THEME["panel"])
-        draft_btns.pack(fill="x", padx=14, pady=(6, 10))
-        tk.Button(
-            draft_btns,
-            text="Load",
-            command=self._load_selected_draft,
-            bg=THEME["panel2"],
-            fg=THEME["text"],
-            bd=0,
-            padx=10,
-            pady=6,
-            cursor="hand2",
-        ).pack(side="left")
-        tk.Button(
-            draft_btns,
-            text="Delete",
-            command=self._delete_selected_draft,
-            bg=THEME["danger"],
-            fg="white",
-            bd=0,
-            padx=10,
-            pady=6,
-            cursor="hand2",
-        ).pack(side="left", padx=8)
+        cart_sb = ttk.Scrollbar(cart_panel, orient="vertical", command=self.cart_canvas.yview, style="Thick.Vertical.TScrollbar")
+        cart_sb.grid(row=0, column=1, sticky="ns")
+        self.cart_canvas.configure(yscrollcommand=cart_sb.set)
 
-        tk.Label(
-            right, text="Current order",
-            bg=THEME["panel"], fg=THEME["text"],
-            font=("Segoe UI", 12, "bold")
-        ).pack(anchor="w", padx=14, pady=(8, 6))
+        self.cart_tbl = tk.Frame(self.cart_canvas, bg=THEME["panel2"])
+        self._cart_window_id = self.cart_canvas.create_window((0, 0), window=self.cart_tbl, anchor="nw")
+        self.cart_tbl.bind("<Configure>", lambda _e: self.cart_canvas.configure(scrollregion=self.cart_canvas.bbox("all")), add="+")
+        self.cart_canvas.bind("<Configure>", lambda e: self.cart_canvas.itemconfigure(self._cart_window_id, width=e.width), add="+")
+        self._register_scroll_panel(cart_panel, self.cart_canvas)
 
-        self.cart_tbl = tk.Frame(right, bg=THEME["panel2"])
-        self.cart_tbl.pack(fill="both", expand=True, padx=14, pady=(0, 4))
-
-        # Two-row footer: Total on top row, buttons on bottom row
         footer_top = tk.Frame(right, bg=THEME["panel"])
         footer_top.pack(fill="x", padx=14, pady=(0, 6))
-        
-        self.total_lbl = tk.Label(
-            footer_top, text="Total: ₱0.00",
-            bg=THEME["panel"], fg=THEME["text"],
-            font=("Segoe UI", 12, "bold")
-        )
-        self.total_lbl.pack(side="left")
+        footer_top.columnconfigure(0, weight=1)
+        footer_top.columnconfigure(1, weight=0)
 
-        # Ensure footer is always visible and not clipped
+        self.total_lbl = tk.Label(footer_top, text="Total: ₱0.00", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 12, "bold"))
+        self.total_lbl.grid(row=0, column=0, sticky="w")
+
+        self.discount_lbl = tk.Label(footer_top, text="", bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 10, "bold"))
+
         footer_btns = tk.Frame(right, bg=THEME["panel"])
-        footer_btns.pack(fill="x", padx=14, pady=(0, 12))
-        footer_btns.update_idletasks()
+        footer_btns.pack(fill="x", padx=14, pady=(0, 10))
+        tk.Button(footer_btns, text="Add discount", command=self._add_discount, bg=THEME["panel2"], fg=THEME["text"], bd=0, padx=10, pady=8, cursor="hand2").pack(side="left", padx=(0, 5))
+        tk.Button(footer_btns, text="Save as draft", command=self._save_draft, bg=THEME.get("brown", "#6b4a3a"), fg="white", bd=0, padx=10, pady=8, cursor="hand2").pack(side="left", padx=5)
+        tk.Button(footer_btns, text="Checkout", command=self._checkout, bg=THEME["success"], fg="white", bd=0, padx=10, pady=8, cursor="hand2").pack(side="left", padx=(5, 0))
 
-        tk.Button(
-            footer_btns,
-            text="Add discount",
-            command=self._add_discount,
-            bg=THEME["panel2"],
-            fg=THEME["text"],
-            bd=0,
-            padx=10,
-            pady=8,
-            cursor="hand2",
-        ).pack(side="left", padx=(0, 5))
+        self.drafts_section = tk.Frame(right, bg=THEME["panel"])
 
-        tk.Button(
-            footer_btns,
-            text="Save as draft",
-            command=self._save_draft,
-            bg=THEME.get("brown", "#6b4a3a"),
-            fg="white",
-            bd=0,
-            padx=10,
-            pady=8,
-            cursor="hand2",
-        ).pack(side="left", padx=5)
+        tk.Label(self.drafts_section, text="Draft orders", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(6, 6))
+        self.draft_list = tk.Listbox(self.drafts_section, height=6, bd=0, highlightthickness=0, bg=THEME["panel2"], fg=THEME["text"], activestyle="none")
+        self.draft_list.pack(fill="x", padx=14)
+        self.draft_list.bind("<Double-Button-1>", lambda _e: self._load_selected_draft(), add="+")
+        self.draft_list.bind("<MouseWheel>", self._draft_mousewheel, add="+")
 
-        tk.Button(
-            footer_btns,
-            text="Checkout",
-            command=self._checkout,
-            bg=THEME["success"],
-            fg="white",
-            bd=0,
-            padx=10,
-            pady=8,
-            cursor="hand2",
-        ).pack(side="left", padx=(5, 0))
+        draft_btns = tk.Frame(self.drafts_section, bg=THEME["panel"])
+        draft_btns.pack(fill="x", padx=14, pady=(8, 12))
+        draft_btns.columnconfigure(0, weight=1, uniform="dbtn")
+        draft_btns.columnconfigure(1, weight=1, uniform="dbtn")
+        draft_btns.columnconfigure(2, weight=1, uniform="dbtn")
+
+        tk.Button(draft_btns, text="Load", command=self._load_selected_draft, bg=THEME["panel2"], fg=THEME["text"], bd=0, padx=6, pady=6, font=("Segoe UI", 9, "bold"), cursor="hand2").grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        tk.Button(draft_btns, text="Delete", command=self._delete_selected_draft, bg=THEME["danger"], fg="white", bd=0, padx=6, pady=6, font=("Segoe UI", 9, "bold"), cursor="hand2").grid(row=0, column=1, sticky="ew", padx=6)
+        tk.Button(draft_btns, text="Delete all", command=self._delete_all_drafts, bg=THEME["danger"], fg="white", bd=0, padx=6, pady=6, font=("Segoe UI", 9, "bold"), cursor="hand2").grid(row=0, column=2, sticky="ew", padx=(6, 0))
+
+    def _on_prod_canvas_configure(self, e):
+        try:
+            self.prod_canvas.itemconfigure(self._prod_window_id, width=e.width)
+        except Exception:
+            pass
+        self._debounced_relayout()
+
+    def _draft_mousewheel(self, e):
+        try:
+            step = -1 if e.delta > 0 else 1
+            self.draft_list.yview_scroll(step * self.SCROLL_SPEED_UNITS, "units")
+        except tk.TclError:
+            pass
 
     # ---------------- Categories ----------------
     def _set_active_category_btn(self, name: str) -> None:
@@ -491,9 +500,7 @@ class POSView(tk.Frame):
 
     # ---------------- Products ----------------
     def _filter_products(self, search_text: str = ""):
-        from tkinter import messagebox
         q = (search_text or "").strip().lower()
-        # Treat whitespace and placeholder as empty
         if not q or q in ["search", "search…"]:
             q = ""
         cat_name = self._selected_category or "All"
@@ -517,11 +524,7 @@ class POSView(tk.Frame):
 
     def _calc_product_cols(self) -> int:
         width = max(1, int(self.prod_canvas.winfo_width()))
-        if width >= 960:
-            return 3
-        if width >= 640:
-            return 2
-        return 1
+        return 3 if width >= 860 else 2
 
     def _debounced_relayout(self) -> None:
         if self._prod_resize_after is not None:
@@ -532,7 +535,6 @@ class POSView(tk.Frame):
         self._prod_resize_after = self.after(80, self._relayout_products)
 
     def _refresh_products(self):
-        # Get search text, ignoring placeholder
         search_text = self.search_var.get().strip()
         if search_text == "Search…":
             search_text = ""
@@ -544,19 +546,19 @@ class POSView(tk.Frame):
             for w in self.prod_inner.winfo_children():
                 w.destroy()
             if not self._products_cache:
-                # Show 'No items found' label
-                lbl = tk.Label(self.prod_inner, text="No items found. Clear search or seed products.",
-                              bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 12, "bold"))
-                lbl.pack(pady=40)
+                tk.Label(self.prod_inner, text="No items found. Clear search or seed products.", bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 12, "bold")).pack(pady=40)
                 self._product_card_widgets = []
             else:
                 self._product_card_widgets = [self._product_card(self.prod_inner, r) for r in self._products_cache]
 
         cards = self._product_card_widgets
         cols = self._calc_product_cols()
+        cols = 2 if cols < 2 else (3 if cols > 3 else cols)
 
+        for i in range(3):
+            self.prod_inner.columnconfigure(i, weight=0)
         for i in range(cols):
-            self.prod_inner.columnconfigure(i, weight=1)
+            self.prod_inner.columnconfigure(i, weight=1, uniform="prodcol")
 
         for w in cards:
             w.grid_forget()
@@ -564,7 +566,10 @@ class POSView(tk.Frame):
         for idx, card in enumerate(cards):
             row = idx // cols
             col = idx % cols
-            card.grid(row=row, column=col, sticky="ew", padx=10, pady=10)
+            card.grid(row=row, column=col, sticky="nsew", padx=6, pady=6)
+
+        for r in range((len(cards) + cols - 1) // cols):
+            self.prod_inner.rowconfigure(r, weight=1)
 
         self.prod_inner.update_idletasks()
         self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
@@ -574,82 +579,47 @@ class POSView(tk.Frame):
         name = str(r["name"])
         price = float(r["price"])
         stock = int(_row_get(r, "stock_qty", 0))
-
         is_available = stock > 0
-        avail_txt = "Available" if is_available else "Not Available"
-        avail_bg = THEME["success"] if is_available else THEME["danger"]
 
         card = tk.Frame(parent, bg=THEME["panel2"], bd=0, cursor="hand2" if is_available else "arrow")
         card.columnconfigure(1, weight=1)
-        # Make card clickable if available
+
         if is_available:
-            card.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price))
-            card.bind("<Enter>", lambda _e: card.config(cursor="hand2"))
-            card.bind("<Leave>", lambda _e: card.config(cursor="arrow"))
-            # Make all child widgets clickable
-            def bind_card_click(w):
-                w.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price))
-                w.bind("<Enter>", lambda _e: card.config(cursor="hand2"))
-                w.bind("<Leave>", lambda _e: card.config(cursor="arrow"))
-            # Bind click to image, name, price, etc.
-        img_frame = tk.Frame(card, bg=THEME["panel"], width=64, height=64, cursor="hand2" if is_available else "arrow")
-        img_frame.grid(row=0, column=0, rowspan=3, padx=8, pady=8, sticky="n")
+            card.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price), add="+")
+
+        img_frame = tk.Frame(card, bg=THEME["panel"], width=80, height=80, cursor="hand2" if is_available else "arrow")
+        img_frame.grid(row=0, column=0, rowspan=3, padx=10, pady=10, sticky="n")
         img_frame.grid_propagate(False)
-        if is_available:
-            bind_card_click(img_frame)
 
-        img_rel = _row_get(r, "image_path", None)
-        if not img_rel:
-            img_rel = os.path.join("product_images", "images.png")
-
+        img_rel = _row_get(r, "image_path", None) or os.path.join("product_images", "images.png")
         photo = self._load_image(img_rel)
         if photo:
-            lbl_img = tk.Label(img_frame, image=photo, bg=THEME["panel"], cursor="hand2" if is_available else "arrow")
+            lbl_img = tk.Label(img_frame, image=photo, bg=THEME["panel"])
             lbl_img.image = photo
             lbl_img.place(relx=0.5, rely=0.5, anchor="center")
-            if is_available:
-                lbl_img.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price))
         else:
-            txt_label = tk.Label(img_frame, text="IMG", bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 9, "bold"), cursor="hand2" if is_available else "arrow")
-            txt_label.place(relx=0.5, rely=0.5, anchor="center")
-            if is_available:
-                txt_label.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price))
+            tk.Label(img_frame, text="IMG", bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 9, "bold")).place(relx=0.5, rely=0.5, anchor="center")
 
-        # Truncate product name for display
-        display_name = _truncate_text(name, max_len=18)
-        name_lbl = tk.Label(card, text=display_name, bg=THEME["panel2"], fg=THEME["text"], font=("Segoe UI", 10, "bold"), cursor="hand2" if is_available else "arrow")
-        name_lbl.grid(row=0, column=1, sticky="w", padx=(0, 12), pady=(14, 0))
         if is_available:
-            name_lbl.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price))
-        
-        # Add tooltip with full name if truncated
-        if len(name) > 18:
+            badge = tk.Label(img_frame, text="Available", bg=THEME["success"], fg="white", font=("Segoe UI", 8, "bold"), padx=8, pady=1)
+            badge.place(relx=0.5, rely=1.0, anchor="s", y=-6)
+        else:
+            badge = tk.Label(img_frame, text="Not Available", bg=THEME["danger"], fg="white", font=("Segoe UI", 8, "bold"), padx=6, pady=1)
+            badge.place(relx=0.5, rely=1.0, anchor="s", y=-6)
+
+        display_name = _truncate_text(name, max_len=20)
+        name_lbl = tk.Label(card, text=display_name, bg=THEME["panel2"], fg=THEME["text"], font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
+        name_lbl.grid(row=0, column=1, sticky="ew", padx=(10, 12), pady=(12, 0))
+        if display_name.endswith("…"):
             self._add_tooltip(name_lbl, name)
 
-        tk.Label(card, text=money(price), bg=THEME["panel2"], fg=THEME["success"], font=("Segoe UI", 10, "bold")).grid(
-            row=1, column=1, sticky="w", padx=(0, 12), pady=(4, 0)
-        )
-
-        tk.Label(card, text=avail_txt, bg=avail_bg, fg="white", font=("Segoe UI", 8, "bold"), padx=8, pady=2).grid(
-            row=0, column=2, sticky="e", padx=12, pady=(14, 0)
-        )
+        tk.Label(card, text=money(price), bg=THEME["panel2"], fg=THEME["success"], font=("Segoe UI", 10, "bold"), anchor="w").grid(row=1, column=1, sticky="w", padx=(10, 12), pady=(4, 0))
 
         if is_available:
-            tk.Button(
-                card,
-                text="Add",
-                command=lambda: self._add_to_cart(pid, name, price),
-                bg=THEME.get("brown", "#6b4a3a"),
-                fg="white",
-                bd=0,
-                padx=10,
-                pady=6,
-                cursor="hand2",
-            ).grid(row=2, column=1, sticky="w", padx=(0, 12), pady=(8, 12))
+            tk.Button(card, text="Add", command=lambda: self._add_to_cart(pid, name, price), bg=THEME.get("brown", "#6b4a3a"), fg="white", bd=0, padx=12, pady=6, cursor="hand2").grid(row=2, column=1, sticky="w", padx=(10, 12), pady=(8, 12))
         else:
-            tk.Label(card, text="Out of stock", bg=THEME["panel2"], fg=THEME["muted"], font=("Segoe UI", 9)).grid(
-                row=2, column=1, sticky="w", padx=(0, 12), pady=(8, 12)
-            )
+            tk.Label(card, text="Out of stock", bg=THEME["panel2"], fg=THEME["muted"], font=("Segoe UI", 9)).grid(row=2, column=1, sticky="w", padx=(10, 12), pady=(8, 12))
+
         return card
 
     # ---------------- Cart ----------------
@@ -679,49 +649,142 @@ class POSView(tk.Frame):
 
     def _calc_totals(self):
         subtotal = sum(qty * price for (_n, price, qty, _note) in self.cart.values())
-
         discount = 0.0
         if self.discount_mode == "amount":
             discount = max(0.0, min(float(self.discount_value), subtotal))
         else:
             discount = max(0.0, min(100.0, float(self.discount_value))) / 100.0 * subtotal
-
         tax = 0.0
         total = max(0.0, subtotal - discount + tax)
         return subtotal, discount, tax, total
+
+    def _set_discount_next_to_total(self, text: str | None):
+        if text:
+            self.discount_lbl.configure(text=text)
+            if not self._discount_visible:
+                self.discount_lbl.grid(row=0, column=1, sticky="e")
+                self._discount_visible = True
+        else:
+            if self._discount_visible:
+                self.discount_lbl.grid_forget()
+                self._discount_visible = False
 
     def _refresh_cart(self):
         for w in self.cart_tbl.winfo_children():
             w.destroy()
 
-        hdr = tk.Frame(self.cart_tbl, bg=THEME["panel2"])
-        hdr.pack(fill="x", padx=10, pady=(10, 6))
-        tk.Label(hdr, text="Item", bg=THEME["panel2"], fg=THEME["muted"], font=("Segoe UI", 9, "bold")).pack(side="left")
-        tk.Label(hdr, text="Qty", bg=THEME["panel2"], fg=THEME["muted"], font=("Segoe UI", 9, "bold")).pack(side="left", padx=10)
-        tk.Label(hdr, text="Subtotal", bg=THEME["panel2"], fg=THEME["muted"], font=("Segoe UI", 9, "bold")).pack(side="right")
+        # ✅ tighter columns so headers aren't far apart
+        self.cart_tbl.columnconfigure(0, weight=1, minsize=90)  # item
+        self.cart_tbl.columnconfigure(1, weight=0, minsize=22)   # -
+        self.cart_tbl.columnconfigure(2, weight=0, minsize=26)   # qty
+        self.cart_tbl.columnconfigure(3, weight=0, minsize=22)   # +
+        self.cart_tbl.columnconfigure(4, weight=0, minsize=72)   # subtotal
+        self.cart_tbl.columnconfigure(5, weight=0, minsize=34)   # x
+
+        # ✅ header aligned to the same grid as items
+        tk.Label(self.cart_tbl, text="Item", bg=THEME["panel2"], fg=THEME["muted"], font=("Segoe UI", 9, "bold")).grid(
+            row=0, column=0, sticky="w", padx=(14, 6), pady=(10, 6)
+        )
+
+        # ✅ Qty centered above (- qty +)
+        tk.Label(
+            self.cart_tbl,
+            text="Qty",
+            bg=THEME["panel2"],
+            fg=THEME["muted"],
+            font=("Segoe UI", 9, "bold"),
+            anchor="center",
+        ).grid(
+            row=0,
+            column=1,
+            columnspan=3,
+            sticky="ew",
+            padx=(0, 0),
+            pady=(10, 6),
+        )
+
+        # ✅ Subtotal centered above subtotal numbers
+        tk.Label(
+            self.cart_tbl,
+            text="Subtotal",
+            bg=THEME["panel2"],
+            fg=THEME["muted"],
+            font=("Segoe UI", 9, "bold"),
+            anchor="center",
+        ).grid(
+            row=0,
+            column=4,
+            sticky="ew",
+            padx=(6, 6),
+            pady=(10, 6),
+        )
 
         if not self.cart:
-            tk.Label(self.cart_tbl, text="No items", bg=THEME["panel2"], fg=THEME["muted"]).pack(pady=20)
+            self._set_scroll_enabled(self.cart_canvas, False)
+            self._set_discount_next_to_total(None)
+            try:
+                self.cart_canvas.yview_moveto(0)
+                self.cart_canvas.configure(scrollregion=(0, 0, 0, 0))
+            except Exception:
+                pass
+            tk.Label(self.cart_tbl, text="No items", bg=THEME["panel2"], fg=THEME["muted"]).grid(row=1, column=0, columnspan=6, pady=20)
             self.total_lbl.configure(text="Total: ₱0.00")
             return
 
+        row_i = 1
         for pid, (name, price, qty, _note) in self.cart.items():
-            row = tk.Frame(self.cart_tbl, bg=THEME["panel2"])
-            row.pack(fill="x", padx=10, pady=4)
+            name_txt = _truncate_text(name, max_len=18)
+            tk.Label(self.cart_tbl, text=name_txt, bg=THEME["panel2"], fg=THEME["text"], anchor="w").grid(
+                row=row_i, column=0, sticky="ew", padx=(14, 6), pady=4
+            )
 
-            tk.Label(row, text=name, bg=THEME["panel2"], fg=THEME["text"]).pack(side="left")
+            tk.Button(self.cart_tbl, text="-", command=lambda p=pid: self._change_qty(p, -1), bg=THEME["panel"], fg=THEME["text"], bd=0, width=2).grid(
+                row=row_i, column=1, padx=2, pady=4
+            )
+            tk.Label(self.cart_tbl, text=str(qty), bg=THEME["panel2"], fg=THEME["text"], width=3, anchor="center").grid(
+                row=row_i, column=2, padx=2, pady=4
+            )
+            tk.Button(self.cart_tbl, text="+", command=lambda p=pid: self._change_qty(p, 1), bg=THEME["panel"], fg=THEME["text"], bd=0, width=2).grid(
+                row=row_i, column=3, padx=2, pady=4
+            )
 
-            qty_box = tk.Frame(row, bg=THEME["panel2"])
-            qty_box.pack(side="left", padx=10)
-            tk.Button(qty_box, text="-", command=lambda p=pid: self._change_qty(p, -1), bg=THEME["panel"], fg=THEME["text"], bd=0, width=2).pack(side="left")
-            tk.Label(qty_box, text=str(qty), bg=THEME["panel2"], fg=THEME["text"], width=3).pack(side="left")
-            tk.Button(qty_box, text="+", command=lambda p=pid: self._change_qty(p, 1), bg=THEME["panel"], fg=THEME["text"], bd=0, width=2).pack(side="left")
+            tk.Label(self.cart_tbl, text=money(qty * price), bg=THEME["panel2"], fg=THEME["text"], anchor="e").grid(
+                row=row_i, column=4, sticky="e", padx=(6, 6), pady=4
+            )
 
-            tk.Label(row, text=money(qty * price), bg=THEME["panel2"], fg=THEME["text"]).pack(side="right")
-            tk.Button(row, text="x", command=lambda p=pid: self._remove_from_cart(p), bg=THEME["danger"], fg="white", bd=0, width=2).pack(side="right", padx=(0, 10))
+            tk.Button(
+                self.cart_tbl,
+                text="x",
+                command=lambda p=pid: self._remove_from_cart(p),
+                bg=THEME["danger"],
+                fg="white",
+                bd=0,
+                width=3,
+                padx=2,
+                pady=2,
+            ).grid(row=row_i, column=5, padx=(4, 12), pady=4, sticky="e")
 
-        _subtotal, _discount, _tax, total = self._calc_totals()
+            row_i += 1
+
+        _subtotal, discount, _tax, total = self._calc_totals()
         self.total_lbl.configure(text=f"Total: {money(total)}")
+
+        if discount > 0:
+            self._set_discount_next_to_total(f"Discount: -{money(discount)}")
+        else:
+            self._set_discount_next_to_total(None)
+
+        self.cart_tbl.update_idletasks()
+        bbox = self.cart_canvas.bbox("all")
+        if bbox:
+            self.cart_canvas.configure(scrollregion=bbox)
+
+        try:
+            content_h = (bbox[3] - bbox[1]) if bbox else 0
+            canvas_h = self.cart_canvas.winfo_height()
+            self._set_scroll_enabled(self.cart_canvas, content_h > canvas_h + 2)
+        except Exception:
+            self._set_scroll_enabled(self.cart_canvas, True)
 
     # ---------------- Discount ----------------
     def _add_discount(self):
@@ -736,14 +799,24 @@ class POSView(tk.Frame):
 
     # ---------------- Drafts ----------------
     def _refresh_drafts_panel(self):
-        self.draft_list.delete(0, tk.END)
-        self._draft_id_by_index.clear()
-
         rows = self.draft_dao.list_drafts()
         if not rows:
-            self.draft_list.insert(tk.END, "There are no draft orders")
-            self._draft_id_by_index.append(-1)
+            try:
+                self.drafts_section.pack_forget()
+            except Exception:
+                pass
+            self._draft_id_by_index.clear()
+            try:
+                self.draft_list.delete(0, tk.END)
+            except Exception:
+                pass
             return
+
+        if not self.drafts_section.winfo_ismapped():
+            self.drafts_section.pack(fill="x", pady=(0, 6))
+
+        self.draft_list.delete(0, tk.END)
+        self._draft_id_by_index.clear()
 
         for r in rows:
             did = int(r["draft_id"])
@@ -767,19 +840,16 @@ class POSView(tk.Frame):
             messagebox.showinfo("Draft", "No items to save.")
             return
 
-        prompt = TextPromptDialog(self, "Save order as draft", "Draft title (example: Table 3 / Takeout):")
-        self.wait_window(prompt)
-        if not prompt.result:
+        dlg = SimpleDraftTitleDialog(self)
+        self.wait_window(dlg)
+        if not dlg.result:
             return
+        title = dlg.result.strip()
 
-        title = prompt.result.strip()
         _subtotal, _discount, _tax, total = self._calc_totals()
 
         payload = {
-            "cart": [
-                {"product_id": pid, "name": n, "price": p, "qty": q, "note": note}
-                for pid, (n, p, q, note) in self.cart.items()
-            ],
+            "cart": [{"product_id": pid, "name": n, "price": p, "qty": q, "note": note} for pid, (n, p, q, note) in self.cart.items()],
             "discount_mode": self.discount_mode,
             "discount_value": self.discount_value,
         }
@@ -823,7 +893,13 @@ class POSView(tk.Frame):
             if pid:
                 self.cart[pid] = (name, price, qty, note)
 
+        try:
+            self.draft_dao.delete_draft(did)
+        except Exception:
+            pass
+
         self._refresh_cart()
+        self._refresh_drafts_panel()
         messagebox.showinfo("Draft loaded", f"Loaded: {d['title']}")
 
     def _delete_selected_draft(self):
@@ -835,7 +911,22 @@ class POSView(tk.Frame):
         self.draft_dao.delete_draft(did)
         self._refresh_drafts_panel()
 
-    # ---------------- Checkout -> Confirm Order modal ----------------
+    def _delete_all_drafts(self):
+        rows = self.draft_dao.list_drafts()
+        if not rows:
+            messagebox.showinfo("Draft orders", "There are no drafts to delete.")
+            return
+        if not messagebox.askyesno("Delete all drafts", "Delete ALL draft orders?"):
+            return
+        try:
+            for r in rows:
+                self.draft_dao.delete_draft(int(r["draft_id"]))
+            self._refresh_drafts_panel()
+            messagebox.showinfo("Draft orders", "All drafts deleted.")
+        except Exception as e:
+            messagebox.showerror("Draft orders", f"Failed to delete all drafts.\n\n{e}")
+
+    # ---------------- Checkout ----------------
     def _checkout(self):
         if not self.cart:
             messagebox.showinfo("Checkout", "No items in order.")
@@ -852,6 +943,8 @@ class POSView(tk.Frame):
 
 
 class ConfirmOrderDialog(tk.Toplevel):
+    SCROLL_SPEED_UNITS = 10
+
     def __init__(
         self,
         parent: POSView,
@@ -874,6 +967,11 @@ class ConfirmOrderDialog(tk.Toplevel):
         self.discount_value = discount_value
         self.on_done = on_done
 
+        self.created_at = datetime.now()
+        u = self.auth.get_current_user()
+        self.created_by_role = (u.role.upper() if u else "—")
+        self.created_by_user = (u.username if u else "—")
+
         self.title("Confirm Order")
         self.configure(bg=THEME["bg"])
         self.geometry("420x620")
@@ -882,129 +980,172 @@ class ConfirmOrderDialog(tk.Toplevel):
 
         self.var_customer = tk.StringVar()
         self.var_payment = tk.StringVar(value="Cash")
-        self.var_amount_paid = tk.StringVar(value="0")
+        self.var_amount_paid = tk.StringVar(value="")
 
+        self._details_expanded = tk.BooleanVar(value=False)
+        self._details_rows: list[tuple[str, str]] = []
         self._build()
 
     def _calc_totals(self):
         subtotal = sum(qty * price for (_n, price, qty, _note) in self.cart.values())
-
         discount = 0.0
         if self.discount_mode == "amount":
             discount = max(0.0, min(float(self.discount_value), subtotal))
         else:
             discount = max(0.0, min(100.0, float(self.discount_value))) / 100.0 * subtotal
-
         tax = 0.0
         total = max(0.0, subtotal - discount + tax)
         return subtotal, discount, tax, total
 
     def _build(self):
-        # ---- Scrollable container ----
-        canvas = tk.Canvas(self, bg=THEME["bg"], highlightthickness=0)
-        canvas.pack(side="left", fill="both", expand=True)
+        wrap = tk.Frame(self, bg=THEME["bg"])
+        wrap.pack(fill="both", expand=True)
+        wrap.rowconfigure(0, weight=1)
+        wrap.columnconfigure(0, weight=1)
 
-        sb = tk.Scrollbar(self, orient="vertical", command=canvas.yview)
-        sb.pack(side="right", fill="y")
+        canvas = tk.Canvas(wrap, bg=THEME["bg"], highlightthickness=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview, style="Thick.Vertical.TScrollbar")
+        sb.grid(row=0, column=1, sticky="ns")
         canvas.configure(yscrollcommand=sb.set)
 
         inner = tk.Frame(canvas, bg=THEME["bg"])
         win = canvas.create_window((0, 0), window=inner, anchor="nw")
 
-        def _conf(_e=None):
-            canvas.configure(scrollregion=canvas.bbox("all"))
+        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")), add="+")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width), add="+")
 
-        inner.bind("<Configure>", _conf)
-        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
-
-        # mousewheel
         def _mw(e):
-            delta = -1 if e.delta > 0 else 1
-            canvas.yview_scroll(delta, "units")
-        canvas.bind_all("<MouseWheel>", _mw)
-        canvas.bind_all("<Button-4>", lambda _e: canvas.yview_scroll(-1, "units"))
-        canvas.bind_all("<Button-5>", lambda _e: canvas.yview_scroll(1, "units"))
+            step = -1 if e.delta > 0 else 1
+            canvas.yview_scroll(step * self.SCROLL_SPEED_UNITS, "units")
 
-        # ---- Header ----
+        for w in (wrap, canvas, inner, sb):
+            w.bind("<MouseWheel>", _mw, add="+")
+
         top = tk.Frame(inner, bg=THEME["bg"])
         top.pack(fill="x", padx=18, pady=(14, 10))
         tk.Label(top, text="Confirm Order", bg=THEME["bg"], fg=THEME["text"], font=("Segoe UI", 14, "bold")).pack(side="left")
         tk.Button(top, text="✕", bg=THEME["bg"], fg=THEME["muted"], bd=0, command=self.destroy).pack(side="right")
 
-        tk.Label(inner, text=f"Order created: (now)", bg=THEME["bg"], fg=THEME["muted"]).pack(anchor="w", padx=18, pady=(0, 10))
+        created_str = self.created_at.strftime("%Y-%m-%d %I:%M %p")
+        tk.Label(
+            inner,
+            text=f"Order created: {created_str}  •  By: {self.created_by_user} ({self.created_by_role})",
+            bg=THEME["bg"],
+            fg=THEME["muted"],
+        ).pack(anchor="w", padx=18, pady=(0, 10))
 
-        # ---- Order Details box ----
         box = tk.Frame(inner, bg="#ffffff", highlightthickness=1, highlightbackground="#e6e6e6")
         box.pack(fill="x", padx=18, pady=(0, 12))
 
-        tk.Label(box, text="Order Details", bg="#e9efff", fg="#2f4ea3", padx=12, pady=8, font=("Segoe UI", 10, "bold")).pack(fill="x")
+        head = tk.Frame(box, bg="#e9efff")
+        head.pack(fill="x")
+        tk.Label(head, text="Order Details", bg="#e9efff", fg="#2f4ea3", padx=12, pady=8, font=("Segoe UI", 10, "bold")).pack(side="left")
 
-        body = tk.Frame(box, bg="#ffffff")
-        body.pack(fill="x", padx=12, pady=10)
+        self.btn_toggle = tk.Button(
+            head,
+            text="▸ Show",
+            bg="#e9efff",
+            fg="#2f4ea3",
+            bd=0,
+            padx=12,
+            pady=8,
+            cursor="hand2",
+            command=self._toggle_details,
+        )
+        self.btn_toggle.pack(side="right")
 
+        self.details_body = tk.Frame(box, bg="#ffffff")
+        self.details_body.pack(fill="x", padx=12, pady=10)
+
+        self._details_rows = []
         subtotal, discount, tax, total = self._calc_totals()
+        for _pid, (name, price, qty, _note) in self.cart.items():
+            self._details_rows.append((f"{qty}x {name}", money(qty * price)))
 
-        for pid, (name, price, qty, _note) in self.cart.items():
-            r = tk.Frame(body, bg="#ffffff")
-            r.pack(fill="x", pady=4)
-            tk.Label(r, text=f"{qty}x {name}", bg="#ffffff", fg=THEME["text"]).pack(side="left")
-            tk.Label(r, text=money(qty * price), bg="#ffffff", fg=THEME["text"]).pack(side="right")
+        self._discount_amount = discount
+        self._total_amount = total
 
-        tot = tk.Frame(body, bg="#dff6ef")
-        tot.pack(fill="x", pady=(10, 0))
-        tk.Label(tot, text="Total:", bg="#dff6ef", fg=THEME["text"], padx=10, pady=8).pack(side="left")
-        tk.Label(tot, text=money(total), bg="#dff6ef", fg=THEME["text"], padx=10, pady=8, font=("Segoe UI", 10, "bold")).pack(side="right")
+        self._render_details()
 
-        # ---- Customer name REQUIRED ----
         tk.Label(inner, text="Customer Name (required)", bg=THEME["bg"], fg=THEME["muted"]).pack(anchor="w", padx=18, pady=(8, 6))
         ent_name = tk.Entry(inner, textvariable=self.var_customer, bd=0, bg="#ffffff", fg=THEME["text"])
         ent_name.pack(fill="x", padx=18, ipady=10)
         ent_name.focus_set()
 
-        # ---- Payment method ----
         tk.Label(inner, text="Payment Method", bg=THEME["bg"], fg=THEME["muted"]).pack(anchor="w", padx=18, pady=(12, 6))
-
         pm = tk.Frame(inner, bg=THEME["bg"])
         pm.pack(fill="x", padx=18)
-
-        rb1 = tk.Radiobutton(pm, text="Cash", value="Cash", variable=self.var_payment, bg=THEME["bg"])
-        rb1.pack(anchor="w")
-        rb2 = tk.Radiobutton(pm, text="Bank Transfer/E-Wallet", value="Bank/E-Wallet", variable=self.var_payment, bg=THEME["bg"])
-        rb2.pack(anchor="w")
+        tk.Radiobutton(pm, text="Cash", value="Cash", variable=self.var_payment, bg=THEME["bg"]).pack(anchor="w")
+        tk.Radiobutton(pm, text="Bank Transfer/E-Wallet", value="Bank/E-Wallet", variable=self.var_payment, bg=THEME["bg"]).pack(anchor="w")
 
         tk.Label(inner, text="Amount Paid", bg=THEME["bg"], fg=THEME["muted"]).pack(anchor="w", padx=18, pady=(10, 6))
-        tk.Entry(inner, textvariable=self.var_amount_paid, bd=0, bg="#ffffff", fg=THEME["text"]).pack(fill="x", padx=18, ipady=10)
+        ent_paid = tk.Entry(inner, textvariable=self.var_amount_paid, bd=0, bg="#ffffff", fg=THEME["text"])
+        ent_paid.pack(fill="x", padx=18, ipady=10)
 
-        # ---- Footer buttons ----
         footer = tk.Frame(inner, bg=THEME["bg"])
         footer.pack(fill="x", padx=18, pady=18)
 
         tk.Button(
-            footer, text="Cancel",
-            bg=THEME["danger"], fg="white", bd=0, padx=14, pady=10, cursor="hand2",
-            command=self.destroy
+            footer,
+            text="Cancel",
+            bg=THEME["danger"],
+            fg="white",
+            bd=0,
+            padx=14,
+            pady=10,
+            cursor="hand2",
+            command=self.destroy,
         ).pack(side="left")
 
-        # Dropdown arrow for "Save as draft"
-        arrow = tk.Menubutton(
-            footer, text="▾",
-            bg="#d3a24a", fg="white", bd=0, padx=10, pady=10, cursor="hand2"
-        )
-        m = tk.Menu(arrow, tearoff=0)
-        m.add_command(label="Save as draft", command=self._save_as_draft)
-        arrow.configure(menu=m)
-        arrow.pack(side="right")
-
         self.btn_confirm = tk.Button(
-            footer, text="Confirm Checkout",
-            bg=THEME["success"], fg="white", bd=0, padx=14, pady=10, cursor="hand2",
-            command=self._confirm
+            footer,
+            text="Confirm Checkout",
+            bg=THEME["success"],
+            fg="white",
+            bd=0,
+            padx=14,
+            pady=10,
+            cursor="hand2",
+            command=self._confirm,
         )
-        self.btn_confirm.pack(side="right", padx=(0, 10))
+        self.btn_confirm.pack(side="right")
 
-        # change label based on payment
         self.var_payment.trace_add("write", lambda *_: self._update_confirm_text())
         self._update_confirm_text()
+
+    def _toggle_details(self):
+        self._details_expanded.set(not self._details_expanded.get())
+        self._render_details()
+
+    def _render_details(self):
+        for w in self.details_body.winfo_children():
+            w.destroy()
+
+        expanded = self._details_expanded.get()
+        self.btn_toggle.configure(text="▾ Hide" if expanded else "▸ Show")
+
+        rows = self._details_rows if expanded else self._details_rows[:5]
+        for left_text, right_text in rows:
+            r = tk.Frame(self.details_body, bg="#ffffff")
+            r.pack(fill="x", pady=4)
+            tk.Label(r, text=left_text, bg="#ffffff", fg=THEME["text"]).pack(side="left")
+            tk.Label(r, text=right_text, bg="#ffffff", fg=THEME["text"]).pack(side="right")
+
+        if not expanded and len(self._details_rows) > 5:
+            tk.Label(self.details_body, text=f"+ {len(self._details_rows) - 5} more items", bg="#ffffff", fg=THEME["muted"]).pack(anchor="w", pady=(6, 0))
+
+        if self._discount_amount > 0:
+            drow = tk.Frame(self.details_body, bg="#ffffff")
+            drow.pack(fill="x", pady=(10, 0))
+            tk.Label(drow, text="Discount", bg="#ffffff", fg=THEME["muted"]).pack(side="left")
+            tk.Label(drow, text=f"-{money(self._discount_amount)}", bg="#ffffff", fg=THEME["muted"]).pack(side="right")
+
+        tot = tk.Frame(self.details_body, bg="#dff6ef")
+        tot.pack(fill="x", pady=(10, 0))
+        tk.Label(tot, text="Total:", bg="#dff6ef", fg=THEME["text"], padx=10, pady=8).pack(side="left")
+        tk.Label(tot, text=money(self._total_amount), bg="#dff6ef", fg=THEME["text"], padx=10, pady=8, font=("Segoe UI", 10, "bold")).pack(side="right")
 
     def _update_confirm_text(self):
         if self.var_payment.get() == "Bank/E-Wallet":
@@ -1012,51 +1153,25 @@ class ConfirmOrderDialog(tk.Toplevel):
         else:
             self.btn_confirm.configure(text="Confirm Checkout", bg=THEME["success"])
 
-    def _save_as_draft(self):
-        # ask title
-        prompt = TextPromptDialog(self, "Save order as draft", "Draft title (example: Table 3 / Takeout):")
-        self.wait_window(prompt)
-        if not prompt.result:
-            return
-
-        title = prompt.result.strip()
-        _subtotal, _discount, _tax, total = self._calc_totals()
-
-        payload = {
-            "cart": [
-                {"product_id": pid, "name": n, "price": p, "qty": q, "note": note}
-                for pid, (n, p, q, note) in self.cart.items()
-            ],
-            "discount_mode": self.discount_mode,
-            "discount_value": self.discount_value,
-        }
-        try:
-            self.draft_dao.create_draft(title=title, payload=payload, total=total)
-            messagebox.showinfo("Draft saved", f"Draft saved: {title}")
-            if self.on_done:
-                self.on_done(True)
-            self.destroy()
-        except Exception as e:
-            messagebox.showerror("Draft Error", f"Failed to save draft.\n\n{e}")
-
     def _confirm(self):
         customer = self.var_customer.get().strip()
         if not customer:
             messagebox.showerror("Customer Name", "Customer name is required.")
             return
 
+        paid_str = self.var_amount_paid.get().strip()
+        if paid_str == "":
+            paid_str = "0"
         try:
-            paid = float(self.var_amount_paid.get().strip())
+            paid = float(paid_str)
         except Exception:
             messagebox.showerror("Amount Paid", "Invalid amount paid.")
             return
 
         subtotal, discount, tax, total = self._calc_totals()
-
         payment = self.var_payment.get()
         status = "Pending" if payment == "Bank/E-Wallet" else "Completed"
 
-        # Cash rules: must be >= total
         if payment == "Cash" and paid < total:
             messagebox.showerror("Cash", f"Amount paid must be at least {money(total)}.")
             return
@@ -1064,7 +1179,6 @@ class ConfirmOrderDialog(tk.Toplevel):
         change = max(0.0, paid - total) if payment == "Cash" else 0.0
         cash_received = paid if payment == "Cash" else 0.0
 
-        # cashier
         u = self.auth.get_current_user()
         cashier_id = u.user_id if u else 0
 
