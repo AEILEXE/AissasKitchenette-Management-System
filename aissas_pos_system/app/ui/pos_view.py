@@ -574,6 +574,7 @@ class POSView(tk.Frame):
         self.prod_inner.update_idletasks()
         self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
 
+    # ✅ UPDATED: picture and layout centering
     def _product_card(self, parent: tk.Widget, r) -> tk.Frame:
         pid = int(r["product_id"])
         name = str(r["name"])
@@ -583,12 +584,17 @@ class POSView(tk.Frame):
 
         card = tk.Frame(parent, bg=THEME["panel2"], bd=0, cursor="hand2" if is_available else "arrow")
         card.columnconfigure(1, weight=1)
+        # (optional but helps the "center feel")
+        card.rowconfigure(0, weight=1)
+        card.rowconfigure(1, weight=1)
+        card.rowconfigure(2, weight=1)
 
         if is_available:
             card.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price), add="+")
 
         img_frame = tk.Frame(card, bg=THEME["panel"], width=80, height=80, cursor="hand2" if is_available else "arrow")
-        img_frame.grid(row=0, column=0, rowspan=3, padx=10, pady=10, sticky="n")
+        # ✅ removed sticky="n" so it doesn't sit too high; looks more centered
+        img_frame.grid(row=0, column=0, rowspan=3, padx=10, pady=10)
         img_frame.grid_propagate(False)
 
         img_rel = _row_get(r, "image_path", None) or os.path.join("product_images", "images.png")
@@ -673,20 +679,17 @@ class POSView(tk.Frame):
         for w in self.cart_tbl.winfo_children():
             w.destroy()
 
-        # ✅ tighter columns so headers aren't far apart
         self.cart_tbl.columnconfigure(0, weight=1, minsize=95)  # item
-        self.cart_tbl.columnconfigure(1, weight=0, minsize=22)   # -
-        self.cart_tbl.columnconfigure(2, weight=0, minsize=26)   # qty
-        self.cart_tbl.columnconfigure(3, weight=0, minsize=22)   # +
-        self.cart_tbl.columnconfigure(4, weight=0, minsize=20)   # subtotal
-        self.cart_tbl.columnconfigure(5, weight=0, minsize=30)   # x
+        self.cart_tbl.columnconfigure(1, weight=0, minsize=22)  # -
+        self.cart_tbl.columnconfigure(2, weight=0, minsize=26)  # qty
+        self.cart_tbl.columnconfigure(3, weight=0, minsize=22)  # +
+        self.cart_tbl.columnconfigure(4, weight=0, minsize=20)  # subtotal
+        self.cart_tbl.columnconfigure(5, weight=0, minsize=30)  # x
 
-        # ✅ header aligned to the same grid as items
         tk.Label(self.cart_tbl, text="Item", bg=THEME["panel2"], fg=THEME["muted"], font=("Segoe UI", 9, "bold")).grid(
             row=0, column=0, sticky="w", padx=(14, 6), pady=(10, 6)
         )
 
-        # ✅ Qty centered above (- qty +)
         tk.Label(
             self.cart_tbl,
             text="Qty",
@@ -703,7 +706,6 @@ class POSView(tk.Frame):
             pady=(10, 6),
         )
 
-        # ✅ Subtotal centered above subtotal numbers
         tk.Label(
             self.cart_tbl,
             text="Subtotal",
@@ -997,6 +999,7 @@ class ConfirmOrderDialog(tk.Toplevel):
         total = max(0.0, subtotal - discount + tax)
         return subtotal, discount, tax, total
 
+    # ✅ UPDATED: mousewheel scroll works anywhere inside dialog
     def _build(self):
         wrap = tk.Frame(self, bg=THEME["bg"])
         wrap.pack(fill="both", expand=True)
@@ -1019,9 +1022,13 @@ class ConfirmOrderDialog(tk.Toplevel):
         def _mw(e):
             step = -1 if e.delta > 0 else 1
             canvas.yview_scroll(step * self.SCROLL_SPEED_UNITS, "units")
+            return "break"
 
-        for w in (wrap, canvas, inner, sb):
-            w.bind("<MouseWheel>", _mw, add="+")
+        # ✅ bind to the dialog (so it works even when mouse is over Entry/Radiobutton/etc.)
+        self.bind("<MouseWheel>", _mw, add="+")
+        # ✅ Linux support
+        self.bind("<Button-4>", lambda _e: (canvas.yview_scroll(-self.SCROLL_SPEED_UNITS, "units"), "break"), add="+")
+        self.bind("<Button-5>", lambda _e: (canvas.yview_scroll(self.SCROLL_SPEED_UNITS, "units"), "break"), add="+")
 
         top = tk.Frame(inner, bg=THEME["bg"])
         top.pack(fill="x", padx=18, pady=(14, 10))
