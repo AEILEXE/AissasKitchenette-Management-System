@@ -674,12 +674,12 @@ class POSView(tk.Frame):
             w.destroy()
 
         # ✅ tighter columns so headers aren't far apart
-        self.cart_tbl.columnconfigure(0, weight=1, minsize=90)  # item
+        self.cart_tbl.columnconfigure(0, weight=1, minsize=95)  # item
         self.cart_tbl.columnconfigure(1, weight=0, minsize=22)   # -
         self.cart_tbl.columnconfigure(2, weight=0, minsize=26)   # qty
         self.cart_tbl.columnconfigure(3, weight=0, minsize=22)   # +
-        self.cart_tbl.columnconfigure(4, weight=0, minsize=72)   # subtotal
-        self.cart_tbl.columnconfigure(5, weight=0, minsize=34)   # x
+        self.cart_tbl.columnconfigure(4, weight=0, minsize=20)   # subtotal
+        self.cart_tbl.columnconfigure(5, weight=0, minsize=30)   # x
 
         # ✅ header aligned to the same grid as items
         tk.Label(self.cart_tbl, text="Item", bg=THEME["panel2"], fg=THEME["muted"], font=("Segoe UI", 9, "bold")).grid(
