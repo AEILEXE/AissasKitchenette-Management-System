@@ -9,6 +9,7 @@ from app.db.database import Database
 from app.db.dao import OrderDAO, DraftDAO
 from app.services.auth_service import AuthService
 from app.services.receipt_service import ReceiptService
+from app.ui import ui_scale
 from app.utils import money
 
 # --- Offline calendar picker (tkcalendar) ---
@@ -552,6 +553,9 @@ class TransactionDetailsDialog(tk.Toplevel):
         self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _build(self):
+        f  = ui_scale.scale_font
+        sp = ui_scale.s
+
         data = self.orders.get_order(self.order_id)
         if not data:
             messagebox.showerror("Not found", "Transaction not found.")
@@ -560,6 +564,7 @@ class TransactionDetailsDialog(tk.Toplevel):
 
         items = self.orders.get_order_items(self.order_id)
 
+        # ── Scrollable shell ──────────────────────────────────────────────────
         wrap = tk.Frame(self, bg=THEME["bg"])
         wrap.pack(fill="both", expand=True)
         wrap.rowconfigure(0, weight=1)
@@ -575,8 +580,16 @@ class TransactionDetailsDialog(tk.Toplevel):
         self.inner = tk.Frame(self.canvas, bg=THEME["bg"])
         win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
 
-        self.inner.bind("<Configure>", lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")), add="+")
-        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(win, width=e.width), add="+")
+        self.inner.bind(
+            "<Configure>",
+            lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+            add="+",
+        )
+        self.canvas.bind(
+            "<Configure>",
+            lambda e: self.canvas.itemconfigure(win, width=e.width),
+            add="+",
+        )
 
         def _mw(e):
             try:
@@ -587,30 +600,78 @@ class TransactionDetailsDialog(tk.Toplevel):
 
         for w in (self, wrap, self.canvas, self.inner):
             w.bind("<MouseWheel>", _mw, add="+")
-            w.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-self.SCROLL_SPEED_UNITS, "units"), add="+")
-            w.bind("<Button-5>", lambda e: self.canvas.yview_scroll(self.SCROLL_SPEED_UNITS, "units"), add="+")
+            w.bind("<Button-4>",
+                   lambda e: self.canvas.yview_scroll(-self.SCROLL_SPEED_UNITS, "units"), add="+")
+            w.bind("<Button-5>",
+                   lambda e: self.canvas.yview_scroll(self.SCROLL_SPEED_UNITS, "units"), add="+")
 
+        # ── Title row ─────────────────────────────────────────────────────────
         top = tk.Frame(self.inner, bg=THEME["bg"])
-        top.pack(fill="x", padx=18, pady=(14, 6))
-        tk.Label(top, text="Transaction Details", bg=THEME["bg"], fg=THEME["text"], font=("Segoe UI", 14, "bold")).pack(side="left")
+        top.pack(fill="x", padx=18, pady=(16, 8))
 
+        tk.Label(
+            top, text="Transaction Details",
+            bg=THEME["bg"], fg=THEME["text"],
+            font=("Segoe UI", f(15), "bold"),
+        ).pack(side="left")
+
+        # Pill-style status badge
         status = str(data["status"])
-        badge_bg = THEME["success"] if status == "Completed" else (THEME["danger"] if status == "Cancelled" else "#f0ad4e")
-        tk.Label(top, text=status, bg=badge_bg, fg="white", font=("Segoe UI", 9, "bold"), padx=10, pady=2).pack(side="right")
+        badge_bg = (
+            THEME["success"] if status == "Completed" else
+            THEME["danger"]  if status == "Cancelled" else
+            "#d97706"
+        )
+        tk.Label(
+            top, text=f"  {status}  ",
+            bg=badge_bg, fg="white",
+            font=("Segoe UI", f(9), "bold"),
+            padx=sp(6), pady=sp(3),
+        ).pack(side="right")
 
-        body = tk.Frame(self.inner, bg=THEME["panel2"])
-        body.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+        # ── Info card ─────────────────────────────────────────────────────────
+        info_card = tk.Frame(
+            self.inner, bg=THEME["panel"],
+            highlightthickness=1, highlightbackground=THEME["border"],
+        )
+        info_card.pack(fill="x", padx=18, pady=(0, 10))
 
-        def line(lbl, val):
-            row = tk.Frame(body, bg=THEME["panel2"])
-            row.pack(fill="x", padx=14, pady=6)
-            tk.Label(row, text=lbl, bg=THEME["panel2"], fg=THEME["muted"], width=18, anchor="w").pack(side="left")
-            tk.Label(row, text=val, bg=THEME["panel2"], fg=THEME["text"], anchor="w").pack(side="left")
+        # Card title strip
+        card_hdr = tk.Frame(info_card, bg=THEME["beige"])
+        card_hdr.pack(fill="x")
+        tk.Label(
+            card_hdr, text="Order Information",
+            bg=THEME["beige"], fg=THEME["text"],
+            font=("Segoe UI", f(9), "bold"),
+            padx=14, pady=8,
+        ).pack(side="left")
+        tk.Label(
+            card_hdr, text=f"#{self.order_id}",
+            bg=THEME["beige"], fg=THEME["muted"],
+            font=("Segoe UI", f(9)),
+            padx=14,
+        ).pack(side="right")
 
-        line("Order Start:", str(data["start_dt"]))
-        line("Order End:", str(data["end_dt"]))
-        line("Customer Name:", str(data["customer_name"]))
-        line("Payment Method:", str(data["payment_method"]))
+        def info_line(label: str, value: str, bold_val: bool = False):
+            row = tk.Frame(info_card, bg=THEME["panel"])
+            row.pack(fill="x", padx=14, pady=sp(5))
+            tk.Label(
+                row, text=label,
+                bg=THEME["panel"], fg=THEME["muted"],
+                font=("Segoe UI", f(9)),
+                width=18, anchor="w",
+            ).pack(side="left")
+            tk.Label(
+                row, text=value,
+                bg=THEME["panel"], fg=THEME["text"],
+                font=("Segoe UI", f(9), "bold") if bold_val else ("Segoe UI", f(9)),
+                anchor="w",
+            ).pack(side="left")
+
+        info_line("Order Start:", str(data["start_dt"]))
+        info_line("Order End:",   str(data["end_dt"]))
+        info_line("Customer:",    str(data["customer_name"]), bold_val=True)
+        info_line("Payment:",     str(data["payment_method"]))
 
         ref = ""
         try:
@@ -618,13 +679,38 @@ class TransactionDetailsDialog(tk.Toplevel):
         except Exception:
             ref = ""
         if ref:
-            line("Reference No.:", ref)
+            info_line("Reference No.:", ref)
 
+        tk.Frame(info_card, bg=THEME["border"], height=1).pack(fill="x", padx=14, pady=4)
+
+        # Amount Paid / Change
+        def money_line(label: str, value: str, accent: bool = False):
+            row = tk.Frame(info_card, bg=THEME["panel"])
+            row.pack(fill="x", padx=14, pady=sp(4))
+            tk.Label(
+                row, text=label,
+                bg=THEME["panel"], fg=THEME["muted"],
+                font=("Segoe UI", f(9)), anchor="w",
+            ).pack(side="left")
+            tk.Label(
+                row, text=value,
+                bg=THEME["panel"],
+                fg=THEME["success"] if accent else THEME["text"],
+                font=("Segoe UI", f(9), "bold") if accent else ("Segoe UI", f(9)),
+                anchor="e",
+            ).pack(side="right")
+
+        money_line("Amount Paid:", money(data["amount_paid"]))
+        money_line("Change Due:",  money(data["change_due"]))
+
+        tk.Frame(info_card, bg=THEME["bg"], height=sp(4)).pack()
+
+        # ── Build item rows ───────────────────────────────────────────────────
         self._details_rows = []
         for it in items:
             name = it["name"] if it["name"] else f"#{it['product_id']}"
-            qty = it["qty"]
-            self._details_rows.append((f"{qty}x {name}", money(it["subtotal"])))
+            qty  = it["qty"]
+            self._details_rows.append((f"{qty}× {name}", money(it["subtotal"])))
 
         try:
             self._discount_amount = float(data["discount"] or 0.0)
@@ -635,51 +721,75 @@ class TransactionDetailsDialog(tk.Toplevel):
         except Exception:
             self._total_amount = 0.0
 
-        box = tk.Frame(body, bg="#ffffff", highlightthickness=1, highlightbackground="#e6e6e6")
-        box.pack(fill="x", padx=14, pady=10)
+        # ── Order Details collapsible card ────────────────────────────────────
+        od_card = tk.Frame(
+            self.inner, bg="#ffffff",
+            highlightthickness=1, highlightbackground=THEME["border"],
+        )
+        od_card.pack(fill="x", padx=18, pady=(0, 10))
 
-        head = tk.Frame(box, bg="#e9efff")
-        head.pack(fill="x")
-        tk.Label(head, text="Order Details", bg="#e9efff", fg="#2f4ea3", padx=12, pady=8, font=("Segoe UI", 10, "bold")).pack(side="left")
+        od_hdr = tk.Frame(od_card, bg=THEME["beige"])
+        od_hdr.pack(fill="x")
+
+        tk.Label(
+            od_hdr, text="Order Details",
+            bg=THEME["beige"], fg=THEME["text"],
+            font=("Segoe UI", f(9), "bold"),
+            padx=14, pady=8,
+        ).pack(side="left")
 
         self.btn_toggle = tk.Button(
-            head, text="▸ Show", bg="#e9efff", fg="#2f4ea3", bd=0, padx=12, pady=8,
-            cursor="hand2", command=self._toggle_details
+            od_hdr, text="▸ Show",
+            bg=THEME["beige"], fg=THEME["brown"],
+            bd=0, padx=14, pady=8, cursor="hand2",
+            font=("Segoe UI", f(9), "bold"),
+            command=self._toggle_details,
         )
         self.btn_toggle.pack(side="right")
 
-        self.details_body = tk.Frame(box, bg="#ffffff")
+        self.details_body = tk.Frame(od_card, bg="#ffffff")
         self.details_body.pack(fill="x", padx=12, pady=10)
         self._render_details()
 
-        paid_box = tk.Frame(body, bg=THEME["panel2"])
-        paid_box.pack(fill="x", padx=14, pady=2)
-        tk.Label(paid_box, text="Amount Paid:", bg=THEME["panel2"], fg=THEME["muted"]).pack(side="left")
-        tk.Label(paid_box, text=money(data["amount_paid"]), bg=THEME["panel2"], fg=THEME["text"]).pack(side="right")
-
-        chg_box = tk.Frame(body, bg=THEME["panel2"])
-        chg_box.pack(fill="x", padx=14, pady=2)
-        tk.Label(chg_box, text="Change:", bg=THEME["panel2"], fg=THEME["muted"]).pack(side="left")
-        tk.Label(chg_box, text=money(data["change_due"]), bg=THEME["panel2"], fg=THEME["text"]).pack(side="right")
-
+        # ── Footer buttons ────────────────────────────────────────────────────
         footer = tk.Frame(self.inner, bg=THEME["bg"])
-        footer.pack(fill="x", padx=18, pady=(0, 14))
+        footer.pack(fill="x", padx=18, pady=(4, 16))
 
         if status == "Pending":
-            tk.Button(footer, text="Resolve", bg="#f0ad4e", fg="white", bd=0, padx=12, pady=8, cursor="hand2",
-                      command=self._open_resolve).pack(side="left")
+            tk.Button(
+                footer, text="Resolve",
+                bg="#d97706", fg="white",
+                activebackground="#b45309", activeforeground="white",
+                bd=0, padx=sp(14), pady=sp(9), cursor="hand2",
+                font=("Segoe UI", f(9), "bold"),
+                command=self._open_resolve,
+            ).pack(side="left")
 
-        tk.Button(footer, text="Print Receipt", bg=THEME["panel2"], fg=THEME["text"], bd=0, padx=12, pady=8,
-                  cursor="hand2", command=self._print_receipt).pack(side="right")
+        tk.Button(
+            footer, text="Close",
+            bg=THEME["panel2"], fg=THEME["text"],
+            bd=0, padx=sp(14), pady=sp(9), cursor="hand2",
+            font=("Segoe UI", f(9)),
+            command=self.destroy,
+        ).pack(side="right")
 
-        tk.Button(footer, text="Close", bg=THEME["panel2"], fg=THEME["text"], bd=0, padx=12, pady=8,
-                  cursor="hand2", command=self.destroy).pack(side="right", padx=(0, 10))
+        tk.Button(
+            footer, text="🖨  Print Receipt",
+            bg=THEME["brown"], fg="white",
+            activebackground=THEME["brown_dark"], activeforeground="white",
+            bd=0, padx=sp(14), pady=sp(9), cursor="hand2",
+            font=("Segoe UI", f(9), "bold"),
+            command=self._print_receipt,
+        ).pack(side="right", padx=(0, sp(8)))
 
     def _toggle_details(self):
         self._details_expanded.set(not self._details_expanded.get())
         self._render_details()
 
     def _render_details(self):
+        f  = ui_scale.scale_font
+        sp = ui_scale.s
+
         for w in self.details_body.winfo_children():
             w.destroy()
 
@@ -689,25 +799,58 @@ class TransactionDetailsDialog(tk.Toplevel):
         rows = self._details_rows if expanded else self._details_rows[: self.MAX_COLLAPSED_ROWS]
         for left_text, right_text in rows:
             r = tk.Frame(self.details_body, bg="#ffffff")
-            r.pack(fill="x", pady=4)
-            tk.Label(r, text=left_text, bg="#ffffff", fg=THEME["text"]).pack(side="left")
-            tk.Label(r, text=right_text, bg="#ffffff", fg=THEME["text"]).pack(side="right")
+            r.pack(fill="x", pady=sp(4))
+            tk.Label(
+                r, text=left_text,
+                bg="#ffffff", fg=THEME["text"],
+                font=("Segoe UI", f(9)),
+            ).pack(side="left")
+            tk.Label(
+                r, text=right_text,
+                bg="#ffffff", fg=THEME["text"],
+                font=("Segoe UI", f(9)),
+            ).pack(side="right")
 
         if not expanded and len(self._details_rows) > self.MAX_COLLAPSED_ROWS:
-            tk.Label(self.details_body, text=f"+ {len(self._details_rows) - self.MAX_COLLAPSED_ROWS} more items",
-                     bg="#ffffff", fg=THEME["muted"]).pack(anchor="w", pady=(6, 0))
+            tk.Label(
+                self.details_body,
+                text=f"+ {len(self._details_rows) - self.MAX_COLLAPSED_ROWS} more items",
+                bg="#ffffff", fg=THEME["muted"],
+                font=("Segoe UI", f(8), "italic"),
+            ).pack(anchor="w", pady=(sp(4), 0))
 
         if self._discount_amount > 0:
             drow = tk.Frame(self.details_body, bg="#ffffff")
-            drow.pack(fill="x", pady=(10, 0))
-            tk.Label(drow, text="Discount", bg="#ffffff", fg=THEME["muted"]).pack(side="left")
-            tk.Label(drow, text=f"-{money(self._discount_amount)}", bg="#ffffff", fg=THEME["muted"]).pack(side="right")
+            drow.pack(fill="x", pady=(sp(8), 0))
+            tk.Label(
+                drow, text="Discount",
+                bg="#ffffff", fg=THEME["muted"],
+                font=("Segoe UI", f(9)),
+            ).pack(side="left")
+            tk.Label(
+                drow, text=f"−{money(self._discount_amount)}",
+                bg="#ffffff", fg=THEME["danger"],
+                font=("Segoe UI", f(9), "bold"),
+            ).pack(side="right")
 
-        tot = tk.Frame(self.details_body, bg="#dff6ef")
-        tot.pack(fill="x", pady=(10, 0))
-        tk.Label(tot, text="Total:", bg="#dff6ef", fg=THEME["text"], padx=10, pady=8).pack(side="left")
-        tk.Label(tot, text=money(self._total_amount), bg="#dff6ef", fg=THEME["text"], padx=10, pady=8,
-                 font=("Segoe UI", 10, "bold")).pack(side="right")
+        # Emphasized total row
+        sep = tk.Frame(self.details_body, bg=THEME["border"], height=1)
+        sep.pack(fill="x", pady=(sp(8), 0))
+
+        tot = tk.Frame(self.details_body, bg=THEME["success"])
+        tot.pack(fill="x", pady=(sp(2), 0))
+        tk.Label(
+            tot, text="TOTAL",
+            bg=THEME["success"], fg="white",
+            font=("Segoe UI", f(9), "bold"),
+            padx=sp(12), pady=sp(9),
+        ).pack(side="left")
+        tk.Label(
+            tot, text=money(self._total_amount),
+            bg=THEME["success"], fg="white",
+            font=("Segoe UI", f(13), "bold"),
+            padx=sp(12), pady=sp(9),
+        ).pack(side="right")
 
     def _open_resolve(self):
         ResolveDialog(self, self.db, self.order_id, on_done=self._resolved)

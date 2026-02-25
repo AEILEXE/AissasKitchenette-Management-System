@@ -11,6 +11,7 @@ from app.db.database import Database
 from app.db.dao import CategoryDAO, ProductDAO, DraftDAO, OrderDAO
 from app.services.auth_service import AuthService
 from app.ui.dialogs import DiscountDialog
+from app.ui import ui_scale
 from app.utils import money
 from app.ml.recommender import Recommender
 
@@ -1296,6 +1297,10 @@ class ConfirmOrderDialog(tk.Toplevel):
         return subtotal, discount, tax, total
 
     def _build(self):
+        f  = ui_scale.scale_font
+        sp = ui_scale.s
+
+        # ── Scrollable shell ──────────────────────────────────────────────────
         wrap = tk.Frame(self, bg=THEME["bg"])
         wrap.pack(fill="both", expand=True)
         wrap.rowconfigure(0, weight=1)
@@ -1304,110 +1309,189 @@ class ConfirmOrderDialog(tk.Toplevel):
         canvas = tk.Canvas(wrap, bg=THEME["bg"], highlightthickness=0)
         canvas.grid(row=0, column=0, sticky="nsew")
 
-        sb = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview, style="Thick.Vertical.TScrollbar")
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview,
+                           style="Thick.Vertical.TScrollbar")
         sb.grid(row=0, column=1, sticky="ns")
         canvas.configure(yscrollcommand=sb.set)
 
         inner = tk.Frame(canvas, bg=THEME["bg"])
-        win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        win   = canvas.create_window((0, 0), window=inner, anchor="nw")
 
-        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")), add="+")
-        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width), add="+")
+        inner.bind(
+            "<Configure>",
+            lambda _e: canvas.configure(scrollregion=canvas.bbox("all")),
+            add="+",
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(win, width=e.width),
+            add="+",
+        )
 
         def _mw(e):
-            step = -1 if e.delta > 0 else 1
-            canvas.yview_scroll(step * self.SCROLL_SPEED_UNITS, "units")
+            canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
             return "break"
 
         self.bind("<MouseWheel>", _mw, add="+")
-        self.bind("<Button-4>", lambda _e: (canvas.yview_scroll(-self.SCROLL_SPEED_UNITS, "units"), "break"), add="+")
-        self.bind("<Button-5>", lambda _e: (canvas.yview_scroll(self.SCROLL_SPEED_UNITS, "units"), "break"), add="+")
+        self.bind("<Button-4>",
+                  lambda _e: (canvas.yview_scroll(-self.SCROLL_SPEED_UNITS, "units"), "break"),
+                  add="+")
+        self.bind("<Button-5>",
+                  lambda _e: (canvas.yview_scroll(self.SCROLL_SPEED_UNITS, "units"), "break"),
+                  add="+")
 
-        top = tk.Frame(inner, bg=THEME["bg"])
-        top.pack(fill="x", padx=18, pady=(14, 10))
-        tk.Label(top, text="Confirm Order", bg=THEME["bg"], fg=THEME["text"], font=("Segoe UI", 14, "bold")).pack(side="left")
-        tk.Button(top, text="✕", bg=THEME["bg"], fg=THEME["muted"], bd=0, command=self.destroy).pack(side="right")
+        # ── Dialog header ─────────────────────────────────────────────────────
+        top = tk.Frame(inner, bg=THEME["brown_dark"])
+        top.pack(fill="x")
+        top.columnconfigure(0, weight=1)
 
-        created_str = self.created_at.strftime("%Y-%m-%d %I:%M %p")
         tk.Label(
-            inner,
-            text=f"Order created: {created_str}  •  By: {self.created_by_user} ({self.created_by_role})",
-            bg=THEME["bg"],
-            fg=THEME["muted"],
-        ).pack(anchor="w", padx=18, pady=(0, 10))
+            top, text="Confirm Order",
+            bg=THEME["brown_dark"], fg="white",
+            font=("Segoe UI", f(14), "bold"),
+            anchor="w",
+        ).pack(side="left", padx=18, pady=(14, 12))
 
-        box = tk.Frame(inner, bg="#ffffff", highlightthickness=1, highlightbackground="#e6e6e6")
-        box.pack(fill="x", padx=18, pady=(0, 12))
+        tk.Button(
+            top, text="✕",
+            bg=THEME["brown_dark"], fg="white",
+            activebackground=THEME["brown"], activeforeground="white",
+            bd=0, padx=12, pady=8, cursor="hand2",
+            font=("Segoe UI", f(11)),
+            command=self.destroy,
+        ).pack(side="right", padx=8)
 
-        head = tk.Frame(box, bg="#e9efff")
-        head.pack(fill="x")
-        tk.Label(head, text="Order Details", bg="#e9efff", fg="#2f4ea3", padx=12, pady=8, font=("Segoe UI", 10, "bold")).pack(side="left")
+        # Meta info strip
+        created_str = self.created_at.strftime("%Y-%m-%d  %I:%M %p")
+        meta_bar = tk.Frame(inner, bg=THEME["bg"])
+        meta_bar.pack(fill="x", padx=18, pady=(10, 6))
+        tk.Label(
+            meta_bar,
+            text=f"Created: {created_str}   ·   By: {self.created_by_user} ({self.created_by_role})",
+            bg=THEME["bg"], fg=THEME["muted"],
+            font=("Segoe UI", f(8)),
+        ).pack(side="left")
+
+        # ── Section: Order Summary ─────────────────────────────────────────────
+        self._section_label(inner, "Order Summary")
+
+        od_card = tk.Frame(
+            inner, bg="#ffffff",
+            highlightthickness=1, highlightbackground=THEME["border"],
+        )
+        od_card.pack(fill="x", padx=18, pady=(0, 10))
+
+        od_hdr = tk.Frame(od_card, bg=THEME["beige"])
+        od_hdr.pack(fill="x")
+        tk.Label(
+            od_hdr, text="Items",
+            bg=THEME["beige"], fg=THEME["text"],
+            font=("Segoe UI", f(9), "bold"),
+            padx=14, pady=8,
+        ).pack(side="left")
 
         self.btn_toggle = tk.Button(
-            head,
-            text="▸ Show",
-            bg="#e9efff",
-            fg="#2f4ea3",
-            bd=0,
-            padx=12,
-            pady=8,
-            cursor="hand2",
+            od_hdr, text="▸ Show",
+            bg=THEME["beige"], fg=THEME["brown"],
+            bd=0, padx=14, pady=8, cursor="hand2",
+            font=("Segoe UI", f(9), "bold"),
             command=self._toggle_details,
         )
         self.btn_toggle.pack(side="right")
 
-        self.details_body = tk.Frame(box, bg="#ffffff")
+        self.details_body = tk.Frame(od_card, bg="#ffffff")
         self.details_body.pack(fill="x", padx=12, pady=10)
 
         self._details_rows = []
         subtotal, discount, tax, total = self._calc_totals()
         for _pid, (name, price, qty, _note) in self.cart.items():
-            self._details_rows.append((f"{qty}x {name}", money(qty * price)))
+            self._details_rows.append((f"{qty}× {name}", money(qty * price)))
 
         self._discount_amount = discount
-        self._total_amount = total
+        self._total_amount    = total
 
         self._render_details()
 
-        tk.Label(inner, text="Customer Name (required)", bg=THEME["bg"], fg=THEME["muted"]).pack(anchor="w", padx=18, pady=(8, 6))
-        ent_name = tk.Entry(inner, textvariable=self.var_customer, bd=0, bg="#ffffff", fg=THEME["text"])
-        ent_name.pack(fill="x", padx=18, ipady=10)
+        # ── Section: Customer Info ─────────────────────────────────────────────
+        self._section_label(inner, "Customer")
+
+        cust_card = tk.Frame(
+            inner, bg=THEME["panel"],
+            highlightthickness=1, highlightbackground=THEME["border"],
+        )
+        cust_card.pack(fill="x", padx=18, pady=(0, 10))
+
+        tk.Label(
+            cust_card, text="Customer Name  (required)",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", f(9)),
+        ).pack(anchor="w", padx=14, pady=(12, 4))
+
+        ent_name = tk.Entry(
+            cust_card, textvariable=self.var_customer,
+            bd=0, bg=THEME["panel2"], fg=THEME["text"],
+            insertbackground=THEME["text"],
+            font=("Segoe UI", f(10)),
+        )
+        ent_name.pack(fill="x", padx=14, ipady=sp(9), pady=(0, 14))
         ent_name.focus_set()
 
-        tk.Label(inner, text="Payment Method", bg=THEME["bg"], fg=THEME["muted"]).pack(anchor="w", padx=18, pady=(12, 6))
-        pm = tk.Frame(inner, bg=THEME["bg"])
-        pm.pack(fill="x", padx=18)
-        tk.Radiobutton(pm, text="Cash", value="Cash", variable=self.var_payment, bg=THEME["bg"]).pack(anchor="w")
-        tk.Radiobutton(pm, text="Bank Transfer/E-Wallet", value="Bank/E-Wallet", variable=self.var_payment, bg=THEME["bg"]).pack(anchor="w")
+        # ── Section: Payment ──────────────────────────────────────────────────
+        self._section_label(inner, "Payment")
 
-        tk.Label(inner, text="Amount Paid", bg=THEME["bg"], fg=THEME["muted"]).pack(anchor="w", padx=18, pady=(10, 6))
-        ent_paid = tk.Entry(inner, textvariable=self.var_amount_paid, bd=0, bg="#ffffff", fg=THEME["text"])
-        ent_paid.pack(fill="x", padx=18, ipady=10)
+        pay_card = tk.Frame(
+            inner, bg=THEME["panel"],
+            highlightthickness=1, highlightbackground=THEME["border"],
+        )
+        pay_card.pack(fill="x", padx=18, pady=(0, 10))
 
+        # Radio buttons (styled)
+        radio_frame = tk.Frame(pay_card, bg=THEME["panel"])
+        radio_frame.pack(fill="x", padx=14, pady=(12, 8))
+
+        for val, label in [("Cash", "💵  Cash"), ("Bank/E-Wallet", "🏦  Bank Transfer / E-Wallet")]:
+            tk.Radiobutton(
+                radio_frame, text=label,
+                value=val, variable=self.var_payment,
+                bg=THEME["panel"], fg=THEME["text"],
+                activebackground=THEME["panel"],
+                font=("Segoe UI", f(10)),
+                selectcolor=THEME["beige"],
+            ).pack(anchor="w", pady=sp(3))
+
+        # Amount Paid entry
+        tk.Label(
+            pay_card, text="Amount Paid",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", f(9)),
+        ).pack(anchor="w", padx=14, pady=(6, 4))
+
+        tk.Entry(
+            pay_card, textvariable=self.var_amount_paid,
+            bd=0, bg=THEME["panel2"], fg=THEME["text"],
+            insertbackground=THEME["text"],
+            font=("Segoe UI", f(11)),
+        ).pack(fill="x", padx=14, ipady=sp(9), pady=(0, 14))
+
+        # ── Footer buttons ────────────────────────────────────────────────────
         footer = tk.Frame(inner, bg=THEME["bg"])
-        footer.pack(fill="x", padx=18, pady=18)
+        footer.pack(fill="x", padx=18, pady=(6, 18))
 
         tk.Button(
-            footer,
-            text="Cancel",
-            bg=THEME["danger"],
-            fg="white",
-            bd=0,
-            padx=14,
-            pady=10,
-            cursor="hand2",
+            footer, text="Cancel",
+            bg=THEME["danger"], fg="white",
+            activebackground="#a93226", activeforeground="white",
+            bd=0, padx=sp(14), pady=sp(10), cursor="hand2",
+            font=("Segoe UI", f(10)),
             command=self.destroy,
         ).pack(side="left")
 
         self.btn_confirm = tk.Button(
-            footer,
-            text="Confirm Checkout",
-            bg=THEME["success"],
-            fg="white",
-            bd=0,
-            padx=14,
-            pady=10,
-            cursor="hand2",
+            footer, text="Confirm Checkout",
+            bg=THEME["success"], fg="white",
+            activebackground=THEME["brown_dark"], activeforeground="white",
+            bd=0, padx=sp(14), pady=sp(10), cursor="hand2",
+            font=("Segoe UI", f(10), "bold"),
             command=self._confirm,
         )
         self.btn_confirm.pack(side="right")
@@ -1415,11 +1499,27 @@ class ConfirmOrderDialog(tk.Toplevel):
         self.var_payment.trace_add("write", lambda *_: self._update_confirm_text())
         self._update_confirm_text()
 
+    def _section_label(self, parent: tk.Widget, text: str) -> None:
+        """Small muted section heading with a hairline separator."""
+        row = tk.Frame(parent, bg=THEME["bg"])
+        row.pack(fill="x", padx=18, pady=(10, 4))
+        tk.Label(
+            row, text=text.upper(),
+            bg=THEME["bg"], fg=THEME["muted"],
+            font=("Segoe UI", ui_scale.scale_font(8), "bold"),
+        ).pack(side="left")
+        tk.Frame(row, bg=THEME["border"], height=1).pack(
+            side="left", fill="x", expand=True, padx=(8, 0), pady=5,
+        )
+
     def _toggle_details(self):
         self._details_expanded.set(not self._details_expanded.get())
         self._render_details()
 
     def _render_details(self):
+        f  = ui_scale.scale_font
+        sp = ui_scale.s
+
         for w in self.details_body.winfo_children():
             w.destroy()
 
@@ -1429,23 +1529,47 @@ class ConfirmOrderDialog(tk.Toplevel):
         rows = self._details_rows if expanded else self._details_rows[:5]
         for left_text, right_text in rows:
             r = tk.Frame(self.details_body, bg="#ffffff")
-            r.pack(fill="x", pady=4)
-            tk.Label(r, text=left_text, bg="#ffffff", fg=THEME["text"]).pack(side="left")
-            tk.Label(r, text=right_text, bg="#ffffff", fg=THEME["text"]).pack(side="right")
+            r.pack(fill="x", pady=sp(4))
+            tk.Label(r, text=left_text,  bg="#ffffff", fg=THEME["text"],
+                     font=("Segoe UI", f(9))).pack(side="left")
+            tk.Label(r, text=right_text, bg="#ffffff", fg=THEME["text"],
+                     font=("Segoe UI", f(9))).pack(side="right")
 
         if not expanded and len(self._details_rows) > 5:
-            tk.Label(self.details_body, text=f"+ {len(self._details_rows) - 5} more items", bg="#ffffff", fg=THEME["muted"]).pack(anchor="w", pady=(6, 0))
+            tk.Label(
+                self.details_body,
+                text=f"+ {len(self._details_rows) - 5} more items",
+                bg="#ffffff", fg=THEME["muted"],
+                font=("Segoe UI", f(8), "italic"),
+            ).pack(anchor="w", pady=(sp(4), 0))
 
         if self._discount_amount > 0:
             drow = tk.Frame(self.details_body, bg="#ffffff")
-            drow.pack(fill="x", pady=(10, 0))
-            tk.Label(drow, text="Discount", bg="#ffffff", fg=THEME["muted"]).pack(side="left")
-            tk.Label(drow, text=f"-{money(self._discount_amount)}", bg="#ffffff", fg=THEME["muted"]).pack(side="right")
+            drow.pack(fill="x", pady=(sp(8), 0))
+            tk.Label(drow, text="Discount",
+                     bg="#ffffff", fg=THEME["muted"],
+                     font=("Segoe UI", f(9))).pack(side="left")
+            tk.Label(drow, text=f"−{money(self._discount_amount)}",
+                     bg="#ffffff", fg=THEME["danger"],
+                     font=("Segoe UI", f(9), "bold")).pack(side="right")
 
-        tot = tk.Frame(self.details_body, bg="#dff6ef")
-        tot.pack(fill="x", pady=(10, 0))
-        tk.Label(tot, text="Total:", bg="#dff6ef", fg=THEME["text"], padx=10, pady=8).pack(side="left")
-        tk.Label(tot, text=money(self._total_amount), bg="#dff6ef", fg=THEME["text"], padx=10, pady=8, font=("Segoe UI", 10, "bold")).pack(side="right")
+        tk.Frame(self.details_body, bg=THEME["border"], height=1).pack(
+            fill="x", pady=(sp(8), 0))
+
+        tot = tk.Frame(self.details_body, bg=THEME["success"])
+        tot.pack(fill="x", pady=(sp(2), 0))
+        tk.Label(
+            tot, text="TOTAL",
+            bg=THEME["success"], fg="white",
+            font=("Segoe UI", f(9), "bold"),
+            padx=sp(12), pady=sp(9),
+        ).pack(side="left")
+        tk.Label(
+            tot, text=money(self._total_amount),
+            bg=THEME["success"], fg="white",
+            font=("Segoe UI", f(14), "bold"),
+            padx=sp(12), pady=sp(9),
+        ).pack(side="right")
 
     def _update_confirm_text(self):
         if self.var_payment.get() == "Bank/E-Wallet":
