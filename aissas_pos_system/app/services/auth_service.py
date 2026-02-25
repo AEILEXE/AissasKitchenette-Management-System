@@ -42,7 +42,6 @@ class AuthService:
             self._last_error = ERROR_INVALID_CREDENTIALS
             return False
 
-        # ✅ normalize role so permission mapping works even if DB has lowercase values
         user.role = (user.role or "").upper()
         self._current_user = user
         return True

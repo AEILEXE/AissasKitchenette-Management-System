@@ -82,10 +82,6 @@ class Database:
         # Run safe migrations for existing databases
         self._migrate_if_needed()
 
-    # =========================================================================
-    # SAFE MIGRATIONS FOR BACKWARD COMPATIBILITY
-    # =========================================================================
-
     def _table_columns(self, table: str) -> set[str]:
         """Get set of column names for a table using PRAGMA."""
         rows = self.fetchall(f"PRAGMA table_info({table});")

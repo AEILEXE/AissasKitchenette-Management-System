@@ -212,6 +212,11 @@ class ProductDAO:
             bool(r["active"]),
         )
 
+    def count_active(self) -> int:
+        """Count total active products."""
+        r = self.db.fetchone("SELECT COUNT(*) AS c FROM products WHERE active=1;")
+        return int(r["c"]) if r else 0
+
     def set_stock(self, product_id: int, new_qty: int) -> None:
         """Update product stock quantity."""
         self.db.execute(
@@ -511,6 +516,34 @@ class OrderDAO:
             """
         )
 
+    def summary_month(self):
+        """Get order count and total sales for the current calendar month."""
+        return self.db.fetchone(
+            """
+            SELECT COUNT(*) AS order_count,
+                   COALESCE(SUM(total), 0) AS total_sales
+            FROM orders
+            WHERE strftime('%Y-%m', datetime) = strftime('%Y-%m', 'now', 'localtime')
+              AND status='Completed';
+            """
+        )
+
+    def list_recent(self, limit: int = 10):
+        """Get the N most recent orders (any status) for the dashboard."""
+        return self.db.fetchall(
+            """
+            SELECT id AS order_id,
+                   datetime AS start_dt,
+                   payment_method,
+                   total,
+                   status
+            FROM orders
+            ORDER BY datetime(datetime) DESC
+            LIMIT ?;
+            """,
+            (int(limit),),
+        )
+
     def best_sellers_today(self, limit: int = 10):
         """Get best-selling products today."""
         return self.db.fetchall(
@@ -529,20 +562,23 @@ class OrderDAO:
             (limit,),
         )
 
-def order_items_for_ml(self, last_n_orders: int = 200):
-    """Get order items for ML recommender (last N COMPLETED orders)."""
-    return self.db.fetchall(
+    def order_items_for_ml(self, last_n_orders: int = 300):
         """
-        SELECT oi.order_id, oi.product_id
-        FROM order_items oi
-        JOIN (
-            SELECT id
-            FROM orders
-            WHERE status = 'Completed'
-            ORDER BY datetime DESC
-            LIMIT ?
-        ) recent ON recent.id = oi.order_id
-        ORDER BY oi.order_id ASC;
-        """,
-        (last_n_orders,),
-    )
+        Get order_id + product_id rows from the last N COMPLETED orders.
+        Used by the offline ML recommender to build pair-frequency counts.
+        """
+        return self.db.fetchall(
+            """
+            SELECT oi.order_id, oi.product_id
+            FROM order_items oi
+            JOIN (
+                SELECT id
+                FROM orders
+                WHERE status = 'Completed'
+                ORDER BY datetime DESC
+                LIMIT ?
+            ) recent ON recent.id = oi.order_id
+            ORDER BY oi.order_id ASC;
+            """,
+            (int(last_n_orders),),
+        )

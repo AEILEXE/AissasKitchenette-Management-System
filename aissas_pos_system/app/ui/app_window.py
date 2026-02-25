@@ -8,6 +8,7 @@ from app.config import APP_NAME, THEME
 from app.db.database import Database
 from app.services.auth_service import AuthService
 from app.constants import P_POS, P_INV_VIEW, P_INV_MANAGE  # keep perms
+from app.ui import ui_scale
 
 from app.ui.login_view import LoginView
 from app.ui.pos_view import POSView
@@ -216,3 +217,44 @@ class AppWindow:
 
     def logout(self) -> None:
         self.show_login()
+
+    # ── Zoom (Part 1) ─────────────────────────────────────────────────────────
+
+    def _on_zoom(self, direction: int) -> None:
+        """
+        direction:  1 = zoom in,  -1 = zoom out,  0 = reset
+        Rebuilds nav and re-renders the active view so fonts/padding update.
+        """
+        if direction == 1:
+            ui_scale.zoom_in()
+        elif direction == -1:
+            ui_scale.zoom_out()
+        else:
+            ui_scale.zoom_reset()
+
+        # Update nav bar fonts
+        if self.nav.winfo_ismapped():
+            self._build_nav()
+            if self._active_nav_key:
+                self._set_active_nav(self._active_nav_key)
+
+        # Re-render current view with new scale
+        self._refresh_current_view()
+
+        # Update title to show zoom level
+        pct = int(round(ui_scale.get_scale() * 100))
+        try:
+            self.root.title(f"{APP_NAME}  ·  {pct}%")
+        except Exception:
+            pass
+
+    def _refresh_current_view(self) -> None:
+        """Re-render the currently active main view (for zoom reload)."""
+        key = self._active_nav_key
+        if key == "pos":
+            self.show_pos()
+        elif key == "tx":
+            self.show_transactions()
+        elif key == "inv":
+            # Re-open inventory; restore to overview sub-tab
+            self.show_inventory()

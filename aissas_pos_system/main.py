@@ -27,7 +27,12 @@ def main() -> None:
     root.title(f"{APP_NAME} v{APP_VERSION}")
     root.minsize(1000, 650)
 
-    AppWindow(root, db, auth)
+    app_window = AppWindow(root, db, auth)
+
+    root.bind_all("<Control-equal>", lambda _e: app_window._on_zoom(1))
+    root.bind_all("<Control-plus>",  lambda _e: app_window._on_zoom(1))
+    root.bind_all("<Control-minus>", lambda _e: app_window._on_zoom(-1))
+    root.bind_all("<Control-0>",     lambda _e: app_window._on_zoom(0))
 
     try:
         root.mainloop()

@@ -4,6 +4,7 @@ import time
 from collections import defaultdict
 from typing import Dict, List, Tuple, Optional
 
+from app.config import DEBUG
 from app.db.database import Database
 from app.db.dao import OrderDAO, ProductDAO
 
@@ -44,6 +45,8 @@ class Recommender:
         Call this after every completed sale so pair counts stay up-to-date."""
         self._pair_cache = None
         self._cache_time = 0.0
+        if DEBUG:
+            print("[ML] Cache invalidated — will rebuild on next suggest() call.")
 
     def _is_cache_fresh(self) -> bool:
         return (
@@ -74,8 +77,12 @@ class Recommender:
 
         rows = self.order_dao.order_items_for_ml(last_n_orders)
 
+        if DEBUG:
+            print(f"[ML] order_items_for_ml returned {len(rows)} rows "
+                  f"(last {last_n_orders} completed orders)")
+
         # Group: order_id → set of product_ids
-        order_map: Dict[int, set] = defaultdict(set)
+        order_map: Dict[int, set[int]] = defaultdict(set)
         for r in rows:
             order_map[int(r["order_id"])].add(int(r["product_id"]))
 
@@ -89,6 +96,11 @@ class Recommender:
 
         self._pair_cache = dict(pair_counts)
         self._cache_time = time.monotonic()
+
+        if DEBUG:
+            print(f"[ML] Built pair-count cache: {len(self._pair_cache)} unique pairs "
+                  f"from {len(order_map)} orders.")
+
         return self._pair_cache
 
     # ------------------------------------------------------------------
@@ -116,8 +128,13 @@ class Recommender:
         if not current_product_ids:
             return []
 
+        if DEBUG:
+            print(f"[ML] suggest() called — cart_ids: {current_product_ids}")
+
         pair_counts = self._build_pair_counts()
         if not pair_counts:
+            if DEBUG:
+                print("[ML] No pair data available yet. Need more completed orders.")
             return []
 
         current = set(current_product_ids)
@@ -131,7 +148,14 @@ class Recommender:
 
         # Sort by score descending, return IDs only
         ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        return [pid for pid, _score in ranked[:top_n]]
+        result = [pid for pid, _ in ranked[:top_n]]
+
+        if DEBUG:
+            top_scored = ranked[:top_n]
+            print(f"[ML] Top scores: {top_scored}")
+            print(f"[ML] Suggested IDs: {result}")
+
+        return result
 
     # ------------------------------------------------------------------
     # Product name resolution (for display in suggestions panel)

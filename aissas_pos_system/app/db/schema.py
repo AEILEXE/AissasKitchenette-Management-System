@@ -1,16 +1,6 @@
 from __future__ import annotations
 
-# =============================================================================
-# COMPLETE DATABASE SCHEMA
-# =============================================================================
-# This file defines ALL_SCHEMAS and INDEX_STATEMENTS for the POS system.
-# All columns are defined here to ensure DAO queries match exactly.
-# =============================================================================
-
 ALL_SCHEMAS: list[str] = [
-    # =========================================================================
-    # USERS TABLE - Cashiers, Managers, Admins
-    # =========================================================================
     """
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,9 +12,6 @@ ALL_SCHEMAS: list[str] = [
     );
     """,
 
-    # =========================================================================
-    # CATEGORIES TABLE - Product Categories
-    # =========================================================================
     """
     CREATE TABLE IF NOT EXISTS categories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,9 +19,6 @@ ALL_SCHEMAS: list[str] = [
     );
     """,
 
-    # =========================================================================
-    # PRODUCTS TABLE - Menu Items
-    # =========================================================================
     """
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,9 +36,6 @@ ALL_SCHEMAS: list[str] = [
     );
     """,
 
-    # =========================================================================
-    # DRAFTS TABLE - Saved Pending Transactions
-    # =========================================================================
     """
     CREATE TABLE IF NOT EXISTS drafts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,9 +46,6 @@ ALL_SCHEMAS: list[str] = [
     );
     """,
 
-    # =========================================================================
-    # ORDERS TABLE - Completed/Pending/Cancelled Orders
-    # =========================================================================
     """
     CREATE TABLE IF NOT EXISTS orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,9 +67,6 @@ ALL_SCHEMAS: list[str] = [
     );
     """,
 
-    # =========================================================================
-    # ORDER_ITEMS TABLE - Individual Items in Orders
-    # =========================================================================
     """
     CREATE TABLE IF NOT EXISTS order_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,9 +82,6 @@ ALL_SCHEMAS: list[str] = [
     """,
 ]
 
-# =============================================================================
-# INDEXES - For Query Performance
-# =============================================================================
 INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);",
     "CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);",
@@ -119,8 +91,5 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);",
 ]
 
-# =============================================================================
-# BACKWARD COMPATIBILITY ALIASES
-# =============================================================================
 SCHEMAS = ALL_SCHEMAS
 TABLE_SCHEMAS = ALL_SCHEMAS

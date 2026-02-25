@@ -6,7 +6,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from app.config import THEME
+from app.config import THEME, DEBUG
 from app.db.database import Database
 from app.db.dao import CategoryDAO, ProductDAO, DraftDAO, OrderDAO
 from app.services.auth_service import AuthService
@@ -122,7 +122,25 @@ class POSView(tk.Frame):
 
         self._scroll_targets: list[tuple[tk.Widget, tk.Canvas]] = []
         self._scroll_enabled: dict[tk.Canvas, bool] = {}
+
+        # Windows mousewheel
         self.bind_all("<MouseWheel>", self._route_mousewheel, add="+")
+
+        # Linux mousewheel (Button-4 = scroll up, Button-5 = scroll down)
+        self.bind_all(
+            "<Button-4>",
+            lambda e: self._route_mousewheel(
+                type("_E", (object,), {"x_root": e.x_root, "y_root": e.y_root, "delta": 120})()
+            ),
+            add="+",
+        )
+        self.bind_all(
+            "<Button-5>",
+            lambda e: self._route_mousewheel(
+                type("_E", (object,), {"x_root": e.x_root, "y_root": e.y_root, "delta": -120})()
+            ),
+            add="+",
+        )
 
         self._search_entry: tk.Entry | None = None
         self._active_tooltip: tk.Toplevel | None = None
@@ -209,6 +227,7 @@ class POSView(tk.Frame):
         return False
 
     def _route_mousewheel(self, event):
+        """Route mousewheel to the correct scrollable panel based on hover position."""
         try:
             hovered = self.winfo_toplevel().winfo_containing(event.x_root, event.y_root)
             if hovered is None:
@@ -413,27 +432,64 @@ class POSView(tk.Frame):
         self._register_scroll_panel(cart_panel, self.cart_canvas)
 
         # ---------------- Suggestions Panel (ML) ----------------
+        # Created here but NOT packed — _refresh_suggestions() packs/unpacks it
+        # dynamically between cart_panel and _footer_top.
         self._suggestions_frame = tk.Frame(right, bg=THEME["panel"])
-        # Populated by _refresh_suggestions(); auto-hides when empty.
-        # Built here so it appears between the cart and the total line.
 
+        # ---------------- Totals row ----------------
         self._footer_top = tk.Frame(right, bg=THEME["panel"])
         self._footer_top.pack(fill="x", padx=14, pady=(0, 6))
         self._footer_top.columnconfigure(0, weight=1)
         self._footer_top.columnconfigure(1, weight=0)
-        footer_top = self._footer_top  # local alias for remaining _build() refs
+        footer_top = self._footer_top  # local alias
 
         self.total_lbl = tk.Label(footer_top, text="Total: ₱0.00", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 12, "bold"))
         self.total_lbl.grid(row=0, column=0, sticky="w")
 
         self.discount_lbl = tk.Label(footer_top, text="", bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 10, "bold"))
 
+        # ---------------- Action buttons ----------------
         footer_btns = tk.Frame(right, bg=THEME["panel"])
         footer_btns.pack(fill="x", padx=14, pady=(0, 10))
-        tk.Button(footer_btns, text="Add discount", command=self._add_discount, bg=THEME["panel2"], fg=THEME["text"], bd=0, padx=10, pady=8, cursor="hand2").pack(side="left", padx=(0, 5))
-        tk.Button(footer_btns, text="Save as draft", command=self._save_draft, bg=THEME.get("brown", "#6b4a3a"), fg="white", bd=0, padx=10, pady=8, cursor="hand2").pack(side="left", padx=5)
-        tk.Button(footer_btns, text="Checkout", command=self._checkout, bg=THEME["success"], fg="white", bd=0, padx=10, pady=8, cursor="hand2").pack(side="left", padx=(5, 0))
 
+        # Brown background makes "Add Discount" visible against the light panel
+        tk.Button(
+            footer_btns,
+            text="Add Discount",
+            command=self._add_discount,
+            bg=THEME["brown"],
+            fg="white",
+            bd=0,
+            padx=10,
+            pady=8,
+            cursor="hand2",
+        ).pack(side="left", padx=(0, 5))
+
+        tk.Button(
+            footer_btns,
+            text="Save as Draft",
+            command=self._save_draft,
+            bg=THEME.get("brown_dark", "#3E2A22"),
+            fg="white",
+            bd=0,
+            padx=10,
+            pady=8,
+            cursor="hand2",
+        ).pack(side="left", padx=5)
+
+        tk.Button(
+            footer_btns,
+            text="Checkout",
+            command=self._checkout,
+            bg=THEME["success"],
+            fg="white",
+            bd=0,
+            padx=10,
+            pady=8,
+            cursor="hand2",
+        ).pack(side="left", padx=(5, 0))
+
+        # ---------------- Drafts panel ----------------
         self.drafts_section = tk.Frame(right, bg=THEME["panel"])
 
         tk.Label(self.drafts_section, text="Draft orders", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(6, 6))
@@ -585,7 +641,7 @@ class POSView(tk.Frame):
         self.prod_inner.update_idletasks()
         self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
 
-    # ✅ UPDATED: picture and layout centering
+    # ✅ Entire card clickable — _bind_click() applied to frame + all child labels
     def _product_card(self, parent: tk.Widget, r) -> tk.Frame:
         pid = int(r["product_id"])
         name = str(r["name"])
@@ -595,47 +651,72 @@ class POSView(tk.Frame):
 
         card = tk.Frame(parent, bg=THEME["panel2"], bd=0, cursor="hand2" if is_available else "arrow")
         card.columnconfigure(1, weight=1)
-        # (optional but helps the "center feel")
         card.rowconfigure(0, weight=1)
         card.rowconfigure(1, weight=1)
         card.rowconfigure(2, weight=1)
 
-        if is_available:
-            card.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price), add="+")
+        def _bind_click(w: tk.Widget):
+            if is_available:
+                w.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price), add="+")
 
-        img_frame = tk.Frame(card, bg=THEME["panel"], width=80, height=80, cursor="hand2" if is_available else "arrow")
-        # ✅ removed sticky="n" so it doesn't sit too high; looks more centered
+        _bind_click(card)
+
+        img_frame = tk.Frame(card, bg=THEME["panel"], width=80, height=80,
+                             cursor="hand2" if is_available else "arrow")
         img_frame.grid(row=0, column=0, rowspan=3, padx=10, pady=10)
         img_frame.grid_propagate(False)
+        _bind_click(img_frame)
 
         img_rel = _row_get(r, "image_path", None) or os.path.join("product_images", "images.png")
         photo = self._load_image(img_rel)
         if photo:
-            lbl_img = tk.Label(img_frame, image=photo, bg=THEME["panel"])
+            lbl_img = tk.Label(img_frame, image=photo, bg=THEME["panel"],
+                               cursor="hand2" if is_available else "arrow")
             lbl_img.image = photo
             lbl_img.place(relx=0.5, rely=0.5, anchor="center")
+            _bind_click(lbl_img)
         else:
-            tk.Label(img_frame, text="IMG", bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 9, "bold")).place(relx=0.5, rely=0.5, anchor="center")
+            lbl_no = tk.Label(img_frame, text="IMG", bg=THEME["panel"], fg=THEME["muted"],
+                              font=("Segoe UI", 9, "bold"),
+                              cursor="hand2" if is_available else "arrow")
+            lbl_no.place(relx=0.5, rely=0.5, anchor="center")
+            _bind_click(lbl_no)
 
         if is_available:
-            badge = tk.Label(img_frame, text="Available", bg=THEME["success"], fg="white", font=("Segoe UI", 8, "bold"), padx=8, pady=1)
+            badge = tk.Label(img_frame, text="Available", bg=THEME["success"], fg="white",
+                             font=("Segoe UI", 8, "bold"), padx=8, pady=1)
             badge.place(relx=0.5, rely=1.0, anchor="s", y=-6)
+            _bind_click(badge)
         else:
-            badge = tk.Label(img_frame, text="Not Available", bg=THEME["danger"], fg="white", font=("Segoe UI", 8, "bold"), padx=6, pady=1)
+            badge = tk.Label(img_frame, text="Not Available", bg=THEME["danger"], fg="white",
+                             font=("Segoe UI", 8, "bold"), padx=6, pady=1)
             badge.place(relx=0.5, rely=1.0, anchor="s", y=-6)
 
         display_name = _truncate_text(name, max_len=20)
-        name_lbl = tk.Label(card, text=display_name, bg=THEME["panel2"], fg=THEME["text"], font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
+        name_lbl = tk.Label(card, text=display_name, bg=THEME["panel2"], fg=THEME["text"],
+                            font=("Segoe UI", 10, "bold"), anchor="w", justify="left",
+                            cursor="hand2" if is_available else "arrow")
         name_lbl.grid(row=0, column=1, sticky="ew", padx=(10, 12), pady=(12, 0))
+        _bind_click(name_lbl)
         if display_name.endswith("…"):
             self._add_tooltip(name_lbl, name)
 
-        tk.Label(card, text=money(price), bg=THEME["panel2"], fg=THEME["success"], font=("Segoe UI", 10, "bold"), anchor="w").grid(row=1, column=1, sticky="w", padx=(10, 12), pady=(4, 0))
+        price_lbl = tk.Label(card, text=money(price), bg=THEME["panel2"], fg=THEME["success"],
+                             font=("Segoe UI", 10, "bold"), anchor="w",
+                             cursor="hand2" if is_available else "arrow")
+        price_lbl.grid(row=1, column=1, sticky="w", padx=(10, 12), pady=(4, 0))
+        _bind_click(price_lbl)
 
         if is_available:
-            tk.Button(card, text="Add", command=lambda: self._add_to_cart(pid, name, price), bg=THEME.get("brown", "#6b4a3a"), fg="white", bd=0, padx=12, pady=6, cursor="hand2").grid(row=2, column=1, sticky="w", padx=(10, 12), pady=(8, 12))
+            tk.Button(
+                card, text="Add",
+                command=lambda: self._add_to_cart(pid, name, price),
+                bg=THEME.get("brown", "#6b4a3a"), fg="white",
+                bd=0, padx=12, pady=6, cursor="hand2",
+            ).grid(row=2, column=1, sticky="w", padx=(10, 12), pady=(8, 12))
         else:
-            tk.Label(card, text="Out of stock", bg=THEME["panel2"], fg=THEME["muted"], font=("Segoe UI", 9)).grid(row=2, column=1, sticky="w", padx=(10, 12), pady=(8, 12))
+            tk.Label(card, text="Out of stock", bg=THEME["panel2"], fg=THEME["muted"],
+                     font=("Segoe UI", 9)).grid(row=2, column=1, sticky="w", padx=(10, 12), pady=(8, 12))
 
         return card
 
@@ -690,47 +771,38 @@ class POSView(tk.Frame):
         for w in self.cart_tbl.winfo_children():
             w.destroy()
 
-        self.cart_tbl.columnconfigure(0, weight=1, minsize=95)  # item
-        self.cart_tbl.columnconfigure(1, weight=0, minsize=22)  # -
-        self.cart_tbl.columnconfigure(2, weight=0, minsize=26)  # qty
-        self.cart_tbl.columnconfigure(3, weight=0, minsize=22)  # +
-        self.cart_tbl.columnconfigure(4, weight=0, minsize=20)  # subtotal
-        self.cart_tbl.columnconfigure(5, weight=0, minsize=30)  # x
+        # Column layout:
+        #  0: item name  (expands)
+        #  1: − button   (fixed)
+        #  2: qty label  (fixed)
+        #  3: + button   (fixed)
+        #  4: subtotal   (fixed, right-aligned)
+        #  5: × remove   (fixed)
+        self.cart_tbl.columnconfigure(0, weight=1, minsize=100)
+        self.cart_tbl.columnconfigure(1, weight=0, minsize=24)
+        self.cart_tbl.columnconfigure(2, weight=0, minsize=28)
+        self.cart_tbl.columnconfigure(3, weight=0, minsize=24)
+        self.cart_tbl.columnconfigure(4, weight=0, minsize=62)
+        self.cart_tbl.columnconfigure(5, weight=0, minsize=32)
 
-        tk.Label(self.cart_tbl, text="Item", bg=THEME["panel2"], fg=THEME["muted"], font=("Segoe UI", 9, "bold")).grid(
-            row=0, column=0, sticky="w", padx=(14, 6), pady=(10, 6)
-        )
+        # Header row
+        tk.Label(
+            self.cart_tbl, text="Item",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", 9, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=(14, 6), pady=(10, 6))
 
         tk.Label(
-            self.cart_tbl,
-            text="Qty",
-            bg=THEME["panel2"],
-            fg=THEME["muted"],
-            font=("Segoe UI", 9, "bold"),
-            anchor="center",
-        ).grid(
-            row=0,
-            column=1,
-            columnspan=3,
-            sticky="ew",
-            padx=(0, 0),
-            pady=(10, 6),
-        )
+            self.cart_tbl, text="Qty",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", 9, "bold"), anchor="center",
+        ).grid(row=0, column=1, columnspan=3, sticky="ew", pady=(10, 6))
 
         tk.Label(
-            self.cart_tbl,
-            text="Subtotal",
-            bg=THEME["panel2"],
-            fg=THEME["muted"],
-            font=("Segoe UI", 9, "bold"),
-            anchor="center",
-        ).grid(
-            row=0,
-            column=4,
-            sticky="ew",
-            padx=(6, 6),
-            pady=(10, 6),
-        )
+            self.cart_tbl, text="Subtotal",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", 9, "bold"), anchor="e",
+        ).grid(row=0, column=4, sticky="ew", padx=(4, 4), pady=(10, 6))
 
         if not self.cart:
             self._set_scroll_enabled(self.cart_canvas, False)
@@ -740,34 +812,51 @@ class POSView(tk.Frame):
                 self.cart_canvas.configure(scrollregion=(0, 0, 0, 0))
             except Exception:
                 pass
-            tk.Label(self.cart_tbl, text="No items", bg=THEME["panel2"], fg=THEME["muted"]).grid(row=1, column=0, columnspan=6, pady=20)
+            tk.Label(
+                self.cart_tbl, text="No items",
+                bg=THEME["panel2"], fg=THEME["muted"],
+            ).grid(row=1, column=0, columnspan=6, pady=20)
             self.total_lbl.configure(text="Total: ₱0.00")
+            self.after(30, self._refresh_suggestions)
             return
 
         row_i = 1
         for pid, (name, price, qty, _note) in self.cart.items():
             name_txt = _truncate_text(name, max_len=18)
-            tk.Label(self.cart_tbl, text=name_txt, bg=THEME["panel2"], fg=THEME["text"], anchor="w").grid(
-                row=row_i, column=0, sticky="ew", padx=(14, 6), pady=4
-            )
 
-            tk.Button(self.cart_tbl, text="-", command=lambda p=pid: self._change_qty(p, -1), bg=THEME["panel"], fg=THEME["text"], bd=0, width=2).grid(
-                row=row_i, column=1, padx=2, pady=4
-            )
-            tk.Label(self.cart_tbl, text=str(qty), bg=THEME["panel2"], fg=THEME["text"], width=3, anchor="center").grid(
-                row=row_i, column=2, padx=2, pady=4
-            )
-            tk.Button(self.cart_tbl, text="+", command=lambda p=pid: self._change_qty(p, 1), bg=THEME["panel"], fg=THEME["text"], bd=0, width=2).grid(
-                row=row_i, column=3, padx=2, pady=4
-            )
+            tk.Label(
+                self.cart_tbl, text=name_txt,
+                bg=THEME["panel2"], fg=THEME["text"], anchor="w",
+            ).grid(row=row_i, column=0, sticky="ew", padx=(14, 4), pady=4)
 
-            tk.Label(self.cart_tbl, text=money(qty * price), bg=THEME["panel2"], fg=THEME["text"], anchor="e").grid(
-                row=row_i, column=4, sticky="e", padx=(6, 6), pady=4
-            )
+            tk.Button(
+                self.cart_tbl, text="−",
+                command=lambda p=pid: self._change_qty(p, -1),
+                bg=THEME["panel"], fg=THEME["text"],
+                bd=0, width=2, cursor="hand2",
+            ).grid(row=row_i, column=1, padx=2, pady=4)
+
+            tk.Label(
+                self.cart_tbl, text=str(qty),
+                bg=THEME["panel2"], fg=THEME["text"],
+                width=3, anchor="center",
+            ).grid(row=row_i, column=2, padx=2, pady=4)
+
+            tk.Button(
+                self.cart_tbl, text="+",
+                command=lambda p=pid: self._change_qty(p, 1),
+                bg=THEME["panel"], fg=THEME["text"],
+                bd=0, width=2, cursor="hand2",
+            ).grid(row=row_i, column=3, padx=2, pady=4)
+
+            tk.Label(
+                self.cart_tbl, text=money(qty * price),
+                bg=THEME["panel2"], fg=THEME["text"], anchor="e",
+            ).grid(row=row_i, column=4, sticky="e", padx=(4, 4), pady=4)
 
             tk.Button(
                 self.cart_tbl,
-                text="x",
+                text="✕",
                 command=lambda p=pid: self._remove_from_cart(p),
                 bg=THEME["danger"],
                 fg="white",
@@ -775,7 +864,9 @@ class POSView(tk.Frame):
                 width=3,
                 padx=2,
                 pady=2,
-            ).grid(row=row_i, column=5, padx=(4, 12), pady=4, sticky="e")
+                cursor="hand2",
+                font=("Segoe UI", 9, "bold"),
+            ).grid(row=row_i, column=5, padx=(4, 10), pady=4, sticky="e")
 
             row_i += 1
 
@@ -799,7 +890,7 @@ class POSView(tk.Frame):
         except Exception:
             self._set_scroll_enabled(self.cart_canvas, True)
 
-        # Update ML suggestions based on current cart state
+        # Refresh ML suggestions after every cart change
         self.after(60, self._refresh_suggestions)
 
     # ---------------- ML Suggestions ----------------
@@ -807,72 +898,130 @@ class POSView(tk.Frame):
         """
         Rebuild the 'Suggested Items' panel based on the current cart.
 
-        Logic (pure Python, offline):
-          - Pass all product IDs in the current cart to the Recommender.
-          - The Recommender returns top-3 product IDs scored by pair frequency.
-          - Each suggestion is shown as a clickable button.
-          - The panel auto-hides when the cart is empty or no suggestions exist.
+        States:
+          1. Cart empty                   → hide panel entirely
+          2. Cart has items, no ML data   → show muted "No suggestions yet" message
+          3. Cart has items, suggestions  → show up to 3 clickable buttons
+                                            (out-of-stock items are skipped)
+
+        Panel is packed dynamically BEFORE _footer_top so it appears between
+        the cart and the totals/buttons row.
         """
         if self._suggestions_frame is None:
             return
 
-        # Clear previous widgets inside frame
+        # Clear stale content first
         for w in self._suggestions_frame.winfo_children():
             w.destroy()
 
+        # ── State 1: cart empty → hide ──────────────────────────────────────
         if not self.cart:
             if self._suggestions_frame.winfo_ismapped():
                 self._suggestions_frame.pack_forget()
             return
 
+        # ── Fetch suggestions ────────────────────────────────────────────────
         cart_ids = list(self.cart.keys())
+
+        if DEBUG:
+            print(f"[POS] _refresh_suggestions — cart_ids: {cart_ids}")
+
         try:
             suggested_ids = self.recommender.suggest(cart_ids, top_n=3)
-        except Exception:
+        except Exception as exc:
+            if DEBUG:
+                print(f"[POS] recommender.suggest() raised: {exc}")
             suggested_ids = []
 
+        if DEBUG:
+            print(f"[POS] suggested_ids returned to UI: {suggested_ids}")
+
+        # ── State 2: no data yet → show muted placeholder ───────────────────
         if not suggested_ids:
-            if self._suggestions_frame.winfo_ismapped():
-                self._suggestions_frame.pack_forget()
+            hdr2 = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
+            hdr2.pack(fill="x", padx=14, pady=(8, 2))
+            tk.Label(
+                hdr2,
+                text="💡 Suggested Items",
+                bg=THEME["panel"],
+                fg=THEME["muted"],
+                font=("Segoe UI", 9, "bold"),
+            ).pack(side="left")
+
+            tk.Label(
+                self._suggestions_frame,
+                text="No suggestions yet — complete more sales",
+                bg=THEME["panel"],
+                fg=THEME["muted"],
+                font=("Segoe UI", 8, "italic"),
+            ).pack(anchor="w", padx=14, pady=(0, 8))
+
+            if not self._suggestions_frame.winfo_ismapped():
+                self._suggestions_frame.pack(fill="x", pady=(2, 0), before=self._footer_top)
             return
 
-        # Resolve names and prices in one pass
+        # ── State 3: render suggestion buttons ──────────────────────────────
+
+        # Resolve display names in one pass (uses internal name cache)
         try:
             names = self.recommender.get_product_names(suggested_ids)
         except Exception:
             names = {pid: f"Item #{pid}" for pid in suggested_ids}
 
-        # Header row
-        hdr = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
-        hdr.pack(fill="x", padx=14, pady=(6, 2))
+        # Header
+        hdr3 = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
+        hdr3.pack(fill="x", padx=14, pady=(8, 2))
         tk.Label(
-            hdr,
+            hdr3,
             text="💡 Suggested Items",
             bg=THEME["panel"],
             fg=THEME["muted"],
             font=("Segoe UI", 9, "bold"),
         ).pack(side="left")
 
-        # One compact button per suggestion
         btn_row = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
         btn_row.pack(fill="x", padx=14, pady=(0, 8))
 
+        rendered = 0
         for pid in suggested_ids:
-            name = names.get(pid, f"#{pid}")
-            display = _truncate_text(name, max_len=14)
+            # ── Resolve stock and price ──────────────────────────────────────
+            stock_qty: int = 0
+            price: float = 0.0
+            found_in_cache = False
 
-            # Look up price from product cache
-            price = 0.0
-            for r in self._products_cache:
-                if int(r["product_id"]) == pid:
-                    price = float(r["price"])
+            # Fast path: check the already-loaded active product cache
+            for cached_row in self._products_cache:
+                if int(cached_row["product_id"]) == pid:
+                    stock_qty = int(_row_get(cached_row, "stock_qty", 0))
+                    price = float(cached_row["price"])
+                    found_in_cache = True
                     break
+
+            # Fallback: ask the DAO directly (handles products not in current filter)
+            if not found_in_cache:
+                try:
+                    prod = self.prod_dao.get(pid)
+                    if prod:
+                        stock_qty = prod.stock_qty
+                        price = prod.price
+                except Exception:
+                    pass
+
+            # ── Skip out-of-stock suggestions ───────────────────────────────
+            if stock_qty <= 0:
+                if DEBUG:
+                    print(f"[POS] Skipping suggestion #{pid} — out of stock (qty={stock_qty})")
+                continue
+
+            # ── Last-resort price fallback via recommender helper ────────────
             if price == 0.0:
-                # Fallback: fetch from DB via recommender helper
                 try:
                     price = self.recommender.get_product_price(pid)
                 except Exception:
                     price = 0.0
+
+            name = names.get(pid, f"#{pid}")
+            display = _truncate_text(name, max_len=14)
 
             def _add(p=pid, n=name, pr=price):
                 self._add_to_cart(p, n, pr)
@@ -882,7 +1031,7 @@ class POSView(tk.Frame):
                 text=f"+ {display}",
                 command=_add,
                 bg=THEME.get("beige", "#EADFD2"),
-                fg=THEME["brown"] if "brown" in THEME else THEME["text"],
+                fg=THEME["brown"],
                 bd=1,
                 relief="solid",
                 padx=6,
@@ -893,10 +1042,39 @@ class POSView(tk.Frame):
                 justify="center",
             )
             btn.pack(side="left", padx=(0, 6))
-            if display.endswith("…") or len(name) > 14:
+
+            if len(name) > 14:
                 self._add_tooltip(btn, name)
 
-        # Show the frame just above the Total line
+            rendered += 1
+
+        if DEBUG:
+            print(f"[POS] Rendered {rendered} suggestion button(s).")
+
+        # If every suggested item was out-of-stock, show the "no data" message
+        if rendered == 0:
+            for w in self._suggestions_frame.winfo_children():
+                w.destroy()
+
+            hdr_empty = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
+            hdr_empty.pack(fill="x", padx=14, pady=(8, 2))
+            tk.Label(
+                hdr_empty,
+                text="💡 Suggested Items",
+                bg=THEME["panel"],
+                fg=THEME["muted"],
+                font=("Segoe UI", 9, "bold"),
+            ).pack(side="left")
+
+            tk.Label(
+                self._suggestions_frame,
+                text="No suggestions yet — complete more sales",
+                bg=THEME["panel"],
+                fg=THEME["muted"],
+                font=("Segoe UI", 8, "italic"),
+            ).pack(anchor="w", padx=14, pady=(0, 8))
+
+        # Ensure panel is visible just above the totals row
         if not self._suggestions_frame.winfo_ismapped():
             self._suggestions_frame.pack(fill="x", pady=(2, 0), before=self._footer_top)
 
@@ -1047,15 +1225,19 @@ class POSView(tk.Frame):
             return
         ConfirmOrderDialog(self, self.db, self.auth, self.cart, self.discount_mode, self.discount_value, on_done=self._checkout_done)
 
-    def _checkout_done(self, cleared: bool = True):
+    # ✅ FIX: cache is only invalidated when the order was actually Completed.
+    #         Pending orders do NOT update the ML pair-frequency data.
+    def _checkout_done(self, cleared: bool = True, completed: bool = False):
         if cleared:
             self.cart.clear()
             self.discount_mode = "amount"
             self.discount_value = 0.0
             self._refresh_cart()
             self._refresh_drafts_panel()
-            # Invalidate ML cache so next suggestions reflect the new sale
-            self.recommender.invalidate_cache()
+
+            if completed:
+                # Only invalidate when a real sale was recorded
+                self.recommender.invalidate_cache()
 
 
 class ConfirmOrderDialog(tk.Toplevel):
@@ -1113,7 +1295,6 @@ class ConfirmOrderDialog(tk.Toplevel):
         total = max(0.0, subtotal - discount + tax)
         return subtotal, discount, tax, total
 
-    # ✅ UPDATED: mousewheel scroll works anywhere inside dialog
     def _build(self):
         wrap = tk.Frame(self, bg=THEME["bg"])
         wrap.pack(fill="both", expand=True)
@@ -1138,9 +1319,7 @@ class ConfirmOrderDialog(tk.Toplevel):
             canvas.yview_scroll(step * self.SCROLL_SPEED_UNITS, "units")
             return "break"
 
-        # ✅ bind to the dialog (so it works even when mouse is over Entry/Radiobutton/etc.)
         self.bind("<MouseWheel>", _mw, add="+")
-        # ✅ Linux support
         self.bind("<Button-4>", lambda _e: (canvas.yview_scroll(-self.SCROLL_SPEED_UNITS, "units"), "break"), add="+")
         self.bind("<Button-5>", lambda _e: (canvas.yview_scroll(self.SCROLL_SPEED_UNITS, "units"), "break"), add="+")
 
@@ -1326,8 +1505,12 @@ class ConfirmOrderDialog(tk.Toplevel):
             else:
                 messagebox.showinfo("Completed", f"Order completed.\n\nTransaction ID: {order_id}\nChange: {money(change)}")
 
+            # ✅ FIX: pass completed=True only when status is "Completed"
+            #         so the ML cache is only invalidated for real sales,
+            #         not for Pending (bank/e-wallet) orders.
             if self.on_done:
-                self.on_done(True)
+                self.on_done(True, status == "Completed")
+
             self.destroy()
         except Exception as e:
             messagebox.showerror("Checkout Error", f"Failed to save order.\n\n{e}")

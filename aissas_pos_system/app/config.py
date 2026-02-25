@@ -95,3 +95,9 @@ THEME["text_on_warning"] = "#FFFFFF"
 # ---------------- Exports / Reports ----------------
 EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ---------------- Debug Mode ----------------
+# Set to True to enable ML recommendation debug output in the terminal.
+# Prints: cart_ids, suggested_ids, ML rows count, top scores.
+DEBUG = True

@@ -24,7 +24,6 @@ class POSService:
     def list_all_products(self):
         return self.products.list_all_active()
 
-    # ---- Drafts ----
     def list_drafts(self):
         return self.drafts.list_drafts()
 
@@ -57,7 +56,6 @@ class POSService:
         }
         return self.drafts.create_draft(title, payload, total)
 
-    # ---- Orders ----
     def create_order(
         self,
         cashier_id: int,
