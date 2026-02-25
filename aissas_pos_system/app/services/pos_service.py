@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any
 
 from app.db.database import Database
@@ -62,18 +61,36 @@ class POSService:
     def create_order(
         self,
         cashier_id: int,
+        customer_name: str,
+        payment_method: str,
+        status: str,
+        reference_no: str,
         items: list[dict[str, Any]],
         subtotal: float,
         discount: float,
         tax: float,
         total: float,
-        payment_method: str,
+        amount_paid: float,
         cash_received: float,
         change_due: float,
     ) -> int:
-        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        """
+        Create a completed or pending order and persist all items.
+        Signature matches OrderDAO.insert_order() exactly.
+        """
         order_id = self.orders.insert_order(
-            dt, cashier_id, subtotal, discount, tax, total, payment_method, cash_received, change_due
+            cashier_id=cashier_id,
+            customer_name=customer_name,
+            payment_method=payment_method,
+            status=status,
+            reference_no=reference_no,
+            subtotal=subtotal,
+            discount=discount,
+            tax=tax,
+            total=total,
+            amount_paid=amount_paid,
+            cash_received=cash_received,
+            change_due=change_due,
         )
         for it in items:
             self.orders.insert_item(

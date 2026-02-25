@@ -12,6 +12,7 @@ from app.db.dao import CategoryDAO, ProductDAO, DraftDAO, OrderDAO
 from app.services.auth_service import AuthService
 from app.ui.dialogs import DiscountDialog
 from app.utils import money
+from app.ml.recommender import Recommender
 
 
 def _row_get(r, key: str, default=None):
@@ -127,6 +128,10 @@ class POSView(tk.Frame):
         self._active_tooltip: tk.Toplevel | None = None
 
         self._discount_visible = False
+
+        # ML suggestions
+        self.recommender = Recommender(db)
+        self._suggestions_frame: tk.Frame | None = None
 
         self._build()
         self.search_var.set("")
@@ -407,10 +412,16 @@ class POSView(tk.Frame):
         self.cart_canvas.bind("<Configure>", lambda e: self.cart_canvas.itemconfigure(self._cart_window_id, width=e.width), add="+")
         self._register_scroll_panel(cart_panel, self.cart_canvas)
 
-        footer_top = tk.Frame(right, bg=THEME["panel"])
-        footer_top.pack(fill="x", padx=14, pady=(0, 6))
-        footer_top.columnconfigure(0, weight=1)
-        footer_top.columnconfigure(1, weight=0)
+        # ---------------- Suggestions Panel (ML) ----------------
+        self._suggestions_frame = tk.Frame(right, bg=THEME["panel"])
+        # Populated by _refresh_suggestions(); auto-hides when empty.
+        # Built here so it appears between the cart and the total line.
+
+        self._footer_top = tk.Frame(right, bg=THEME["panel"])
+        self._footer_top.pack(fill="x", padx=14, pady=(0, 6))
+        self._footer_top.columnconfigure(0, weight=1)
+        self._footer_top.columnconfigure(1, weight=0)
+        footer_top = self._footer_top  # local alias for remaining _build() refs
 
         self.total_lbl = tk.Label(footer_top, text="Total: ₱0.00", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 12, "bold"))
         self.total_lbl.grid(row=0, column=0, sticky="w")
@@ -788,6 +799,107 @@ class POSView(tk.Frame):
         except Exception:
             self._set_scroll_enabled(self.cart_canvas, True)
 
+        # Update ML suggestions based on current cart state
+        self.after(60, self._refresh_suggestions)
+
+    # ---------------- ML Suggestions ----------------
+    def _refresh_suggestions(self):
+        """
+        Rebuild the 'Suggested Items' panel based on the current cart.
+
+        Logic (pure Python, offline):
+          - Pass all product IDs in the current cart to the Recommender.
+          - The Recommender returns top-3 product IDs scored by pair frequency.
+          - Each suggestion is shown as a clickable button.
+          - The panel auto-hides when the cart is empty or no suggestions exist.
+        """
+        if self._suggestions_frame is None:
+            return
+
+        # Clear previous widgets inside frame
+        for w in self._suggestions_frame.winfo_children():
+            w.destroy()
+
+        if not self.cart:
+            if self._suggestions_frame.winfo_ismapped():
+                self._suggestions_frame.pack_forget()
+            return
+
+        cart_ids = list(self.cart.keys())
+        try:
+            suggested_ids = self.recommender.suggest(cart_ids, top_n=3)
+        except Exception:
+            suggested_ids = []
+
+        if not suggested_ids:
+            if self._suggestions_frame.winfo_ismapped():
+                self._suggestions_frame.pack_forget()
+            return
+
+        # Resolve names and prices in one pass
+        try:
+            names = self.recommender.get_product_names(suggested_ids)
+        except Exception:
+            names = {pid: f"Item #{pid}" for pid in suggested_ids}
+
+        # Header row
+        hdr = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
+        hdr.pack(fill="x", padx=14, pady=(6, 2))
+        tk.Label(
+            hdr,
+            text="💡 Suggested Items",
+            bg=THEME["panel"],
+            fg=THEME["muted"],
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side="left")
+
+        # One compact button per suggestion
+        btn_row = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
+        btn_row.pack(fill="x", padx=14, pady=(0, 8))
+
+        for pid in suggested_ids:
+            name = names.get(pid, f"#{pid}")
+            display = _truncate_text(name, max_len=14)
+
+            # Look up price from product cache
+            price = 0.0
+            for r in self._products_cache:
+                if int(r["product_id"]) == pid:
+                    price = float(r["price"])
+                    break
+            if price == 0.0:
+                # Fallback: fetch from DB via recommender helper
+                try:
+                    price = self.recommender.get_product_price(pid)
+                except Exception:
+                    price = 0.0
+
+            def _add(p=pid, n=name, pr=price):
+                self._add_to_cart(p, n, pr)
+
+            btn = tk.Button(
+                btn_row,
+                text=f"+ {display}",
+                command=_add,
+                bg=THEME.get("beige", "#EADFD2"),
+                fg=THEME["brown"] if "brown" in THEME else THEME["text"],
+                bd=1,
+                relief="solid",
+                padx=6,
+                pady=4,
+                cursor="hand2",
+                font=("Segoe UI", 8),
+                wraplength=80,
+                justify="center",
+            )
+            btn.pack(side="left", padx=(0, 6))
+            if display.endswith("…") or len(name) > 14:
+                self._add_tooltip(btn, name)
+
+        # Show the frame just above the Total line
+        if not self._suggestions_frame.winfo_ismapped():
+            self._suggestions_frame.pack(fill="x", pady=(2, 0), before=self._footer_top)
+
     # ---------------- Discount ----------------
     def _add_discount(self):
         dlg = DiscountDialog(self)
@@ -942,6 +1054,8 @@ class POSView(tk.Frame):
             self.discount_value = 0.0
             self._refresh_cart()
             self._refresh_drafts_panel()
+            # Invalidate ML cache so next suggestions reflect the new sale
+            self.recommender.invalidate_cache()
 
 
 class ConfirmOrderDialog(tk.Toplevel):

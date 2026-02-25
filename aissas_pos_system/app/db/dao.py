@@ -529,15 +529,20 @@ class OrderDAO:
             (limit,),
         )
 
-    def order_items_for_ml(self, last_n_orders: int = 200):
-        """Get order items for ML recommender."""
-        return self.db.fetchall(
-            """
-            SELECT oi.order_id, oi.product_id
-            FROM order_items oi
-            JOIN orders o ON oi.order_id = o.id
-            ORDER BY o.datetime DESC
-            LIMIT ?;
-            """,
-            (last_n_orders * 10,),
-        )
+def order_items_for_ml(self, last_n_orders: int = 200):
+    """Get order items for ML recommender (last N COMPLETED orders)."""
+    return self.db.fetchall(
+        """
+        SELECT oi.order_id, oi.product_id
+        FROM order_items oi
+        JOIN (
+            SELECT id
+            FROM orders
+            WHERE status = 'Completed'
+            ORDER BY datetime DESC
+            LIMIT ?
+        ) recent ON recent.id = oi.order_id
+        ORDER BY oi.order_id ASC;
+        """,
+        (last_n_orders,),
+    )
