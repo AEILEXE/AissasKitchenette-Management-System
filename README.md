@@ -167,10 +167,6 @@ pyinstaller --onefile main.py
 
 Include asset directories manually via a spec file if distributing.
 
-## Credits & License
-
-(This section can be filled by project owner.)
-
 ---
 
 Enjoy using Aissa's Kitchenette Management System! Feel free to modify, extend, or package it for your own business needs.
