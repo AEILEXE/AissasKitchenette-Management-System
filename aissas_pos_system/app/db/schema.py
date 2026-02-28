@@ -80,6 +80,31 @@ ALL_SCHEMAS: list[str] = [
         FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE SET NULL
     );
     """,
+
+    # ── RBAC: per-role permission toggles ─────────────────────────────────────
+    """
+    CREATE TABLE IF NOT EXISTS role_permissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role TEXT NOT NULL,
+        permission TEXT NOT NULL,
+        granted INTEGER NOT NULL DEFAULT 1,
+        UNIQUE(role, permission)
+    );
+    """,
+
+    # ── Audit log for sensitive actions ───────────────────────────────────────
+    """
+    CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT NOT NULL DEFAULT '',
+        action TEXT NOT NULL,
+        detail TEXT NOT NULL DEFAULT '',
+        old_value TEXT NOT NULL DEFAULT '',
+        new_value TEXT NOT NULL DEFAULT '',
+        timestamp TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    """,
 ]
 
 INDEX_STATEMENTS: list[str] = [
@@ -89,6 +114,8 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);",
     "CREATE INDEX IF NOT EXISTS idx_orders_datetime ON orders(datetime);",
     "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);",
+    "CREATE INDEX IF NOT EXISTS idx_role_perms ON role_permissions(role, permission);",
+    "CREATE INDEX IF NOT EXISTS idx_audit_logs_ts ON audit_logs(timestamp);",
 ]
 
 SCHEMAS = ALL_SCHEMAS

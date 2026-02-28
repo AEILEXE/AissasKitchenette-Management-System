@@ -194,3 +194,28 @@ class Database:
         if self._table_exists("order_items"):
             self._add_column_if_missing("order_items", "unit_price", "REAL NOT NULL DEFAULT 0")
             self._add_column_if_missing("order_items", "note", "TEXT NOT NULL DEFAULT ''")
+
+        # =====================================================================
+        # ROLE_PERMISSIONS TABLE — seeded from constants if empty
+        # =====================================================================
+        if self._table_exists("role_permissions"):
+            r = self.fetchone("SELECT COUNT(*) AS c FROM role_permissions;")
+            if r and int(r["c"]) == 0:
+                self._seed_default_role_permissions()
+
+    def _seed_default_role_permissions(self) -> None:
+        """Populate role_permissions with hardcoded defaults (runs once on fresh DB)."""
+        try:
+            from app.constants import DEFAULT_ROLE_PERMISSIONS, ALL_PERMISSION_KEYS
+            for role, perms in DEFAULT_ROLE_PERMISSIONS.items():
+                for perm in ALL_PERMISSION_KEYS:
+                    granted = 1 if perm in perms else 0
+                    try:
+                        self.execute(
+                            "INSERT OR IGNORE INTO role_permissions(role, permission, granted) VALUES(?,?,?);",
+                            (role, perm, granted),
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass

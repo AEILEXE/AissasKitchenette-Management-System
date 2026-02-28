@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import datetime as _dt
+import shutil
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox, filedialog
 
 from app.config import THEME
 from app.db.database import Database
@@ -12,6 +13,7 @@ from app.ui.inventory_products_view import InventoryProductsView
 from app.ui.inventory_sales_view import InventorySalesView
 from app.ui.transactions_view import TransactionDetailsDialog
 from app.utils import money
+from app.constants import P_MANAGE_PRODS, P_MANAGE_USERS, P_DATABASE, P_EXPORT
 
 
 def _safe(r, key, default=None):
@@ -23,7 +25,7 @@ def _safe(r, key, default=None):
 
 
 def _bind_mousewheel(canvas: tk.Canvas) -> None:
-    """Bind scroll only while mouse is inside canvas (avoids stale-widget crash)."""
+    """Bind scroll only while mouse is inside canvas."""
     def _scroll(e):
         if canvas.winfo_exists():
             canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
@@ -32,6 +34,11 @@ def _bind_mousewheel(canvas: tk.Canvas) -> None:
 
 
 class InventoryShellView(tk.Frame):
+    """
+    B: Inventory shell with a TOP navigation bar (Overview / Sales / Products).
+    No left sidebar — content uses full width.
+    """
+
     def __init__(self, parent: tk.Frame, db: Database, auth: AuthService,
                  go_transactions_cb, go_pos_cb):
         super().__init__(parent, bg=THEME["bg"])
@@ -44,97 +51,96 @@ class InventoryShellView(tk.Frame):
         self.drafts   = DraftDAO(db)
         self.products = ProductDAO(db)
 
-        # ── Sidebar ───────────────────────────────────────────────────────────
-        self.sidebar = tk.Frame(self, bg=THEME["panel"],
-                                highlightthickness=1,
-                                highlightbackground=THEME["border"],
-                                width=170)
-        self.main = tk.Frame(self, bg=THEME["bg"])
-
-        self.sidebar.pack(side="left", fill="y")
-        self.sidebar.pack_propagate(False)
-        self.main.pack(side="left", fill="both", expand=True)
-
         self._active: str | None = None
-        self._btns: dict[str, tk.Frame] = {}
+        self._tab_btns: dict[str, tk.Button] = {}
 
-        self._build_sidebar()
+        self._build_topnav()
+
+        self.content = tk.Frame(self, bg=THEME["bg"])
+        self.content.pack(fill="both", expand=True)
+
         self.show_overview()
 
-    # Sidebar
+    # ── Top navigation bar ────────────────────────────────────────────────────
 
-    def _build_sidebar(self):
-        hdr = tk.Frame(self.sidebar, bg=THEME["brown_dark"])
-        hdr.pack(fill="x")
+    def _build_topnav(self):
+        nav = tk.Frame(self, bg=THEME["brown_dark"])
+        nav.pack(fill="x")
+
         tk.Label(
-            hdr, text="Inventory",
+            nav, text="Inventory",
             bg=THEME["brown_dark"], fg="white",
-            font=("Segoe UI", 11, "bold"),
-        ).pack(anchor="w", padx=14, pady=14)
+            font=("Segoe UI", 12, "bold"),
+        ).pack(side="left", padx=(16, 20), pady=12)
 
-        nav_items = [
+        tab_items = [
             ("overview", "Overview",  self.show_overview),
             ("sales",    "Sales",     self.show_sales),
             ("products", "Products",  self.show_products),
         ]
-        for key, text, cmd in nav_items:
-            row = tk.Frame(self.sidebar, bg=THEME["panel"], cursor="hand2")
-            row.pack(fill="x", pady=1)
-
-            lbl = tk.Label(
-                row, text=text,
-                bg=THEME["panel"], fg=THEME["text"],
+        for key, text, cmd in tab_items:
+            btn = tk.Button(
+                nav, text=text,
+                command=cmd,
+                bg=THEME["brown_dark"],
+                fg="white",
+                activebackground=THEME["brown"],
+                activeforeground="white",
+                bd=0, padx=16, pady=10,
+                cursor="hand2",
                 font=("Segoe UI", 10),
-                anchor="w", padx=14, pady=10,
+                relief="flat",
             )
-            lbl.pack(fill="x")
-
-            # Make entire row clickable
-            row.bind("<Button-1>", lambda _e, c=cmd: c())
-            lbl.bind("<Button-1>", lambda _e, c=cmd: c())
-
-            self._btns[key] = row
+            btn.pack(side="left", padx=2, pady=4)
+            self._tab_btns[key] = btn
 
     def _set_active(self, key: str):
         self._active = key
-        for k, row in self._btns.items():
-            is_active = k == key
-            bg = THEME["beige"] if is_active else THEME["panel"]
-            fg = THEME["brown"] if is_active else THEME["text"]
-            fw = "bold" if is_active else "normal"
-            row.configure(bg=bg)
-            for w in row.winfo_children():
-                if isinstance(w, tk.Label):
-                    w.configure(bg=bg, fg=fg, font=("Segoe UI", 10, fw))
+        for k, btn in self._tab_btns.items():
+            if k == key:
+                btn.configure(bg=THEME["brown"], font=("Segoe UI", 10, "bold"))
+            else:
+                btn.configure(bg=THEME["brown_dark"], font=("Segoe UI", 10))
 
-    def _clear_main(self):
-        for w in self.main.winfo_children():
+    def _clear_content(self):
+        for w in self.content.winfo_children():
             w.destroy()
 
-    # Overview / Dashboard
+    # ── Sub-view navigation ───────────────────────────────────────────────────
 
     def show_overview(self):
         self._set_active("overview")
-        self._clear_main()
+        self._clear_content()
+        self._build_overview()
 
-        outer = tk.Frame(self.main, bg=THEME["bg"])
+    def show_sales(self):
+        self._set_active("sales")
+        self._clear_content()
+        InventorySalesView(self.content, self.db, self.auth).pack(fill="both", expand=True)
+
+    def show_products(self):
+        self._set_active("products")
+        self._clear_content()
+        InventoryProductsView(self.content, self.db, self.auth).pack(fill="both", expand=True)
+
+    # ── Overview (dashboard) ──────────────────────────────────────────────────
+
+    def _build_overview(self):
+        outer = tk.Frame(self.content, bg=THEME["bg"])
         outer.pack(fill="both", expand=True)
         outer.rowconfigure(0, weight=1)
         outer.columnconfigure(0, weight=1)
 
         canvas = tk.Canvas(outer, bg=THEME["bg"], highlightthickness=0)
         canvas.grid(row=0, column=0, sticky="nsew")
-
         sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
         sb.grid(row=0, column=1, sticky="ns")
         canvas.configure(yscrollcommand=sb.set)
 
         wrap = tk.Frame(canvas, bg=THEME["bg"])
         win  = canvas.create_window((0, 0), window=wrap, anchor="nw")
-        wrap.bind("<Configure>",
-                  lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>",
-                    lambda e: canvas.itemconfigure(win, width=e.width))
+        wrap.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
         _bind_mousewheel(canvas)
 
         self._build_dashboard_content(wrap)
@@ -144,25 +150,16 @@ class InventoryShellView(tk.Frame):
         hdr = tk.Frame(wrap, bg=THEME["bg"])
         hdr.pack(fill="x", padx=20, pady=(18, 14))
         hdr.columnconfigure(0, weight=1)
+        tk.Label(hdr, text="Dashboard", bg=THEME["bg"], fg=THEME["text"],
+                 font=("Segoe UI", 20, "bold")).grid(row=0, column=0, sticky="w")
+        tk.Button(hdr, text="\u21ba  Refresh", command=self.show_overview,
+                  bg=THEME["panel2"], fg=THEME["text"],
+                  bd=0, padx=12, pady=6, cursor="hand2",
+                  font=("Segoe UI", 9)).grid(row=0, column=1, sticky="e")
 
-        tk.Label(
-            hdr, text="Dashboard",
-            bg=THEME["bg"], fg=THEME["text"],
-            font=("Segoe UI", 20, "bold"),
-        ).grid(row=0, column=0, sticky="w")
-
-        tk.Button(
-            hdr, text="\u21ba  Refresh",
-            command=self.show_overview,
-            bg=THEME["panel2"], fg=THEME["text"],
-            bd=0, padx=12, pady=6, cursor="hand2",
-            font=("Segoe UI", 9),
-        ).grid(row=0, column=1, sticky="e")
-
-        # ── Fetch data ────────────────────────────────────────────────────────
-        today_row = self.orders.summary_today() or {}
-        month_row = self.orders.summary_month() or {}
-
+        # Fetch data
+        today_row  = self.orders.summary_today()  or {}
+        month_row  = self.orders.summary_month()  or {}
         today_sales = float(_safe(today_row, "total_sales", 0.0))
         today_count = int(_safe(today_row, "order_count", 0))
         month_sales = float(_safe(month_row, "total_sales", 0.0))
@@ -172,103 +169,88 @@ class InventoryShellView(tk.Frame):
         pending_all   = self.orders.count_by_status("Pending")
         total_txns    = completed_all + pending_all
 
-        try:
-            active_products = self.products.count_active()
-        except Exception:
-            active_products = 0
+        try: active_products = self.products.count_active()
+        except Exception: active_products = 0
+        try: draft_count = self.drafts.count_drafts()
+        except Exception: draft_count = 0
+        try: unavail_count = self.products.count_unavailable()
+        except Exception: unavail_count = 0
 
-        try:
-            draft_count = self.drafts.count_drafts()
-        except Exception:
-            draft_count = 0
-
-        try:
-            unavail_count = self.products.count_unavailable()
-        except Exception:
-            unavail_count = 0
-
-        # ── Row 1: 4 cards ────────────────────────────────────────────────────
+        # Row 1: 4 KPI cards
         row1 = tk.Frame(wrap, bg=THEME["bg"])
         row1.pack(fill="x", padx=20, pady=(0, 10))
-        for i in range(4):
-            row1.columnconfigure(i, weight=1, uniform="card1")
+        for i in range(4): row1.columnconfigure(i, weight=1, uniform="card1")
 
         cards_row1 = [
-            (
-                "Sales Today",
-                money(today_sales),
-                f"{today_count} order{'s' if today_count != 1 else ''}",
-                THEME["success"],
-                lambda: self._go_transactions_filtered("Completed"),
-            ),
-            (
-                "Sales This Month",
-                money(month_sales),
-                f"{month_count} order{'s' if month_count != 1 else ''}",
-                THEME["brown"],
-                lambda: self._go_transactions_filtered("Completed"),
-            ),
-            (
-                "Active Products",
-                str(active_products),
-                "in menu",
-                THEME["accent"],
-                self.show_products,
-            ),
-            (
-                "Total Transactions",
-                str(total_txns),
-                f"{pending_all} pending",
-                THEME["warning"],
-                self.go_transactions_cb,
-            ),
+            ("Sales Today",       money(today_sales),
+             f"{today_count} order{'s' if today_count != 1 else ''}",
+             THEME["success"],  lambda: self._go_transactions_filtered("Completed")),
+            ("Sales This Month",  money(month_sales),
+             f"{month_count} order{'s' if month_count != 1 else ''}",
+             THEME["brown"],    lambda: self._go_transactions_filtered("Completed")),
+            ("Active Products",   str(active_products), "in menu",
+             THEME["accent"],   self.show_products),
+            ("Total Transactions", str(total_txns), f"{pending_all} pending",
+             THEME["warning"],  self.go_transactions_cb),
         ]
         for col, (title, value, sub, accent, cmd) in enumerate(cards_row1):
             self._make_summary_card(row1, col, title, value, sub, accent, cmd)
 
-        # ── Row 2: Draft Count + Not Available ────────────────────────────────
+        # Row 2: Draft + Not Available
         row2 = tk.Frame(wrap, bg=THEME["bg"])
         row2.pack(fill="x", padx=20, pady=(0, 20))
-        for i in range(2):
-            row2.columnconfigure(i, weight=1, uniform="card2")
+        for i in range(2): row2.columnconfigure(i, weight=1, uniform="card2")
 
         cards_row2 = [
-            (
-                "Draft Orders",
-                str(draft_count),
-                "saved in POS drafts",
-                "#7c3aed",
-                self.go_pos_cb,
-            ),
-            (
-                "Not Available",
-                str(unavail_count),
-                "products hidden from POS",
-                THEME["danger"],
-                self.show_products,
-            ),
+            ("Draft Orders",  str(draft_count),   "saved in POS drafts",
+             "#7c3aed", self.go_pos_cb),
+            ("Not Available", str(unavail_count), "products hidden from POS",
+             THEME["danger"], self.show_products),
         ]
         for col, (title, value, sub, accent, cmd) in enumerate(cards_row2):
             self._make_summary_card(row2, col, title, value, sub, accent, cmd)
 
-        # ── Recent Transactions ───────────────────────────────────────────────
+        self._build_recent_transactions(wrap)
+        self._build_top_sellers(wrap)
+        self._build_quick_actions(wrap)
+
+    # ── Summary card ──────────────────────────────────────────────────────────
+
+    def _make_summary_card(self, parent, col, title, value, subtitle, accent, cmd):
+        pad_left = 0 if col == 0 else 8
+        card = tk.Frame(parent, bg=THEME["panel"],
+                        highlightthickness=1, highlightbackground=THEME["border"],
+                        cursor="hand2")
+        card.grid(row=0, column=col, sticky="ew", padx=(pad_left, 0), pady=4)
+        card.bind("<Button-1>", lambda _e: cmd())
+
+        bar = tk.Frame(card, bg=accent, height=4)
+        bar.pack(fill="x")
+        bar.bind("<Button-1>", lambda _e: cmd())
+
+        for text, fg, fnt in [
+            (title,    THEME["muted"], ("Segoe UI", 9)),
+            (value,    accent,         ("Segoe UI", 18, "bold")),
+            (subtitle, THEME["muted"], ("Segoe UI", 8)),
+        ]:
+            pady_val = (10, 2) if text == title else ((2, 12) if text == subtitle else 0)
+            lbl = tk.Label(card, text=text, bg=THEME["panel"], fg=fg, font=fnt)
+            lbl.pack(anchor="w", padx=14, pady=pady_val)
+            lbl.bind("<Button-1>", lambda _e: cmd())
+
+    # ── Recent Transactions ───────────────────────────────────────────────────
+
+    def _build_recent_transactions(self, wrap: tk.Frame):
         sec = tk.Frame(wrap, bg=THEME["bg"])
-        sec.pack(fill="both", expand=True, padx=20, pady=(0, 22))
+        sec.pack(fill="both", expand=True, padx=20, pady=(0, 16))
 
         sec_hdr = tk.Frame(sec, bg=THEME["bg"])
         sec_hdr.pack(fill="x", pady=(0, 8))
-        tk.Label(
-            sec_hdr, text="Recent Transactions",
-            bg=THEME["bg"], fg=THEME["text"],
-            font=("Segoe UI", 13, "bold"),
-        ).pack(side="left")
-        tk.Button(
-            sec_hdr, text="View all \u2192",
-            command=self.go_transactions_cb,
-            bg=THEME["bg"], fg=THEME["brown"],
-            bd=0, cursor="hand2",
-            font=("Segoe UI", 9, "underline"),
-        ).pack(side="right", padx=(0, 2))
+        tk.Label(sec_hdr, text="Recent Transactions", bg=THEME["bg"], fg=THEME["text"],
+                 font=("Segoe UI", 13, "bold")).pack(side="left")
+        tk.Button(sec_hdr, text="View all \u2192", command=self.go_transactions_cb,
+                  bg=THEME["bg"], fg=THEME["brown"], bd=0, cursor="hand2",
+                  font=("Segoe UI", 9, "underline")).pack(side="right", padx=(0, 2))
 
         tbl_frame = tk.Frame(sec, bg=THEME["panel"],
                              highlightthickness=1, highlightbackground=THEME["border"])
@@ -287,21 +269,22 @@ class InventoryShellView(tk.Frame):
 
         cols = ("id", "date", "payment", "total", "status")
         tbl = ttk.Treeview(tbl_frame, columns=cols, show="headings",
-                           style="Dash.Treeview", height=11)
+                           style="Dash.Treeview", height=9)
         tbl.grid(row=0, column=0, sticky="nsew")
         ysb = ttk.Scrollbar(tbl_frame, orient="vertical", command=tbl.yview)
         ysb.grid(row=0, column=1, sticky="ns")
         tbl.configure(yscrollcommand=ysb.set)
 
+        # C: Aligned columns
         col_cfg = [
-            ("id",      "#",           55,  "center", False),
-            ("date",    "Date & Time", 170, "w",      True),
+            ("id",      "#",           60,  "center", False),
+            ("date",    "Date & Time", 180, "center", True),
             ("payment", "Payment",     130, "center", False),
-            ("total",   "Total",       105, "e",      False),
+            ("total",   "Total",       110, "e",      False),
             ("status",  "Status",      100, "center", False),
         ]
         for cid, heading, width, anchor, stretch in col_cfg:
-            tbl.heading(cid, text=heading)
+            tbl.heading(cid, text=heading, anchor="center")
             tbl.column(cid, width=width, minwidth=width, anchor=anchor, stretch=stretch)
 
         tbl.tag_configure("Completed", foreground=THEME["success"])
@@ -314,8 +297,7 @@ class InventoryShellView(tk.Frame):
             if not sel:
                 return
             try:
-                oid = int(sel[0])
-                TransactionDetailsDialog(self, self.db, oid)
+                TransactionDetailsDialog(self, self.db, int(sel[0]))
             except Exception:
                 pass
 
@@ -339,8 +321,7 @@ class InventoryShellView(tk.Frame):
             status = str(_safe(r, "status", ""))
             try:
                 order_date = _dt.datetime.fromisoformat(dt_str).date()
-                if (order_date == today_date and status == "Completed"
-                        and total > highest_today_total):
+                if order_date == today_date and status == "Completed" and total > highest_today_total:
                     highest_today_total = total
                     highest_today_id = oid
             except Exception:
@@ -353,60 +334,146 @@ class InventoryShellView(tk.Frame):
         if highest_today_id is not None:
             tbl.item(str(highest_today_id), tags=("best_today",))
 
-        if recent:
-            r0        = recent[0]
-            latest_id = int(_safe(r0, "order_id", 0))
-            latest_dt = str(_safe(r0, "start_dt", ""))
-            info = f"Latest: #{latest_id}  \u00b7  {latest_dt}"
-            if highest_today_id is not None:
-                info += f"     |     Highest today: #{highest_today_id}  ({money(highest_today_total)})"
-            tk.Label(sec, text=info, bg=THEME["bg"], fg=THEME["muted"],
-                     font=("Segoe UI", 8)).pack(anchor="w", pady=(6, 0))
+    # ── G: Top Sellers Today ──────────────────────────────────────────────────
 
-    # ── Summary card ──────────────────────────────────────────────────────────
+    def _build_top_sellers(self, wrap: tk.Frame):
+        sec = tk.Frame(wrap, bg=THEME["bg"])
+        sec.pack(fill="x", padx=20, pady=(0, 16))
 
-    def _make_summary_card(self, parent: tk.Frame, col: int,
-                           title: str, value: str, subtitle: str,
-                           accent: str, cmd):
-        pad_left = 0 if col == 0 else 8
-        card = tk.Frame(parent, bg=THEME["panel"],
-                        highlightthickness=1, highlightbackground=THEME["border"],
-                        cursor="hand2")
-        card.grid(row=0, column=col, sticky="ew", padx=(pad_left, 0), pady=4)
-        card.bind("<Button-1>", lambda _e: cmd())
+        sec_hdr = tk.Frame(sec, bg=THEME["bg"])
+        sec_hdr.pack(fill="x", pady=(0, 8))
+        tk.Label(sec_hdr, text="Top Sellers — Today",
+                 bg=THEME["bg"], fg=THEME["text"],
+                 font=("Segoe UI", 13, "bold")).pack(side="left")
+        tk.Button(sec_hdr, text="All Transactions \u2192",
+                  command=self.go_transactions_cb,
+                  bg=THEME["bg"], fg=THEME["brown"], bd=0, cursor="hand2",
+                  font=("Segoe UI", 9, "underline")).pack(side="right")
 
-        bar = tk.Frame(card, bg=accent, height=4)
-        bar.pack(fill="x")
-        bar.bind("<Button-1>", lambda _e: cmd())
+        card = tk.Frame(sec, bg=THEME["panel"],
+                        highlightthickness=1, highlightbackground=THEME["border"])
+        card.pack(fill="x")
 
-        lbl_title = tk.Label(card, text=title, bg=THEME["panel"], fg=THEME["muted"],
-                             font=("Segoe UI", 9))
-        lbl_title.pack(anchor="w", padx=14, pady=(10, 2))
-        lbl_title.bind("<Button-1>", lambda _e: cmd())
+        try:
+            rows = self.orders.best_sellers_today(5)
+        except Exception:
+            rows = []
 
-        lbl_value = tk.Label(card, text=value, bg=THEME["panel"], fg=accent,
-                             font=("Segoe UI", 18, "bold"))
-        lbl_value.pack(anchor="w", padx=14)
-        lbl_value.bind("<Button-1>", lambda _e: cmd())
+        if not rows:
+            tk.Label(card, text="No sales recorded today yet.",
+                     bg=THEME["panel"], fg=THEME["muted"],
+                     font=("Segoe UI", 9, "italic"), pady=14,
+                     ).pack(anchor="w", padx=16)
+            return
 
-        lbl_sub = tk.Label(card, text=subtitle, bg=THEME["panel"], fg=THEME["muted"],
-                           font=("Segoe UI", 8))
-        lbl_sub.pack(anchor="w", padx=14, pady=(2, 12))
-        lbl_sub.bind("<Button-1>", lambda _e: cmd())
+        # Header
+        hdr = tk.Frame(card, bg=THEME["beige"])
+        hdr.pack(fill="x")
+        hdr.columnconfigure(1, weight=1)
+        tk.Label(hdr, text="#",       bg=THEME["beige"], fg=THEME["muted"],
+                 font=("Segoe UI", 8, "bold"), width=3, anchor="center",
+                 ).grid(row=0, column=0, padx=(14, 4), pady=6)
+        tk.Label(hdr, text="Product", bg=THEME["beige"], fg=THEME["muted"],
+                 font=("Segoe UI", 8, "bold"), anchor="w",
+                 ).grid(row=0, column=1, sticky="ew", padx=4, pady=6)
+        tk.Label(hdr, text="Qty",     bg=THEME["beige"], fg=THEME["muted"],
+                 font=("Segoe UI", 8, "bold"), width=8, anchor="center",
+                 ).grid(row=0, column=2, padx=4, pady=6)
+        tk.Label(hdr, text="Revenue", bg=THEME["beige"], fg=THEME["muted"],
+                 font=("Segoe UI", 8, "bold"), width=11, anchor="e",
+                 ).grid(row=0, column=3, padx=(4, 14), pady=6)
 
-    # =========================================================================
-    # Navigation helpers
-    # =========================================================================
+        rank_colors = ["#d4ac0d", "#aab7b8", "#ca6f1e", THEME["muted"], THEME["muted"]]
+        for i, r in enumerate(rows, 1):
+            name    = str(_safe(r, "name", "—"))
+            qty     = int(_safe(r, "total_qty", 0))
+            revenue = float(_safe(r, "total_sales", 0.0))
+            row_bg  = THEME["panel"] if i % 2 else "#f9f5f1"
+
+            fr = tk.Frame(card, bg=row_bg, cursor="hand2")
+            fr.pack(fill="x", padx=2, pady=1)
+            fr.columnconfigure(1, weight=1)
+
+            tk.Label(fr, text=f"#{i}", bg=row_bg,
+                     fg=rank_colors[i - 1] if i <= 5 else THEME["muted"],
+                     font=("Segoe UI", 9, "bold"), width=3, anchor="center",
+                     ).grid(row=0, column=0, padx=(14, 4), pady=7)
+            tk.Label(fr, text=name, bg=row_bg, fg=THEME["text"],
+                     font=("Segoe UI", 9), anchor="w",
+                     ).grid(row=0, column=1, sticky="ew", padx=4, pady=7)
+            tk.Label(fr, text=str(qty), bg=row_bg, fg=THEME["accent"],
+                     font=("Segoe UI", 9, "bold"), width=8, anchor="center",
+                     ).grid(row=0, column=2, padx=4, pady=7)
+            tk.Label(fr, text=money(revenue), bg=row_bg, fg=THEME["success"],
+                     font=("Segoe UI", 9, "bold"), width=11, anchor="e",
+                     ).grid(row=0, column=3, padx=(4, 14), pady=7)
+
+            fr.bind("<Button-1>", lambda _e: self.go_transactions_cb())
+
+    # ── G: Quick Actions ──────────────────────────────────────────────────────
+
+    def _build_quick_actions(self, wrap: tk.Frame):
+        sec = tk.Frame(wrap, bg=THEME["bg"])
+        sec.pack(fill="x", padx=20, pady=(0, 28))
+
+        tk.Label(sec, text="Quick Actions", bg=THEME["bg"], fg=THEME["text"],
+                 font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(0, 8))
+
+        card = tk.Frame(sec, bg=THEME["panel"],
+                        highlightthickness=1, highlightbackground=THEME["border"])
+        card.pack(fill="x")
+        btn_row = tk.Frame(card, bg=THEME["panel"])
+        btn_row.pack(fill="x", padx=16, pady=14)
+
+        can_manage = self.auth.has_permission(P_MANAGE_PRODS)
+        can_export = self.auth.has_permission(P_EXPORT)
+        can_db     = self.auth.has_permission(P_DATABASE)
+        can_users  = self.auth.has_permission(P_MANAGE_USERS)
+
+        def _qa_btn(text: str, color: str, cmd):
+            tk.Button(
+                btn_row, text=text,
+                bg=color, fg="white",
+                activebackground=color, activeforeground="white",
+                bd=0, padx=14, pady=10, cursor="hand2",
+                font=("Segoe UI", 9, "bold"),
+                command=cmd,
+            ).pack(side="left", padx=(0, 10))
+
+        if can_manage:
+            _qa_btn("+ Add Product", THEME["success"], self.show_products)
+        if can_export:
+            _qa_btn("Export Sales", THEME["brown"], self.show_sales)
+        if can_db:
+            _qa_btn("Backup Database", THEME["accent"], self._quick_backup_db)
+        if can_users:
+            _qa_btn("Manage Users", "#7c3aed", self._quick_manage_users)
+
+        if not (can_manage or can_export or can_db or can_users):
+            tk.Label(card, text="No quick actions available for your role.",
+                     bg=THEME["panel"], fg=THEME["muted"],
+                     font=("Segoe UI", 9, "italic"), pady=10,
+                     ).pack(padx=16, anchor="w")
+
+    def _quick_backup_db(self):
+        from app.config import DB_PATH
+        dest = filedialog.asksaveasfilename(
+            title="Export Database Backup",
+            defaultextension=".db",
+            filetypes=[("SQLite Database", "*.db"), ("All files", "*.*")],
+            initialfile="pos_backup.db",
+        )
+        if not dest:
+            return
+        try:
+            shutil.copy2(str(DB_PATH), dest)
+            messagebox.showinfo("Backup Complete", f"Database exported to:\n{dest}")
+        except Exception as e:
+            messagebox.showerror("Backup Failed", f"Could not export database:\n{e}")
+
+    def _quick_manage_users(self):
+        from app.ui.account_settings_view import AccountSettingsDialog
+        AccountSettingsDialog(self.winfo_toplevel(), self.db, self.auth)
 
     def _go_transactions_filtered(self, status: str):
         self.go_transactions_cb()
-
-    def show_sales(self):
-        self._set_active("sales")
-        self._clear_main()
-        InventorySalesView(self.main, self.db, self.auth).pack(fill="both", expand=True)
-
-    def show_products(self):
-        self._set_active("products")
-        self._clear_main()
-        InventoryProductsView(self.main, self.db, self.auth).pack(fill="both", expand=True)

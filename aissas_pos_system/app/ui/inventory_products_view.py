@@ -112,9 +112,9 @@ class InventoryProductsView(tk.Frame):
         search_pill.columnconfigure(1, weight=1)
 
         tk.Label(
-            search_pill, text="🔍",
+            search_pill, text="Search",
             bg=THEME["panel"], fg=THEME["muted"],
-            font=("Segoe UI", ui_scale.scale_font(10)),
+            font=("Segoe UI", ui_scale.scale_font(9)),
         ).grid(row=0, column=0, padx=(10, 4), pady=4)
 
         ent_search = tk.Entry(

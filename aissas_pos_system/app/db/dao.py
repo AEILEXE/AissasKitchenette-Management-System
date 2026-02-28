@@ -594,3 +594,116 @@ class OrderDAO:
             """,
             (int(last_n_orders),),
         )
+
+
+# ROLE PERMISSION DATA ACCESS OBJECT
+
+class RolePermissionDAO:
+    """
+    Manages role_permissions table — per-role permission toggles.
+    Columns: id, role, permission, granted
+    """
+
+    def __init__(self, db: Database):
+        self.db = db
+
+    def get_permissions(self, role: str) -> dict[str, bool]:
+        """Return {permission_key: granted} for a role."""
+        rows = self.db.fetchall(
+            "SELECT permission, granted FROM role_permissions WHERE role=?;",
+            (role.upper(),),
+        )
+        return {r["permission"]: bool(r["granted"]) for r in rows}
+
+    def set_permission(self, role: str, permission: str, granted: bool) -> None:
+        """Upsert a single permission for a role."""
+        self.db.execute(
+            """
+            INSERT INTO role_permissions(role, permission, granted)
+            VALUES(?,?,?)
+            ON CONFLICT(role, permission) DO UPDATE SET granted=excluded.granted;
+            """,
+            (role.upper(), permission, 1 if granted else 0),
+        )
+
+    def has_permission(self, role: str, permission: str) -> bool:
+        """Check if a role has a specific permission (True if granted=1)."""
+        r = self.db.fetchone(
+            "SELECT granted FROM role_permissions WHERE role=? AND permission=?;",
+            (role.upper(), permission),
+        )
+        if r is None:
+            # No DB entry → fall back to static defaults
+            from app.constants import DEFAULT_ROLE_PERMISSIONS
+            return permission in DEFAULT_ROLE_PERMISSIONS.get(role.upper(), set())
+        return bool(r["granted"])
+
+    def all_roles_permissions(self) -> dict[str, dict[str, bool]]:
+        """Return nested dict: {role: {permission: granted}}."""
+        rows = self.db.fetchall(
+            "SELECT role, permission, granted FROM role_permissions ORDER BY role, permission;"
+        )
+        result: dict[str, dict[str, bool]] = {}
+        for r in rows:
+            rl = r["role"]
+            if rl not in result:
+                result[rl] = {}
+            result[rl][r["permission"]] = bool(r["granted"])
+        return result
+
+    def ensure_seeded(self) -> None:
+        """Ensure all roles × all permissions exist in DB (missing = insert default)."""
+        from app.constants import DEFAULT_ROLE_PERMISSIONS, ALL_PERMISSION_KEYS, ROLES
+        for role in ROLES:
+            defaults = DEFAULT_ROLE_PERMISSIONS.get(role, set())
+            for perm in ALL_PERMISSION_KEYS:
+                self.db.execute(
+                    "INSERT OR IGNORE INTO role_permissions(role, permission, granted) VALUES(?,?,?);",
+                    (role, perm, 1 if perm in defaults else 0),
+                )
+
+
+# AUDIT LOG DATA ACCESS OBJECT
+
+class AuditLogDAO:
+    """
+    Manages audit_logs table — records sensitive actions.
+    Columns: id, user_id, username, action, detail, old_value, new_value, timestamp
+    """
+
+    def __init__(self, db: Database):
+        self.db = db
+
+    def log(
+        self,
+        username: str,
+        action: str,
+        detail: str = "",
+        old_value: str = "",
+        new_value: str = "",
+        user_id: int = 0,
+    ) -> None:
+        """Insert an audit log entry."""
+        try:
+            self.db.execute(
+                """
+                INSERT INTO audit_logs(user_id, username, action, detail, old_value, new_value)
+                VALUES(?,?,?,?,?,?);
+                """,
+                (int(user_id), str(username), str(action),
+                 str(detail), str(old_value), str(new_value)),
+            )
+        except Exception:
+            pass  # Audit failures must never crash the app
+
+    def list_recent(self, limit: int = 50):
+        """Return most recent audit log entries."""
+        return self.db.fetchall(
+            """
+            SELECT id, username, action, detail, old_value, new_value, timestamp
+            FROM audit_logs
+            ORDER BY datetime(timestamp) DESC
+            LIMIT ?;
+            """,
+            (int(limit),),
+        )

@@ -474,7 +474,9 @@ class InventorySalesView(tk.Frame):
 
             # ── Data rows ─────────────────────────────────────────────────────
             for row_idx, (label, value) in enumerate(data, start=6):
-                pct = (value / total_sales * 100) if total_sales else 0
+                # Store as decimal fraction (e.g. 0.255) so Excel's 0.00% format
+                # renders it correctly as "25.50%" instead of "2550.00%"
+                pct = (value / total_sales) if total_sales else 0
                 row_fill = PatternFill("solid", fgColor="FFFFFF" if (row_idx % 2 == 0) else "FAF7F4")
 
                 c_period = ws.cell(row=row_idx, column=1, value=label)
@@ -485,7 +487,7 @@ class InventorySalesView(tk.Frame):
                 c_sales.alignment     = right_align
                 c_sales.fill          = row_fill
 
-                c_pct = ws.cell(row=row_idx, column=3, value=round(pct, 2))
+                c_pct = ws.cell(row=row_idx, column=3, value=round(pct, 6))
                 c_pct.number_format = "0.00%"
                 c_pct.alignment     = right_align
                 c_pct.fill          = row_fill

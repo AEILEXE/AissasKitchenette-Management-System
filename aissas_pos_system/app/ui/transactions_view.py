@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import calendar as _cal
 import tkinter as tk
 from tkinter import ttk, messagebox
-from datetime import datetime  # IMPORTANT for latest sale detection
+from datetime import datetime
 
 from app.config import THEME
 from app.db.database import Database
@@ -12,43 +13,202 @@ from app.services.receipt_service import ReceiptService
 from app.ui import ui_scale
 from app.utils import money
 
-# --- Offline calendar picker (tkcalendar) ---
-_TKCAL_ERROR = None
-try:
-    import tkcalendar as _tkcal  # pip install tkcalendar
-    Calendar = _tkcal.Calendar
-except Exception as e:
-    Calendar = None
-    _TKCAL_ERROR = e
+
+# ── Pure-Tkinter date picker ──────────────────────────────────────────────────
+
+class DatePickerDialog(tk.Toplevel):
+    """
+    Minimal pure-Tkinter month-calendar date picker.
+    After wait_window() returns, check .result for the chosen 'YYYY-MM-DD'
+    string, or None if the dialog was cancelled.
+    """
+
+    _DAY_HEADERS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+
+    def __init__(self, parent: tk.Widget, initial: str | None = None):
+        super().__init__(parent)
+        self.result: str | None = None
+
+        today = datetime.today()
+        try:
+            d = datetime.fromisoformat(initial) if initial else today
+        except Exception:
+            d = today
+
+        self._year  = d.year
+        self._month = d.month
+
+        self.title("Select Date")
+        self.configure(bg=THEME["bg"])
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self._day_frame: tk.Frame | None  = None
+        self._lbl_month: tk.Label | None  = None
+
+        self._build()
+
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        w  = max(self.winfo_reqwidth()  + 28, 300)
+        h  = max(self.winfo_reqheight() + 28, 280)
+        self.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+
+        self.wait_window()
+
+    def _build(self):
+        outer = tk.Frame(self, bg=THEME["bg"])
+        outer.pack(fill="both", expand=True, padx=14, pady=10)
+
+        # ── Navigation row ─────────────────────────────────────────────────
+        nav = tk.Frame(outer, bg=THEME["bg"])
+        nav.pack(fill="x", pady=(0, 6))
+
+        tk.Button(
+            nav, text=" < ", bd=0, cursor="hand2",
+            bg=THEME["panel2"], fg=THEME["text"],
+            font=("Segoe UI", 10), padx=8, pady=4,
+            command=self._prev_month,
+        ).pack(side="left")
+
+        self._lbl_month = tk.Label(
+            nav, bg=THEME["bg"], fg=THEME["text"],
+            font=("Segoe UI", 11, "bold"), width=20, anchor="center",
+        )
+        self._lbl_month.pack(side="left", fill="x", expand=True)
+
+        tk.Button(
+            nav, text=" > ", bd=0, cursor="hand2",
+            bg=THEME["panel2"], fg=THEME["text"],
+            font=("Segoe UI", 10), padx=8, pady=4,
+            command=self._next_month,
+        ).pack(side="right")
+
+        # ── Day-of-week headers ────────────────────────────────────────────
+        hdr_row = tk.Frame(outer, bg=THEME["bg"])
+        hdr_row.pack(fill="x")
+        for col, txt in enumerate(self._DAY_HEADERS):
+            tk.Label(
+                hdr_row, text=txt,
+                bg=THEME["bg"], fg=THEME["muted"],
+                font=("Segoe UI", 8, "bold"), width=4, anchor="center",
+            ).grid(row=0, column=col, padx=2, pady=(0, 4))
+
+        # ── Day grid ──────────────────────────────────────────────────────
+        self._day_frame = tk.Frame(outer, bg=THEME["bg"])
+        self._day_frame.pack(fill="both")
+
+        # ── Footer ────────────────────────────────────────────────────────
+        foot = tk.Frame(outer, bg=THEME["bg"])
+        foot.pack(fill="x", pady=(8, 0))
+
+        tk.Button(
+            foot, text="Today", bd=0, cursor="hand2",
+            bg=THEME["panel2"], fg=THEME["text"],
+            padx=10, pady=5,
+            command=self._go_today,
+        ).pack(side="left")
+
+        tk.Button(
+            foot, text="Cancel", bd=0, cursor="hand2",
+            bg=THEME["panel2"], fg=THEME["text"],
+            padx=10, pady=5,
+            command=self.destroy,
+        ).pack(side="right")
+
+        self._render_days()
+
+    def _render_days(self):
+        if self._day_frame is None:
+            return
+        for w in self._day_frame.winfo_children():
+            w.destroy()
+
+        y, m = self._year, self._month
+        self._lbl_month.config(text=f"{_cal.month_name[m]}  {y}")
+
+        today                = datetime.today()
+        _, num_days          = _cal.monthrange(y, m)
+        first_wd             = _cal.weekday(y, m, 1)   # 0 = Monday
+
+        col = first_wd
+        row = 0
+        for day in range(1, num_days + 1):
+            is_today = (y == today.year and m == today.month and day == today.day)
+            btn = tk.Button(
+                self._day_frame,
+                text=str(day),
+                width=3, bd=0,
+                padx=2, pady=5,
+                cursor="hand2",
+                font=("Segoe UI", 9, "bold" if is_today else "normal"),
+                bg=THEME["brown"] if is_today else THEME["panel2"],
+                fg="white"        if is_today else THEME["text"],
+                activebackground=THEME["brown_dark"],
+                activeforeground="white",
+                command=lambda d=day: self._pick(d),
+            )
+            btn.grid(row=row, column=col, padx=2, pady=2)
+            col += 1
+            if col > 6:
+                col = 0
+                row += 1
+
+    def _pick(self, day: int):
+        self.result = f"{self._year:04d}-{self._month:02d}-{day:02d}"
+        self.destroy()
+
+    def _prev_month(self):
+        self._month -= 1
+        if self._month < 1:
+            self._month = 12
+            self._year -= 1
+        self._render_days()
+
+    def _next_month(self):
+        self._month += 1
+        if self._month > 12:
+            self._month = 1
+            self._year += 1
+        self._render_days()
+
+    def _go_today(self):
+        today       = datetime.today()
+        self._year  = today.year
+        self._month = today.month
+        self._render_days()
 
 
-# TRANSACTIONS VIEW
+# ── TRANSACTIONS VIEW ─────────────────────────────────────────────────────────
 
 class TransactionsView(tk.Frame):
     def __init__(self, parent: tk.Frame, db: Database, auth: AuthService):
         super().__init__(parent, bg=THEME["bg"])
-        self.db = db
+        self.db   = db
         self.auth = auth
         self.orders = OrderDAO(db)
         self.drafts = DraftDAO(db)
 
-        self.var_search = tk.StringVar()
-        self.var_status = tk.StringVar(value="All")
+        self.var_search  = tk.StringVar()
+        self.var_status  = tk.StringVar(value="All")
         self.var_payment = tk.StringVar(value="All")
-        self.var_from = tk.StringVar()
-        self.var_to = tk.StringVar()
+        self.var_from    = tk.StringVar()
+        self.var_to      = tk.StringVar()
 
         self._search_after = None
 
         # entry refs for placeholder restore
         self.ent_search: tk.Entry | None = None
-        self.ent_from: tk.Entry | None = None
-        self.ent_to: tk.Entry | None = None
+        self.ent_from:   tk.Entry | None = None
+        self.ent_to:     tk.Entry | None = None
 
         self._build()
         self.refresh()
 
-    # ---------------- placeholder helpers ----------------
+    # ── placeholder helpers ───────────────────────────────────────────────────
+
     def _clear_placeholder(self, widget: tk.Entry, placeholder: str):
         if widget.get() == placeholder:
             widget.delete(0, tk.END)
@@ -67,14 +227,10 @@ class TransactionsView(tk.Frame):
         self.ent_search.config(fg=THEME["muted"])
 
     def _apply_date_placeholders(self):
-        if self.ent_from:
-            if self.ent_from.get().strip() == "":
-                self.ent_from.insert(0, "YYYY-MM-DD")
-                self.ent_from.config(fg=THEME["muted"])
-        if self.ent_to:
-            if self.ent_to.get().strip() == "":
-                self.ent_to.insert(0, "YYYY-MM-DD")
-                self.ent_to.config(fg=THEME["muted"])
+        for ent in (self.ent_from, self.ent_to):
+            if ent and ent.get().strip() == "":
+                ent.insert(0, "YYYY-MM-DD")
+                ent.config(fg=THEME["muted"])
 
     def _debounced_refresh(self):
         if self._search_after is not None:
@@ -101,115 +257,41 @@ class TransactionsView(tk.Frame):
 
         self.refresh()
 
-    # ---------------- calendar picker ----------------
+    # ── calendar picker (pure Tkinter) ────────────────────────────────────────
+
     def _open_date_picker(self, target_entry: tk.Entry, which: str):
-        """
-        Offline calendar popup. Sets var_from/var_to to YYYY-MM-DD.
-        which: "from" or "to"
-        """
-        if Calendar is None:
-            messagebox.showerror(
-                "Calendar Picker",
-                "tkcalendar failed to import.\n\n"
-                f"Error: {_TKCAL_ERROR}\n\n"
-                "Fix this:\n"
-                "1) Make sure you're running the same venv where you installed tkcalendar.\n"
-                "2) Check your project for a file/folder named 'tkcalendar' and rename it.\n"
-            )
-            return
+        """Open the pure-Tkinter DatePickerDialog and apply chosen date."""
+        raw     = target_entry.get().strip()
+        initial = raw if (raw and raw != "YYYY-MM-DD") else None
 
-        # current value if valid
-        current = None
-        raw = target_entry.get().strip()
-        if raw and raw != "YYYY-MM-DD":
-            try:
-                current = datetime.fromisoformat(raw).date()
-            except Exception:
-                current = None
+        dlg = DatePickerDialog(self, initial=initial)
+        d   = dlg.result
+        if d is None:
+            return  # Cancelled
 
-        top = tk.Toplevel(self)
-        top.title("Select date")
-        top.configure(bg=THEME["bg"])
-        top.transient(self.winfo_toplevel())
-        top.grab_set()
+        if which == "from":
+            self.var_from.set(d)
+        else:
+            self.var_to.set(d)
 
-        # center-ish
-        top.update_idletasks()
-        sw = top.winfo_screenwidth()
-        sh = top.winfo_screenheight()
-        w, h = 320, 330
-        x = (sw - w) // 2
-        y = (sh - h) // 2
-        top.geometry(f"{w}x{h}+{x}+{y}")
-        top.resizable(False, False)
+        target_entry.delete(0, tk.END)
+        target_entry.insert(0, d)
+        target_entry.config(fg=THEME["text"])
+        self._debounced_refresh()
 
-        cal_wrap = tk.Frame(top, bg=THEME["bg"])
-        cal_wrap.pack(fill="both", expand=True, padx=12, pady=12)
+    def _clear_date(self, target_entry: tk.Entry, which: str):
+        """Clear a date filter."""
+        if which == "from":
+            self.var_from.set("")
+        else:
+            self.var_to.set("")
+        target_entry.delete(0, tk.END)
+        target_entry.insert(0, "YYYY-MM-DD")
+        target_entry.config(fg=THEME["muted"])
+        self._debounced_refresh()
 
-        cal = Calendar(
-            cal_wrap,
-            selectmode="day",
-            date_pattern="yyyy-mm-dd",
-        )
-        cal.pack(fill="both", expand=True)
+    # ── UI ────────────────────────────────────────────────────────────────────
 
-        if current is not None:
-            try:
-                cal.selection_set(current)
-            except Exception:
-                pass
-
-        btns = tk.Frame(top, bg=THEME["bg"])
-        btns.pack(fill="x", padx=12, pady=(0, 12))
-
-        def apply():
-            d = cal.get_date()  # yyyy-mm-dd
-            if which == "from":
-                self.var_from.set(d)
-            else:
-                self.var_to.set(d)
-
-            target_entry.delete(0, tk.END)
-            target_entry.insert(0, d)
-            target_entry.config(fg=THEME["text"])
-            top.destroy()
-            self._debounced_refresh()
-
-        def clear():
-            if which == "from":
-                self.var_from.set("")
-            else:
-                self.var_to.set("")
-            target_entry.delete(0, tk.END)
-            target_entry.insert(0, "YYYY-MM-DD")
-            target_entry.config(fg=THEME["muted"])
-            top.destroy()
-            self._debounced_refresh()
-
-        tk.Button(
-            btns, text="Clear date",
-            bg=THEME["panel2"], fg=THEME["text"],
-            bd=0, padx=12, pady=8, cursor="hand2",
-            command=clear
-        ).pack(side="left")
-
-        tk.Button(
-            btns, text="Cancel",
-            bg=THEME["panel2"], fg=THEME["text"],
-            bd=0, padx=12, pady=8, cursor="hand2",
-            command=top.destroy
-        ).pack(side="right")
-
-        tk.Button(
-            btns, text="Apply",
-            bg=THEME["success"], fg="white",
-            bd=0, padx=14, pady=8, cursor="hand2",
-            command=apply
-        ).pack(side="right", padx=(0, 10))
-
-        cal.bind("<Double-Button-1>", lambda _e: apply(), add="+")
-
-    # ---------------- UI ----------------
     def _build(self):
         style = ttk.Style()
         try:
@@ -217,7 +299,6 @@ class TransactionsView(tk.Frame):
         except Exception:
             pass
 
-        # Clean Treeview
         style.configure(
             "Tx.Treeview",
             font=("Segoe UI", 10),
@@ -250,19 +331,18 @@ class TransactionsView(tk.Frame):
             font=("Segoe UI", 22, "bold"),
         ).grid(row=0, column=0, sticky="w", padx=18, pady=(14, 10))
 
-        # FILTER BAR (redesigned + calendar)
+        # ── Filter bar ────────────────────────────────────────────────────────
         bar = tk.Frame(
             self,
             bg=THEME["panel"],
             highlightthickness=1,
-            highlightbackground=THEME["panel2"]
+            highlightbackground=THEME["panel2"],
         )
         bar.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 12))
         bar.columnconfigure(0, weight=1)
 
         row = tk.Frame(bar, bg=THEME["panel"])
         row.grid(row=0, column=0, sticky="ew", padx=12, pady=12)
-
         row.columnconfigure(0, weight=1)
         row.columnconfigure(1, weight=0)
 
@@ -271,7 +351,9 @@ class TransactionsView(tk.Frame):
         search_box.grid(row=0, column=0, sticky="ew")
         search_box.columnconfigure(1, weight=1)
 
-        tk.Label(search_box, bg=THEME["panel2"], fg=THEME["muted"]).grid(row=0, column=0, padx=(10, 6))
+        tk.Label(search_box, bg=THEME["panel2"], fg=THEME["muted"]).grid(
+            row=0, column=0, padx=(10, 6)
+        )
 
         self.ent_search = tk.Entry(
             search_box,
@@ -284,18 +366,29 @@ class TransactionsView(tk.Frame):
         self.ent_search.grid(row=0, column=1, sticky="ew", ipady=8, padx=(0, 10))
 
         self._apply_search_placeholder()
-        self.ent_search.bind("<FocusIn>", lambda e: self._clear_placeholder(self.ent_search, "Search transaction ID…"))
-        self.ent_search.bind("<FocusOut>", lambda e: self._restore_placeholder(self.ent_search, "Search transaction ID…"))
+        self.ent_search.bind(
+            "<FocusIn>",
+            lambda e: self._clear_placeholder(self.ent_search, "Search transaction ID…"),
+        )
+        self.ent_search.bind(
+            "<FocusOut>",
+            lambda e: self._restore_placeholder(self.ent_search, "Search transaction ID…"),
+        )
         self.ent_search.bind("<KeyRelease>", lambda _e: self._debounced_refresh())
 
-        # Filters
+        # Filters group
         group = tk.Frame(row, bg=THEME["panel"])
         group.grid(row=0, column=1, sticky="e", padx=(12, 0))
 
         def mini_label(parent, text):
-            return tk.Label(parent, text=text, bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 9))
+            return tk.Label(
+                parent, text=text,
+                bg=THEME["panel"], fg=THEME["muted"],
+                font=("Segoe UI", 9),
+            )
 
-        def pill_date(parent, textvariable, which: str, width=12):
+        def pill_date(parent, textvariable, which: str, col: int):
+            """Date pill with entry + calendar button."""
             pill = tk.Frame(parent, bg=THEME["panel2"])
 
             ent = tk.Entry(
@@ -305,29 +398,23 @@ class TransactionsView(tk.Frame):
                 bg=THEME["panel2"],
                 fg=THEME["text"],
                 insertbackground=THEME["text"],
-                width=width
+                width=12,
             )
-            ent.pack(side="left", fill="x", expand=True, padx=(10, 6), ipady=8)
+            ent.pack(side="left", fill="x", expand=True, padx=(10, 2), ipady=8)
 
-            btn = tk.Button(
-                pill,
-                text="📅",
-                bg=THEME["panel2"],
-                fg=THEME["muted"],
-                bd=0,
-                padx=8,
-                pady=6,
-                cursor="hand2",
+            tk.Button(
+                pill, text="...",
+                bg=THEME["panel2"], fg=THEME["muted"],
+                bd=0, padx=6, pady=6, cursor="hand2",
                 command=lambda: self._open_date_picker(ent, which),
-            )
-            btn.pack(side="right", padx=(0, 6), pady=0)
+            ).pack(side="right", padx=(0, 4))
 
             ent.insert(0, "YYYY-MM-DD")
             ent.config(fg=THEME["muted"])
-            ent.bind("<FocusIn>", lambda e: self._clear_placeholder(ent, "YYYY-MM-DD"))
+            ent.bind("<FocusIn>",  lambda e: self._clear_placeholder(ent, "YYYY-MM-DD"))
             ent.bind("<FocusOut>", lambda e: self._restore_placeholder(ent, "YYYY-MM-DD"))
             ent.bind("<KeyRelease>", lambda _e: self._debounced_refresh())
-            ent.bind("<Return>", lambda _e: self._debounced_refresh())
+            ent.bind("<Return>",     lambda _e: self._debounced_refresh())
 
             return pill, ent
 
@@ -354,27 +441,26 @@ class TransactionsView(tk.Frame):
         cmb_pay.bind("<<ComboboxSelected>>", lambda _e: self.refresh())
 
         mini_label(group, "From").grid(row=0, column=2, sticky="w")
-        from_pill, self.ent_from = pill_date(group, self.var_from, "from", width=12)
+        from_pill, self.ent_from = pill_date(group, self.var_from, "from", col=2)
         from_pill.grid(row=1, column=2, padx=(0, 10), sticky="w")
 
         mini_label(group, "To").grid(row=0, column=3, sticky="w")
-        to_pill, self.ent_to = pill_date(group, self.var_to, "to", width=12)
+        to_pill, self.ent_to = pill_date(group, self.var_to, "to", col=3)
         to_pill.grid(row=1, column=3, padx=(0, 10), sticky="w")
 
         tk.Button(
             group,
             text="Clear",
-            bg=THEME["panel2"],
-            fg=THEME["text"],
-            bd=0,
-            padx=14,
-            pady=8,
-            cursor="hand2",
+            bg=THEME["panel2"], fg=THEME["text"],
+            bd=0, padx=14, pady=8, cursor="hand2",
             command=self._clear_all,
         ).grid(row=1, column=4, sticky="w")
 
-        # TABLE CARD
-        table_card = tk.Frame(self, bg=THEME["panel"], highlightthickness=1, highlightbackground=THEME["panel2"])
+        # ── Table card ────────────────────────────────────────────────────────
+        table_card = tk.Frame(
+            self, bg=THEME["panel"],
+            highlightthickness=1, highlightbackground=THEME["panel2"],
+        )
         table_card.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
         table_card.columnconfigure(0, weight=1)
         table_card.rowconfigure(0, weight=1)
@@ -387,105 +473,93 @@ class TransactionsView(tk.Frame):
         ysb.grid(row=0, column=1, sticky="ns")
         self.tbl.configure(yscrollcommand=ysb.set)
 
-        headers = [
-            ("id", "ID"),
-            ("payment", "PAYMENT"),
-            ("paid", "PAID"),
-            ("change", "CHANGE"),
-            ("items", "ITEMS"),
-            ("status", "STATUS"),
-            ("total", "TOTAL"),
-            ("start", "START"),
-            ("end", "END"),
-            ("details", ""),
+        # ── Column headings & alignment (C-fix) ───────────────────────────────
+        #   Money columns   → right ("e")
+        #   Status/Payment  → center
+        #   Dates           → center
+        #   ID/Items        → center
+        #   Names           → left ("w")
+
+        col_cfg = [
+            # (id,        heading,    width, anchor, stretch)
+            ("id",        "ID",         65, "center", False),
+            ("payment",   "PAYMENT",   140, "w",      False),
+            ("paid",      "PAID",      110, "e",      False),
+            ("change",    "CHANGE",    100, "e",      False),
+            ("items",     "ITEMS",      60, "center", False),
+            ("status",    "STATUS",    110, "center", False),
+            ("total",     "TOTAL",     120, "e",      False),
+            ("start",     "START",     180, "center", True),
+            ("end",       "END",       160, "center", False),
+            ("details",   "",           60, "center", False),
         ]
-        for c, t in headers:
-            self.tbl.heading(c, text=t)
 
-        self.tbl.column("id", width=80, anchor="w")
-        self.tbl.column("payment", width=140, anchor="w")
-        self.tbl.column("paid", width=110, anchor="e")
-        self.tbl.column("change", width=100, anchor="e")
-        self.tbl.column("items", width=70, anchor="center")
-        self.tbl.column("status", width=120, anchor="center")
-        self.tbl.column("total", width=120, anchor="e")
-        self.tbl.column("start", width=180, anchor="w")
-        self.tbl.column("end", width=180, anchor="w")
-        self.tbl.column("details", width=60, anchor="center")
+        for cid, hdr, width, anchor, stretch in col_cfg:
+            self.tbl.heading(cid, text=hdr, anchor="center")
+            self.tbl.column(cid, width=width, anchor=anchor, stretch=stretch)
 
-        self.tbl.tag_configure("top_sale", background="#dff6ef")
-        self.tbl.tag_configure("latest_sale", background="#e9efff")
+        self.tbl.tag_configure("top_sale",       background="#dff6ef")
+        self.tbl.tag_configure("latest_sale",    background="#e9efff")
         self.tbl.tag_configure("top_and_latest", background="#d7f0ff")
 
         self.tbl.bind("<Double-Button-1>", lambda _e: self.open_selected())
-        self.tbl.bind("<Return>", lambda _e: self.open_selected())
+        self.tbl.bind("<Return>",          lambda _e: self.open_selected())
 
-    # ---------------- data ----------------
+    # ── data ──────────────────────────────────────────────────────────────────
+
     def refresh(self):
         for iid in self.tbl.get_children():
             self.tbl.delete(iid)
 
-        q = self.var_search.get().replace("Search transaction ID…", "").strip()
-        status = self.var_status.get()
-        payment = self.var_payment.get()
+        q        = self.var_search.get().replace("Search transaction ID…", "").strip()
+        status   = self.var_status.get()
+        payment  = self.var_payment.get()
         date_from = self.var_from.get().replace("YYYY-MM-DD", "").strip()
-        date_to = self.var_to.get().replace("YYYY-MM-DD", "").strip()
+        date_to   = self.var_to.get().replace("YYYY-MM-DD", "").strip()
 
         rows = self.orders.list_orders(q, status, payment, date_from, date_to)
 
-        top_id = None
+        top_id    = None
         latest_id = None
         best_total = None
-        best_dt = None
+        best_dt    = None
 
         for r in rows:
             oid = int(r["order_id"])
-
             try:
                 total = float(r["total"] or 0.0)
             except Exception:
                 total = 0.0
 
-            dt_str = ""
-            try:
-                dt_str = str(r["start_dt"] or "")
-            except Exception:
-                dt_str = ""
-            if not dt_str:
-                try:
-                    dt_str = str(r["end_dt"] or "")
-                except Exception:
-                    dt_str = ""
-
+            dt_str = str(r["start_dt"] or "") or str(r["end_dt"] or "")
             dt = None
             try:
                 dt = datetime.fromisoformat(dt_str)
             except Exception:
-                dt = None
+                pass
 
             if best_total is None or total > best_total:
                 best_total = total
-                top_id = oid
+                top_id     = oid
 
-            if dt is not None:
-                if best_dt is None or dt > best_dt:
-                    best_dt = dt
-                    latest_id = oid
+            if dt is not None and (best_dt is None or dt > best_dt):
+                best_dt   = dt
+                latest_id = oid
 
         for r in rows:
             oid = int(r["order_id"])
 
-            tag = ()
             if top_id == oid and latest_id == oid:
                 tag = ("top_and_latest",)
             elif top_id == oid:
                 tag = ("top_sale",)
             elif latest_id == oid:
                 tag = ("latest_sale",)
+            else:
+                tag = ()
 
             self.tbl.insert(
-                "",
-                tk.END,
+                "", tk.END,
                 iid=str(oid),
                 tags=tag,
                 values=(
@@ -510,7 +584,7 @@ class TransactionsView(tk.Frame):
         TransactionDetailsDialog(self, self.db, oid, on_refresh=self.refresh)
 
 
-# TRANSACTION DETAILS DIALOG
+# ── TRANSACTION DETAILS DIALOG ────────────────────────────────────────────────
 
 class TransactionDetailsDialog(tk.Toplevel):
     MAX_COLLAPSED_ROWS = 5
@@ -518,10 +592,10 @@ class TransactionDetailsDialog(tk.Toplevel):
 
     def __init__(self, parent: tk.Widget, db: Database, order_id: int, on_refresh=None):
         super().__init__(parent)
-        self.db = db
-        self.order_id = order_id
+        self.db         = db
+        self.order_id   = order_id
         self.on_refresh = on_refresh
-        self.orders = OrderDAO(db)
+        self.orders     = OrderDAO(db)
 
         self.title("Transaction Details")
         self.configure(bg=THEME["bg"])
@@ -534,17 +608,17 @@ class TransactionDetailsDialog(tk.Toplevel):
         self._details_expanded = tk.BooleanVar(value=False)
         self._details_rows: list[tuple[str, str]] = []
         self._discount_amount: float = 0.0
-        self._total_amount: float = 0.0
+        self._total_amount: float    = 0.0
 
         self._build()
 
         self.update_idletasks()
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
-        w = min(760, sw - 120)
-        h = min(700, sh - 140)
-        x = (sw - w) // 2
-        y = (sh - h) // 2
+        w  = min(760, sw - 120)
+        h  = min(700, sh - 140)
+        x  = (sw - w) // 2
+        y  = (sh - h) // 2
         self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _build(self):
@@ -610,9 +684,8 @@ class TransactionDetailsDialog(tk.Toplevel):
             font=("Segoe UI", f(15), "bold"),
         ).pack(side="left")
 
-        # Pill-style status badge
-        status = str(data["status"])
-        badge_bg = (
+        status    = str(data["status"])
+        badge_bg  = (
             THEME["success"] if status == "Completed" else
             THEME["danger"]  if status == "Cancelled" else
             "#d97706"
@@ -631,7 +704,6 @@ class TransactionDetailsDialog(tk.Toplevel):
         )
         info_card.pack(fill="x", padx=18, pady=(0, 10))
 
-        # Card title strip
         card_hdr = tk.Frame(info_card, bg=THEME["beige"])
         card_hdr.pack(fill="x")
         tk.Label(
@@ -648,16 +720,16 @@ class TransactionDetailsDialog(tk.Toplevel):
         ).pack(side="right")
 
         def info_line(label: str, value: str, bold_val: bool = False):
-            row = tk.Frame(info_card, bg=THEME["panel"])
-            row.pack(fill="x", padx=14, pady=sp(5))
+            r = tk.Frame(info_card, bg=THEME["panel"])
+            r.pack(fill="x", padx=14, pady=sp(5))
             tk.Label(
-                row, text=label,
+                r, text=label,
                 bg=THEME["panel"], fg=THEME["muted"],
                 font=("Segoe UI", f(9)),
                 width=18, anchor="w",
             ).pack(side="left")
             tk.Label(
-                row, text=value,
+                r, text=value,
                 bg=THEME["panel"], fg=THEME["text"],
                 font=("Segoe UI", f(9), "bold") if bold_val else ("Segoe UI", f(9)),
                 anchor="w",
@@ -678,17 +750,16 @@ class TransactionDetailsDialog(tk.Toplevel):
 
         tk.Frame(info_card, bg=THEME["border"], height=1).pack(fill="x", padx=14, pady=4)
 
-        # Amount Paid / Change
         def money_line(label: str, value: str, accent: bool = False):
-            row = tk.Frame(info_card, bg=THEME["panel"])
-            row.pack(fill="x", padx=14, pady=sp(4))
+            r = tk.Frame(info_card, bg=THEME["panel"])
+            r.pack(fill="x", padx=14, pady=sp(4))
             tk.Label(
-                row, text=label,
+                r, text=label,
                 bg=THEME["panel"], fg=THEME["muted"],
                 font=("Segoe UI", f(9)), anchor="w",
             ).pack(side="left")
             tk.Label(
-                row, text=value,
+                r, text=value,
                 bg=THEME["panel"],
                 fg=THEME["success"] if accent else THEME["text"],
                 font=("Segoe UI", f(9), "bold") if accent else ("Segoe UI", f(9)),
@@ -705,7 +776,7 @@ class TransactionDetailsDialog(tk.Toplevel):
         for it in items:
             name = it["name"] if it["name"] else f"#{it['product_id']}"
             qty  = it["qty"]
-            self._details_rows.append((f"{qty}× {name}", money(it["subtotal"])))
+            self._details_rows.append((f"{qty}\u00d7 {name}", money(it["subtotal"])))
 
         try:
             self._discount_amount = float(data["discount"] or 0.0)
@@ -734,7 +805,7 @@ class TransactionDetailsDialog(tk.Toplevel):
         ).pack(side="left")
 
         self.btn_toggle = tk.Button(
-            od_hdr, text="▸ Show",
+            od_hdr, text="\u25b8 Show",
             bg=THEME["beige"], fg=THEME["brown"],
             bd=0, padx=14, pady=8, cursor="hand2",
             font=("Segoe UI", f(9), "bold"),
@@ -769,7 +840,7 @@ class TransactionDetailsDialog(tk.Toplevel):
         ).pack(side="right")
 
         tk.Button(
-            footer, text="🖨  Print Receipt",
+            footer, text="Print Receipt",
             bg=THEME["brown"], fg="white",
             activebackground=THEME["brown_dark"], activeforeground="white",
             bd=0, padx=sp(14), pady=sp(9), cursor="hand2",
@@ -789,9 +860,9 @@ class TransactionDetailsDialog(tk.Toplevel):
             w.destroy()
 
         expanded = self._details_expanded.get()
-        self.btn_toggle.configure(text="▾ Hide" if expanded else "▸ Show")
+        self.btn_toggle.configure(text="\u25be Hide" if expanded else "\u25b8 Show")
 
-        rows = self._details_rows if expanded else self._details_rows[: self.MAX_COLLAPSED_ROWS]
+        rows = self._details_rows if expanded else self._details_rows[:self.MAX_COLLAPSED_ROWS]
         for left_text, right_text in rows:
             r = tk.Frame(self.details_body, bg="#ffffff")
             r.pack(fill="x", pady=sp(4))
@@ -823,12 +894,11 @@ class TransactionDetailsDialog(tk.Toplevel):
                 font=("Segoe UI", f(9)),
             ).pack(side="left")
             tk.Label(
-                drow, text=f"−{money(self._discount_amount)}",
+                drow, text=f"\u2212{money(self._discount_amount)}",
                 bg="#ffffff", fg=THEME["danger"],
                 font=("Segoe UI", f(9), "bold"),
             ).pack(side="right")
 
-        # Emphasized total row
         sep = tk.Frame(self.details_body, bg=THEME["border"], height=1)
         sep.pack(fill="x", pady=(sp(8), 0))
 
@@ -857,33 +927,35 @@ class TransactionDetailsDialog(tk.Toplevel):
 
     def _print_receipt(self):
         try:
-            data = self.orders.get_order(self.order_id)
+            data  = self.orders.get_order(self.order_id)
             items = self.orders.get_order_items(self.order_id)
             if not data:
                 messagebox.showerror("Receipt", "Order not found.")
                 return
 
-            order_dict = {k: data[k] for k in data.keys()}
-            items_list = [{k: item[k] for k in item.keys()} for item in items]
+            order_dict = {k: data[k]   for k in data.keys()}
+            items_list = [{k: item[k]  for k in item.keys()} for item in items]
 
             receipt_path = ReceiptService.generate_receipt(order_dict, items_list)
             ok = ReceiptService.open_file(receipt_path)
             if not ok:
-                messagebox.showwarning("Receipt", f"Receipt generated but could not open automatically.\n\nSaved to:\n{receipt_path}")
-
+                messagebox.showwarning(
+                    "Receipt",
+                    f"Receipt generated but could not open automatically.\n\nSaved to:\n{receipt_path}",
+                )
         except Exception as e:
             messagebox.showerror("Receipt Error", f"Failed to generate receipt.\n\n{e}")
 
 
-# RESOLVE DIALOG
+# ── RESOLVE DIALOG ────────────────────────────────────────────────────────────
 
 class ResolveDialog(tk.Toplevel):
     def __init__(self, parent: tk.Widget, db: Database, order_id: int, on_done=None):
         super().__init__(parent)
-        self.db = db
+        self.db       = db
         self.order_id = order_id
-        self.on_done = on_done
-        self.orders = OrderDAO(db)
+        self.on_done  = on_done
+        self.orders   = OrderDAO(db)
 
         self.title("Resolve Transaction")
         self.configure(bg=THEME["bg"])
@@ -905,25 +977,32 @@ class ResolveDialog(tk.Toplevel):
             widget.config(fg=THEME["muted"])
 
     def _build(self):
-        tk.Label(self, text="Resolve Transaction", bg=THEME["bg"], fg=THEME["text"], font=("Segoe UI", 14, "bold")).pack(
-            anchor="w", padx=18, pady=(14, 6)
-        )
-        tk.Label(self, text="Resolve by providing payment reference number.", bg=THEME["bg"], fg=THEME["muted"]).pack(
-            anchor="w", padx=18, pady=(0, 10)
-        )
+        tk.Label(
+            self, text="Resolve Transaction",
+            bg=THEME["bg"], fg=THEME["text"],
+            font=("Segoe UI", 14, "bold"),
+        ).pack(anchor="w", padx=18, pady=(14, 6))
+
+        tk.Label(
+            self, text="Resolve by providing payment reference number.",
+            bg=THEME["bg"], fg=THEME["muted"],
+        ).pack(anchor="w", padx=18, pady=(0, 10))
 
         box = tk.Frame(self, bg=THEME["panel2"])
         box.pack(fill="both", expand=True, padx=18, pady=(0, 12))
 
-        tk.Label(box, text="Reference Number:", bg=THEME["panel2"], fg=THEME["text"], font=("Segoe UI", 10)).pack(
-            anchor="w", padx=14, pady=(14, 4)
-        )
+        tk.Label(
+            box, text="Reference Number:",
+            bg=THEME["panel2"], fg=THEME["text"],
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", padx=14, pady=(14, 4))
+
         ent_ref = tk.Entry(box, textvariable=self.var_ref, bd=0, bg="white", fg=THEME["text"])
         ent_ref.pack(fill="x", padx=14, pady=(0, 14), ipady=8)
 
         ent_ref.insert(0, "Reference No.")
         ent_ref.config(fg=THEME["muted"])
-        ent_ref.bind("<FocusIn>", lambda e: self._clear_placeholder(ent_ref, "Reference No."))
+        ent_ref.bind("<FocusIn>",  lambda e: self._clear_placeholder(ent_ref, "Reference No."))
         ent_ref.bind("<FocusOut>", lambda e: self._restore_placeholder(ent_ref, "Reference No."))
 
         footer = tk.Frame(self, bg=THEME["bg"])
@@ -931,20 +1010,23 @@ class ResolveDialog(tk.Toplevel):
 
         tk.Button(
             footer, text="Close",
-            bg=THEME["panel2"], fg=THEME["text"], bd=0, padx=12, pady=8, cursor="hand2",
-            command=self.destroy
+            bg=THEME["panel2"], fg=THEME["text"],
+            bd=0, padx=12, pady=8, cursor="hand2",
+            command=self.destroy,
         ).pack(side="right")
 
         tk.Button(
             footer, text="Cancel transaction",
-            bg=THEME["danger"], fg="white", bd=0, padx=12, pady=8, cursor="hand2",
-            command=self._cancel
+            bg=THEME["danger"], fg="white",
+            bd=0, padx=12, pady=8, cursor="hand2",
+            command=self._cancel,
         ).pack(side="right", padx=(0, 10))
 
         tk.Button(
             footer, text="Complete transaction",
-            bg=THEME["success"], fg="white", bd=0, padx=12, pady=8, cursor="hand2",
-            command=self._complete
+            bg=THEME["success"], fg="white",
+            bd=0, padx=12, pady=8, cursor="hand2",
+            command=self._complete,
         ).pack(side="right", padx=(0, 10))
 
     def _complete(self):

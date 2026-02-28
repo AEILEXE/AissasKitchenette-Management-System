@@ -117,7 +117,7 @@ class POSView(tk.Frame):
 
         self._products_cache = []
         self._product_card_widgets: list[tk.Frame] = []
-        self._prod_resize_after = None
+        self._prod_resize_after: str | None = None
 
         self._img_cache: dict[str, tk.PhotoImage] = {}
 
@@ -126,6 +126,10 @@ class POSView(tk.Frame):
         self._batch_after: str | None = None
         self._loading_lbl: tk.Label | None = None
 
+        # Tracked after() IDs for cleanup on destroy
+        self._suggest_after: str | None = None
+        self._init_after_ids: list[str] = []
+        self._global_click_id: str | None = None
 
         self._search_entry: tk.Entry | None = None
         self._active_tooltip: tk.Toplevel | None = None
@@ -138,10 +142,57 @@ class POSView(tk.Frame):
 
         self._build()
         self.search_var.set("")
-        self.after(50, self._refresh_categories)
+        _aid1 = self.after(50, self._refresh_categories)
+        _aid2 = self.after(100, self._refresh_products)
+        self._init_after_ids = [_aid1, _aid2]
         self._refresh_drafts_panel()
-        self.after(100, self._refresh_products)
         self._refresh_cart()
+
+    # ── Lifecycle: cancel all pending callbacks on destroy ─────────────────────
+    def destroy(self) -> None:
+        """Cancel all pending after() jobs and unbind global events before destroy."""
+        for aid in self._init_after_ids:
+            try:
+                self.after_cancel(aid)
+            except Exception:
+                pass
+        self._init_after_ids = []
+
+        if self._batch_after is not None:
+            try:
+                self.after_cancel(self._batch_after)
+            except Exception:
+                pass
+            self._batch_after = None
+
+        if self._prod_resize_after is not None:
+            try:
+                self.after_cancel(self._prod_resize_after)
+            except Exception:
+                pass
+            self._prod_resize_after = None
+
+        if self._suggest_after is not None:
+            try:
+                self.after_cancel(self._suggest_after)
+            except Exception:
+                pass
+            self._suggest_after = None
+
+        # Unbind global click listener from toplevel
+        if self._global_click_id is not None:
+            try:
+                tl = self.winfo_toplevel()
+                if tl and tl.winfo_exists():
+                    tl.unbind("<Button-1>", self._global_click_id)
+            except Exception:
+                pass
+            self._global_click_id = None
+
+        # Hide active tooltip
+        self._hide_tooltip()
+
+        super().destroy()
 
     # Tooltip
     def _add_tooltip(self, widget: tk.Widget, text: str):
@@ -319,7 +370,7 @@ class POSView(tk.Frame):
         body.columnconfigure(1, weight=8, minsize=800)
         body.columnconfigure(2, weight=2, minsize=320)
 
-        self.winfo_toplevel().bind("<Button-1>", self._on_global_click, add="+")
+        self._global_click_id = self.winfo_toplevel().bind("<Button-1>", self._on_global_click, add="+")
 
         # Left: Categories
         left = tk.Frame(body, bg=THEME["panel"])
@@ -512,6 +563,8 @@ class POSView(tk.Frame):
                 btn.configure(bg=THEME["panel2"], fg=THEME["text"])
 
     def _refresh_categories(self):
+        if not self.winfo_exists():
+            return
         for w in self.cat_inner.winfo_children():
             w.destroy()
         self._cat_buttons.clear()
@@ -574,6 +627,8 @@ class POSView(tk.Frame):
         return 3 if width >= 860 else 2
 
     def _debounced_relayout(self) -> None:
+        if not self.winfo_exists():
+            return
         if self._prod_resize_after is not None:
             try:
                 self.after_cancel(self._prod_resize_after)
@@ -593,6 +648,9 @@ class POSView(tk.Frame):
 
     def _start_batch_load(self) -> None:
         """Cancel any in-flight batch, clear the grid, start fresh."""
+        if not self.winfo_exists():
+            return
+
         if self._batch_after is not None:
             try:
                 self.after_cancel(self._batch_after)
@@ -627,6 +685,9 @@ class POSView(tk.Frame):
 
     def _render_product_batch(self) -> None:
         self._batch_after = None
+        # Guard: view may have been destroyed while this callback was pending
+        if not self.winfo_exists():
+            return
 
         if self._loading_lbl is not None:
             try:
@@ -634,6 +695,9 @@ class POSView(tk.Frame):
             except Exception:
                 pass
             self._loading_lbl = None
+
+        if not self.prod_inner.winfo_exists():
+            return
 
         end = min(self._batch_idx + self._BATCH_SIZE, len(self._batch_products))
         for i in range(self._batch_idx, end):
@@ -648,6 +712,8 @@ class POSView(tk.Frame):
 
     def _relayout_products(self, rebuild_cards: bool = False) -> None:
         """Called by debounced resize — just re-grid existing cards."""
+        if not self.winfo_exists():
+            return
         self._do_product_grid_layout()
 
     def _do_product_grid_layout(self) -> None:
@@ -849,7 +915,12 @@ class POSView(tk.Frame):
                 bg=THEME["panel2"], fg=THEME["muted"],
             ).grid(row=1, column=0, columnspan=6, pady=20)
             self.total_lbl.configure(text="Total: ₱0.00")
-            self.after(30, self._refresh_suggestions)
+            if self._suggest_after:
+                try:
+                    self.after_cancel(self._suggest_after)
+                except Exception:
+                    pass
+            self._suggest_after = self.after(30, self._refresh_suggestions)
             return
 
         row_i = 1
@@ -915,8 +986,13 @@ class POSView(tk.Frame):
         if bbox:
             self.cart_canvas.configure(scrollregion=bbox)
 
-        # Refresh ML suggestions after every cart change
-        self.after(60, self._refresh_suggestions)
+        # Refresh ML suggestions after every cart change (tracked for cancellation)
+        if self._suggest_after:
+            try:
+                self.after_cancel(self._suggest_after)
+            except Exception:
+                pass
+        self._suggest_after = self.after(60, self._refresh_suggestions)
 
     # ML Suggestions
     def _refresh_suggestions(self):
@@ -932,6 +1008,9 @@ class POSView(tk.Frame):
         Panel is packed dynamically BEFORE _footer_top so it appears between
         the cart and the totals/buttons row.
         """
+        self._suggest_after = None
+        if not self.winfo_exists():
+            return
         if self._suggestions_frame is None:
             return
 
@@ -959,7 +1038,7 @@ class POSView(tk.Frame):
             hdr2.pack(fill="x", padx=14, pady=(8, 2))
             tk.Label(
                 hdr2,
-                text="💡 Suggested Items",
+                text="Suggested Items",
                 bg=THEME["panel"],
                 fg=THEME["muted"],
                 font=("Segoe UI", 9, "bold"),
@@ -1072,7 +1151,7 @@ class POSView(tk.Frame):
             hdr_empty.pack(fill="x", padx=14, pady=(8, 2))
             tk.Label(
                 hdr_empty,
-                text="💡 Suggested Items",
+                text="Suggested Items",
                 bg=THEME["panel"],
                 fg=THEME["muted"],
                 font=("Segoe UI", 9, "bold"),
@@ -1460,7 +1539,7 @@ class ConfirmOrderDialog(tk.Toplevel):
         radio_frame = tk.Frame(pay_card, bg=THEME["panel"])
         radio_frame.pack(fill="x", padx=14, pady=(12, 8))
 
-        for val, label in [("Cash", "💵  Cash"), ("Bank/E-Wallet", "🏦  Bank Transfer / E-Wallet")]:
+        for val, label in [("Cash", "Cash"), ("Bank/E-Wallet", "Bank Transfer / E-Wallet")]:
             tk.Radiobutton(
                 radio_frame, text=label,
                 value=val, variable=self.var_payment,
