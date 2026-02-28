@@ -17,11 +17,11 @@ PROJECT_DIR = BASE_DIR.parent  # project root
 DATA_DIR = PROJECT_DIR / "data"
 DB_PATH = DATA_DIR / "pos.db"
 
-ASSETS_DIR = PROJECT_DIR / "assets"
-ICONS_DIR = ASSETS_DIR / "icons"
-EXPORTS_DIR = PROJECT_DIR / "exports"
+ASSETS_DIR = BASE_DIR / "assets"          # aissas_pos_system/assets/
+ICONS_DIR  = ASSETS_DIR / "icons"         # aissas_pos_system/assets/icons/
+EXPORTS_DIR = PROJECT_DIR / "exports"     # AissasKitchenette-Management-System/exports/
 
-# Logo file (user said they will upload "logo.jpg")
+# Logo placed at aissas_pos_system/assets/logo.jpg
 LOGO_PATH = ASSETS_DIR / "logo.jpg"
 
 

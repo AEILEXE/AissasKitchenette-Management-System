@@ -35,6 +35,10 @@ class Database:
             self.conn.close()
         self.conn = None
 
+    def close(self) -> None:
+        """Alias for disconnect() — used by import/export routines."""
+        self.disconnect()
+
     def execute(self, sql: str, params: Iterable[Any] = ()) -> None:
         """Execute SQL statement with parameters (with commit)."""
         assert self.conn is not None, "Database not connected"

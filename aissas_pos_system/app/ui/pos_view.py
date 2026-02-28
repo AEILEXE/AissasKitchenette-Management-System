@@ -189,6 +189,18 @@ class POSView(tk.Frame):
                 pass
             self._global_click_id = None
 
+        # Clean up any lingering bind_all mouse-wheel handlers
+        # (in case the mouse was hovering over a canvas when the view was destroyed)
+        for _attr in ("cat_canvas", "prod_canvas", "cart_canvas"):
+            try:
+                cv = getattr(self, _attr, None)
+                if cv is not None:
+                    cv.unbind_all("<MouseWheel>")
+                    cv.unbind_all("<Button-4>")
+                    cv.unbind_all("<Button-5>")
+            except Exception:
+                pass
+
         # Hide active tooltip
         self._hide_tooltip()
 
@@ -717,6 +729,14 @@ class POSView(tk.Frame):
         self._do_product_grid_layout()
 
     def _do_product_grid_layout(self) -> None:
+        # Guard: called from after() or canvas-resize callbacks that may fire late
+        if not self.winfo_exists():
+            return
+        try:
+            if not self.prod_inner.winfo_exists() or not self.prod_canvas.winfo_exists():
+                return
+        except Exception:
+            return
         cards = self._product_card_widgets
         cols = self._calc_product_cols()
         cols = 2 if cols < 2 else (3 if cols > 3 else cols)
@@ -1069,7 +1089,7 @@ class POSView(tk.Frame):
         hdr3.pack(fill="x", padx=14, pady=(8, 2))
         tk.Label(
             hdr3,
-            text="💡 Suggested Items",
+            text="Suggested Items",
             bg=THEME["panel"],
             fg=THEME["muted"],
             font=("Segoe UI", 9, "bold"),

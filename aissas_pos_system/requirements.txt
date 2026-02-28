@@ -6,7 +6,7 @@ Pillow>=9.0.0
 matplotlib>=3.5.0
 reportlab>=3.5.0
 openpyxl>=3.0.0
-tkcalendar>=1.6.0
+# tkcalendar removed — replaced with built-in pure-Tkinter DatePickerDialog
 
 # Optional / packaging
 pyinstaller>=5.0.0
