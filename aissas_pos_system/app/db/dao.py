@@ -8,9 +8,7 @@ from app.models.user import User
 from app.models.product import Product
 
 
-# =============================================================================
 # USER DATA ACCESS OBJECT
-# =============================================================================
 
 class UserDAO:
     """
@@ -81,9 +79,7 @@ class UserDAO:
         )
 
 
-# =============================================================================
 # CATEGORY DATA ACCESS OBJECT
-# =============================================================================
 
 class CategoryDAO:
     """Database access for categories table."""
@@ -110,9 +106,7 @@ class CategoryDAO:
         )
 
 
-# =============================================================================
 # PRODUCT DATA ACCESS OBJECT
-# =============================================================================
 
 class ProductDAO:
     """
@@ -217,6 +211,28 @@ class ProductDAO:
         r = self.db.fetchone("SELECT COUNT(*) AS c FROM products WHERE active=1;")
         return int(r["c"]) if r else 0
 
+    def count_unavailable(self) -> int:
+        """Count products where active=0 (not available / hidden from POS)."""
+        r = self.db.fetchone("SELECT COUNT(*) AS c FROM products WHERE active=0;")
+        return int(r["c"]) if r else 0
+
+    def top_sellers(self, limit: int = 5):
+        """Return top-selling products by total qty sold (completed orders only)."""
+        return self.db.fetchall(
+            """
+            SELECT p.id AS product_id, p.name,
+                   COALESCE(SUM(oi.qty), 0) AS total_qty
+            FROM products p
+            LEFT JOIN order_items oi ON oi.product_id = p.id
+            LEFT JOIN orders o ON oi.order_id = o.id AND o.status = 'Completed'
+            WHERE p.active = 1
+            GROUP BY p.id, p.name
+            ORDER BY total_qty DESC
+            LIMIT ?;
+            """,
+            (int(limit),),
+        )
+
     def set_stock(self, product_id: int, new_qty: int) -> None:
         """Update product stock quantity."""
         self.db.execute(
@@ -257,9 +273,7 @@ class ProductDAO:
         self.db.execute("DELETE FROM products WHERE id=?;", (int(product_id),))
 
 
-# =============================================================================
 # DRAFT DATA ACCESS OBJECT
-# =============================================================================
 
 class DraftDAO:
     """
@@ -301,9 +315,7 @@ class DraftDAO:
         return int(r["c"]) if r else 0
 
 
-# =============================================================================
 # ORDER DATA ACCESS OBJECT
-# =============================================================================
 
 class OrderDAO:
     """

@@ -6,7 +6,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from app.config import THEME, DEBUG
+from app.config import THEME
 from app.db.database import Database
 from app.db.dao import CategoryDAO, ProductDAO, DraftDAO, OrderDAO
 from app.services.auth_service import AuthService
@@ -121,27 +121,11 @@ class POSView(tk.Frame):
 
         self._img_cache: dict[str, tk.PhotoImage] = {}
 
-        self._scroll_targets: list[tuple[tk.Widget, tk.Canvas]] = []
-        self._scroll_enabled: dict[tk.Canvas, bool] = {}
+        self._batch_products: list = []
+        self._batch_idx: int = 0
+        self._batch_after: str | None = None
+        self._loading_lbl: tk.Label | None = None
 
-        # Windows mousewheel
-        self.bind_all("<MouseWheel>", self._route_mousewheel, add="+")
-
-        # Linux mousewheel (Button-4 = scroll up, Button-5 = scroll down)
-        self.bind_all(
-            "<Button-4>",
-            lambda e: self._route_mousewheel(
-                type("_E", (object,), {"x_root": e.x_root, "y_root": e.y_root, "delta": 120})()
-            ),
-            add="+",
-        )
-        self.bind_all(
-            "<Button-5>",
-            lambda e: self._route_mousewheel(
-                type("_E", (object,), {"x_root": e.x_root, "y_root": e.y_root, "delta": -120})()
-            ),
-            add="+",
-        )
 
         self._search_entry: tk.Entry | None = None
         self._active_tooltip: tk.Toplevel | None = None
@@ -159,7 +143,7 @@ class POSView(tk.Frame):
         self.after(100, self._refresh_products)
         self._refresh_cart()
 
-    # ---------------- Tooltip ----------------
+    # Tooltip
     def _add_tooltip(self, widget: tk.Widget, text: str):
         def _show(_e=None):
             try:
@@ -208,44 +192,39 @@ class POSView(tk.Frame):
             pass
         self._active_tooltip = None
 
-    # ---------------- Mousewheel routing ----------------
-    def _register_scroll_panel(self, panel_root: tk.Widget, canvas: tk.Canvas):
-        self._scroll_targets.append((panel_root, canvas))
-        self._scroll_enabled[canvas] = True
-
-    def _set_scroll_enabled(self, canvas: tk.Canvas, enabled: bool):
-        self._scroll_enabled[canvas] = bool(enabled)
-
-    def _is_descendant(self, widget: tk.Widget | None, ancestor: tk.Widget) -> bool:
-        w = widget
-        while w is not None:
-            if w is ancestor:
-                return True
-            try:
-                w = w.master  # type: ignore[attr-defined]
-            except Exception:
-                return False
-        return False
-
-    def _route_mousewheel(self, event):
-        """Route mousewheel to the correct scrollable panel based on hover position."""
-        try:
-            hovered = self.winfo_toplevel().winfo_containing(event.x_root, event.y_root)
-            if hovered is None:
+    # Mousewheel routing
+    def _bind_canvas_scroll(self, canvas: tk.Canvas) -> None:
+        """Bind mousewheel to a canvas only while the pointer is over it."""
+        def _scroll(event):
+            if not canvas.winfo_exists():
                 return
-            for panel_root, canvas in self._scroll_targets:
-                if self._is_descendant(hovered, panel_root):
-                    if not canvas.winfo_exists():
-                        return
-                    if not self._scroll_enabled.get(canvas, True):
-                        return
-                    step = -1 if event.delta > 0 else 1
-                    canvas.yview_scroll(step * self.SCROLL_SPEED_UNITS, "units")
-                    return
-        except tk.TclError:
-            return
+            step = -1 if event.delta > 0 else 1
+            canvas.yview_scroll(step * self.SCROLL_SPEED_UNITS, "units")
 
-    # ---------------- Search caret fix ----------------
+        def _linux_up(event):
+            if not canvas.winfo_exists():
+                return
+            canvas.yview_scroll(-self.SCROLL_SPEED_UNITS, "units")
+
+        def _linux_down(event):
+            if not canvas.winfo_exists():
+                return
+            canvas.yview_scroll(self.SCROLL_SPEED_UNITS, "units")
+
+        def _on_enter(_e):
+            canvas.bind_all("<MouseWheel>", _scroll)
+            canvas.bind_all("<Button-4>", _linux_up)
+            canvas.bind_all("<Button-5>", _linux_down)
+
+        def _on_leave(_e):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind("<Enter>", _on_enter, add="+")
+        canvas.bind("<Leave>", _on_leave, add="+")
+
+    # Search caret fix
     def _clear_placeholder(self, widget: tk.Entry, placeholder: str):
         if widget.get() == placeholder:
             widget.delete(0, tk.END)
@@ -264,7 +243,7 @@ class POSView(tk.Frame):
         self.focus_set()
         self._restore_placeholder(self._search_entry, "Search…")
 
-    # ---------------- Image helpers ----------------
+    # Image helpers
     def _load_default_image(self) -> object:
         key = "__default__"
         if key in self._img_cache:
@@ -312,7 +291,7 @@ class POSView(tk.Frame):
             except Exception:
                 return self._load_default_image()
 
-    # ---------------- UI ----------------
+    # UI
     def _build(self):
         style = ttk.Style()
         try:
@@ -342,7 +321,7 @@ class POSView(tk.Frame):
 
         self.winfo_toplevel().bind("<Button-1>", self._on_global_click, add="+")
 
-        # ---------------- Left: Categories ----------------
+        # Left: Categories
         left = tk.Frame(body, bg=THEME["panel"])
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         tk.Label(left, text="Categories", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 12, "bold")).pack(
@@ -365,9 +344,9 @@ class POSView(tk.Frame):
         self._cat_window_id = self.cat_canvas.create_window((0, 0), window=self.cat_inner, anchor="nw")
         self.cat_inner.bind("<Configure>", lambda _e: self.cat_canvas.configure(scrollregion=self.cat_canvas.bbox("all")), add="+")
         self.cat_canvas.bind("<Configure>", lambda e: self.cat_canvas.itemconfigure(self._cat_window_id, width=e.width), add="+")
-        self._register_scroll_panel(cat_panel, self.cat_canvas)
+        self._bind_canvas_scroll(self.cat_canvas)
 
-        # ---------------- Middle: Products ----------------
+        # Middle: Products
         mid = tk.Frame(body, bg=THEME["panel"])
         mid.grid(row=0, column=1, sticky="nsew", padx=(0, 12))
         mid.rowconfigure(2, weight=1)
@@ -403,9 +382,9 @@ class POSView(tk.Frame):
         self._prod_window_id = self.prod_canvas.create_window((0, 0), window=self.prod_inner, anchor="nw")
         self.prod_inner.bind("<Configure>", lambda _e: self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all")), add="+")
         self.prod_canvas.bind("<Configure>", self._on_prod_canvas_configure, add="+")
-        self._register_scroll_panel(prod_panel, self.prod_canvas)
+        self._bind_canvas_scroll(self.prod_canvas)
 
-        # ---------------- Right: Cart + Drafts ----------------
+        # Right: Cart + Drafts
         right = tk.Frame(body, bg=THEME["panel"])
         right.grid(row=0, column=2, sticky="nsew")
         right.rowconfigure(99, weight=1)
@@ -430,14 +409,14 @@ class POSView(tk.Frame):
         self._cart_window_id = self.cart_canvas.create_window((0, 0), window=self.cart_tbl, anchor="nw")
         self.cart_tbl.bind("<Configure>", lambda _e: self.cart_canvas.configure(scrollregion=self.cart_canvas.bbox("all")), add="+")
         self.cart_canvas.bind("<Configure>", lambda e: self.cart_canvas.itemconfigure(self._cart_window_id, width=e.width), add="+")
-        self._register_scroll_panel(cart_panel, self.cart_canvas)
+        self._bind_canvas_scroll(self.cart_canvas)
 
-        # ---------------- Suggestions Panel (ML) ----------------
+        # Suggestions Panel (ML)
         # Created here but NOT packed — _refresh_suggestions() packs/unpacks it
         # dynamically between cart_panel and _footer_top.
         self._suggestions_frame = tk.Frame(right, bg=THEME["panel"])
 
-        # ---------------- Totals row ----------------
+        # Totals row
         self._footer_top = tk.Frame(right, bg=THEME["panel"])
         self._footer_top.pack(fill="x", padx=14, pady=(0, 6))
         self._footer_top.columnconfigure(0, weight=1)
@@ -449,7 +428,7 @@ class POSView(tk.Frame):
 
         self.discount_lbl = tk.Label(footer_top, text="", bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 10, "bold"))
 
-        # ---------------- Action buttons ----------------
+        # Action buttons
         footer_btns = tk.Frame(right, bg=THEME["panel"])
         footer_btns.pack(fill="x", padx=14, pady=(0, 10))
 
@@ -490,7 +469,7 @@ class POSView(tk.Frame):
             cursor="hand2",
         ).pack(side="left", padx=(5, 0))
 
-        # ---------------- Drafts panel ----------------
+        # Drafts panel
         self.drafts_section = tk.Frame(right, bg=THEME["panel"])
 
         tk.Label(self.drafts_section, text="Draft orders", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(6, 6))
@@ -523,7 +502,7 @@ class POSView(tk.Frame):
         except tk.TclError:
             pass
 
-    # ---------------- Categories ----------------
+    # Categories
     def _set_active_category_btn(self, name: str) -> None:
         self._selected_category = name
         for cat_name, btn in self._cat_buttons.items():
@@ -566,7 +545,7 @@ class POSView(tk.Frame):
         self._set_active_category_btn(name)
         self._refresh_products()
 
-    # ---------------- Products ----------------
+    # Products
     def _filter_products(self, search_text: str = ""):
         q = (search_text or "").strip().lower()
         if not q or q in ["search", "search…"]:
@@ -607,18 +586,71 @@ class POSView(tk.Frame):
         if search_text == "Search…":
             search_text = ""
         self._products_cache = self._filter_products(search_text)
-        self._relayout_products(rebuild_cards=True)
+        self._start_batch_load()
+
+    # ------ Batch card loading ------
+    _BATCH_SIZE = 12
+
+    def _start_batch_load(self) -> None:
+        """Cancel any in-flight batch, clear the grid, start fresh."""
+        if self._batch_after is not None:
+            try:
+                self.after_cancel(self._batch_after)
+            except Exception:
+                pass
+            self._batch_after = None
+
+        for w in self.prod_inner.winfo_children():
+            w.destroy()
+        self._product_card_widgets = []
+        self._loading_lbl = None
+
+        if not self._products_cache:
+            tk.Label(
+                self.prod_inner,
+                text="No items found. Clear search or seed products.",
+                bg=THEME["panel"], fg=THEME["muted"],
+                font=("Segoe UI", 12, "bold"),
+            ).pack(pady=40)
+            return
+
+        self._loading_lbl = tk.Label(
+            self.prod_inner, text="Loading menu…",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", 12),
+        )
+        self._loading_lbl.pack(pady=40)
+
+        self._batch_products = list(self._products_cache)
+        self._batch_idx = 0
+        self._batch_after = self.after(10, self._render_product_batch)
+
+    def _render_product_batch(self) -> None:
+        self._batch_after = None
+
+        if self._loading_lbl is not None:
+            try:
+                self._loading_lbl.destroy()
+            except Exception:
+                pass
+            self._loading_lbl = None
+
+        end = min(self._batch_idx + self._BATCH_SIZE, len(self._batch_products))
+        for i in range(self._batch_idx, end):
+            card = self._product_card(self.prod_inner, self._batch_products[i])
+            self._product_card_widgets.append(card)
+
+        self._batch_idx = end
+        self._do_product_grid_layout()
+
+        if self._batch_idx < len(self._batch_products):
+            self._batch_after = self.after(10, self._render_product_batch)
 
     def _relayout_products(self, rebuild_cards: bool = False) -> None:
-        if rebuild_cards:
-            for w in self.prod_inner.winfo_children():
-                w.destroy()
-            if not self._products_cache:
-                tk.Label(self.prod_inner, text="No items found. Clear search or seed products.", bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 12, "bold")).pack(pady=40)
-                self._product_card_widgets = []
-            else:
-                self._product_card_widgets = [self._product_card(self.prod_inner, r) for r in self._products_cache]
+        """Called by debounced resize — just re-grid existing cards."""
+        self._do_product_grid_layout()
 
+    def _do_product_grid_layout(self) -> None:
         cards = self._product_card_widgets
         cols = self._calc_product_cols()
         cols = 2 if cols < 2 else (3 if cols > 3 else cols)
@@ -721,7 +753,7 @@ class POSView(tk.Frame):
 
         return card
 
-    # ---------------- Cart ----------------
+    # Cart
     def _add_to_cart(self, pid: int, name: str, price: float):
         if pid in self.cart:
             n, p, qty, note = self.cart[pid]
@@ -806,7 +838,6 @@ class POSView(tk.Frame):
         ).grid(row=0, column=4, sticky="ew", padx=(4, 4), pady=(10, 6))
 
         if not self.cart:
-            self._set_scroll_enabled(self.cart_canvas, False)
             self._set_discount_next_to_total(None)
             try:
                 self.cart_canvas.yview_moveto(0)
@@ -884,17 +915,10 @@ class POSView(tk.Frame):
         if bbox:
             self.cart_canvas.configure(scrollregion=bbox)
 
-        try:
-            content_h = (bbox[3] - bbox[1]) if bbox else 0
-            canvas_h = self.cart_canvas.winfo_height()
-            self._set_scroll_enabled(self.cart_canvas, content_h > canvas_h + 2)
-        except Exception:
-            self._set_scroll_enabled(self.cart_canvas, True)
-
         # Refresh ML suggestions after every cart change
         self.after(60, self._refresh_suggestions)
 
-    # ---------------- ML Suggestions ----------------
+    # ML Suggestions
     def _refresh_suggestions(self):
         """
         Rebuild the 'Suggested Items' panel based on the current cart.
@@ -924,18 +948,10 @@ class POSView(tk.Frame):
         # ── Fetch suggestions ────────────────────────────────────────────────
         cart_ids = list(self.cart.keys())
 
-        if DEBUG:
-            print(f"[POS] _refresh_suggestions — cart_ids: {cart_ids}")
-
         try:
             suggested_ids = self.recommender.suggest(cart_ids, top_n=3)
-        except Exception as exc:
-            if DEBUG:
-                print(f"[POS] recommender.suggest() raised: {exc}")
+        except Exception:
             suggested_ids = []
-
-        if DEBUG:
-            print(f"[POS] suggested_ids returned to UI: {suggested_ids}")
 
         # ── State 2: no data yet → show muted placeholder ───────────────────
         if not suggested_ids:
@@ -1010,8 +1026,6 @@ class POSView(tk.Frame):
 
             # ── Skip out-of-stock suggestions ───────────────────────────────
             if stock_qty <= 0:
-                if DEBUG:
-                    print(f"[POS] Skipping suggestion #{pid} — out of stock (qty={stock_qty})")
                 continue
 
             # ── Last-resort price fallback via recommender helper ────────────
@@ -1049,9 +1063,6 @@ class POSView(tk.Frame):
 
             rendered += 1
 
-        if DEBUG:
-            print(f"[POS] Rendered {rendered} suggestion button(s).")
-
         # If every suggested item was out-of-stock, show the "no data" message
         if rendered == 0:
             for w in self._suggestions_frame.winfo_children():
@@ -1079,7 +1090,7 @@ class POSView(tk.Frame):
         if not self._suggestions_frame.winfo_ismapped():
             self._suggestions_frame.pack(fill="x", pady=(2, 0), before=self._footer_top)
 
-    # ---------------- Discount ----------------
+    # Discount
     def _add_discount(self):
         dlg = DiscountDialog(self)
         self.wait_window(dlg)
@@ -1090,7 +1101,7 @@ class POSView(tk.Frame):
         self.discount_value = float(value)
         self._refresh_cart()
 
-    # ---------------- Drafts ----------------
+    # Drafts
     def _refresh_drafts_panel(self):
         rows = self.draft_dao.list_drafts()
         if not rows:
@@ -1219,7 +1230,7 @@ class POSView(tk.Frame):
         except Exception as e:
             messagebox.showerror("Draft orders", f"Failed to delete all drafts.\n\n{e}")
 
-    # ---------------- Checkout ----------------
+    # Checkout
     def _checkout(self):
         if not self.cart:
             messagebox.showinfo("Checkout", "No items in order.")

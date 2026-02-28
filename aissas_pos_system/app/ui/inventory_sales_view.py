@@ -14,11 +14,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from datetime import datetime
 
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment
 import os
 
 from app.config import THEME
@@ -316,9 +314,7 @@ class InventorySalesView(tk.Frame):
     # ──────────────────────────────────────────────────────────────────────────
 
     def _export_pdf(self):
-        if not self.canvas_figure:
-            messagebox.showwarning("PDF Export", "No chart to export yet.")
-            return
+        data, total_sales, order_count = self._get_sales_data()
         file_path = filedialog.asksaveasfilename(
             defaultextension=".pdf",
             filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
@@ -327,7 +323,79 @@ class InventorySalesView(tk.Frame):
         if not file_path:
             return
         try:
-            self.canvas_figure.savefig(file_path, dpi=150, bbox_inches="tight")
+            from matplotlib.backends.backend_pdf import PdfPages
+            from matplotlib.figure import Figure
+            import matplotlib.gridspec as gridspec
+
+            vt  = self.var_view_type.get()
+            avg = total_sales / order_count if order_count else 0.0
+            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+            with PdfPages(file_path) as pdf:
+                fig = Figure(figsize=(10, 7))
+                gs  = gridspec.GridSpec(2, 1, figure=fig, height_ratios=[1, 3],
+                                        hspace=0.5)
+
+                # ── Header / summary panel ────────────────────────────────────
+                ax_info = fig.add_subplot(gs[0])
+                ax_info.axis("off")
+
+                summary_lines = [
+                    f"Aissas Kitchenette — Sales Report ({vt})",
+                    f"Generated: {now}",
+                    f"",
+                    f"Total Sales:     \u20b1{total_sales:,.2f}",
+                    f"Total Orders:    {order_count}",
+                    f"Average Order:   \u20b1{avg:,.2f}",
+                ]
+                if data:
+                    summary_lines.append(f"Date Range:      {data[0][0]}  to  {data[-1][0]}")
+
+                ax_info.text(
+                    0.02, 0.95, "\n".join(summary_lines),
+                    transform=ax_info.transAxes,
+                    fontsize=10, verticalalignment="top",
+                    fontfamily="monospace",
+                    bbox=dict(boxstyle="round,pad=0.5", facecolor="#f9f0e8",
+                              edgecolor="#c8a882", linewidth=1),
+                )
+
+                # ── Bar chart ─────────────────────────────────────────────────
+                ax_chart = fig.add_subplot(gs[1])
+
+                if data:
+                    labels = [item[0] for item in data]
+                    values = [item[1] for item in data]
+
+                    bars = ax_chart.bar(labels, values, color="#6B4B3A",
+                                        edgecolor="none")
+                    for bar in bars:
+                        h = bar.get_height()
+                        if h > 0:
+                            ax_chart.text(
+                                bar.get_x() + bar.get_width() / 2, h,
+                                f"\u20b1{h:,.0f}",
+                                ha="center", va="bottom", fontsize=8,
+                            )
+
+                    ax_chart.set_xlabel("Period", fontsize=10)
+                    ax_chart.set_ylabel("Sales (\u20b1)", fontsize=10)
+                    ax_chart.set_title(f"Sales — {vt} View", fontsize=12, pad=10)
+                    ax_chart.grid(axis="y", alpha=0.25)
+                    ax_chart.spines["top"].set_visible(False)
+                    ax_chart.spines["right"].set_visible(False)
+
+                    if len(labels) > 10:
+                        ax_chart.tick_params(axis="x", rotation=45)
+                    fig.tight_layout(rect=[0, 0, 1, 1])
+                else:
+                    ax_chart.text(0.5, 0.5, "No sales data available",
+                                  ha="center", va="center", fontsize=12,
+                                  transform=ax_chart.transAxes)
+                    ax_chart.axis("off")
+
+                pdf.savefig(fig, bbox_inches="tight")
+
             messagebox.showinfo("PDF Exported", f"Saved to:\n{file_path}")
         except Exception as e:
             messagebox.showerror("PDF Export Error", f"Failed to export PDF.\n\n{e}")
@@ -342,39 +410,112 @@ class InventorySalesView(tk.Frame):
         if not file_path:
             return
         try:
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+
             wb = openpyxl.Workbook()
             ws = wb.active
-            ws.title = "Sales"
+            ws.title = "Sales Report"
 
-            ws["A1"] = f"Sales Report — {self.var_view_type.get()} View"
-            ws["A1"].font = Font(bold=True, size=14)
-            ws.merge_cells("A1:B1")
+            vt  = self.var_view_type.get()
+            avg = total_sales / order_count if order_count else 0.0
+            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+            date_range = (
+                f"{data[0][0]}  to  {data[-1][0]}" if data else "N/A"
+            )
 
-            ws["A3"] = "Period"
-            ws["B3"] = "Sales (₱)"
-            for cell in [ws["A3"], ws["B3"]]:
-                cell.font = Font(bold=True)
-                cell.fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+            # ── Title block ───────────────────────────────────────────────────
+            title_fill   = PatternFill("solid", fgColor="6B4B3A")
+            title_font   = Font(bold=True, size=14, color="FFFFFF")
+            subtitle_font = Font(size=10, color="6E6E6E")
+            bold_font    = Font(bold=True, size=10)
+            header_fill  = PatternFill("solid", fgColor="EADFD2")
+            header_font  = Font(bold=True, size=10, color="1F1F1F")
+            total_fill   = PatternFill("solid", fgColor="F0FAF4")
+            border_side  = Side(style="thin", color="D5C7B8")
+            thin_border  = Border(bottom=border_side)
+            center_align = Alignment(horizontal="center", vertical="center")
+            right_align  = Alignment(horizontal="right", vertical="center")
 
-            for row_idx, (label, value) in enumerate(data, start=4):
-                ws[f"A{row_idx}"] = label
-                ws[f"B{row_idx}"] = value
-                ws[f"B{row_idx}"].number_format = "₱#,##0.00"
+            ws.merge_cells("A1:C1")
+            ws["A1"] = "Aissas Kitchenette — Sales Report"
+            ws["A1"].font  = title_font
+            ws["A1"].fill  = title_fill
+            ws["A1"].alignment = center_align
+            ws.row_dimensions[1].height = 28
 
-            footer_row = len(data) + 5
-            ws[f"A{footer_row}"] = "Summary"
-            ws[f"A{footer_row}"].font = Font(bold=True)
-            ws[f"A{footer_row+1}"] = "Total Orders:"
-            ws[f"B{footer_row+1}"] = order_count
-            ws[f"A{footer_row+2}"] = "Total Sales:"
-            ws[f"B{footer_row+2}"] = total_sales
-            ws[f"B{footer_row+2}"].number_format = "₱#,##0.00"
-            ws[f"B{footer_row+2}"].font = Font(bold=True)
+            ws.merge_cells("A2:C2")
+            ws["A2"] = f"View: {vt}  |  Generated: {now}  |  Date Range: {date_range}"
+            ws["A2"].font      = subtitle_font
+            ws["A2"].alignment = center_align
+            ws.row_dimensions[2].height = 18
 
-            ws.column_dimensions["A"].width = 20
-            ws.column_dimensions["B"].width = 18
+            # ── KPI summary row ───────────────────────────────────────────────
+            ws.merge_cells("A3:C3")
+            ws["A3"] = (
+                f"Total Sales: \u20b1{total_sales:,.2f}     "
+                f"Total Orders: {order_count}     "
+                f"Average Order: \u20b1{avg:,.2f}"
+            )
+            ws["A3"].font      = bold_font
+            ws["A3"].alignment = center_align
+            ws["A3"].fill      = PatternFill("solid", fgColor="FFF3E0")
+            ws.row_dimensions[3].height = 20
+
+            # ── Column headers ────────────────────────────────────────────────
+            headers = ["Period", "Sales (\u20b1)", "% of Total"]
+            for col_idx, h in enumerate(headers, start=1):
+                cell = ws.cell(row=5, column=col_idx, value=h)
+                cell.font      = header_font
+                cell.fill      = header_fill
+                cell.alignment = center_align if col_idx > 1 else Alignment(horizontal="left")
+                cell.border    = thin_border
+            ws.row_dimensions[5].height = 18
+
+            # ── Data rows ─────────────────────────────────────────────────────
+            for row_idx, (label, value) in enumerate(data, start=6):
+                pct = (value / total_sales * 100) if total_sales else 0
+                row_fill = PatternFill("solid", fgColor="FFFFFF" if (row_idx % 2 == 0) else "FAF7F4")
+
+                c_period = ws.cell(row=row_idx, column=1, value=label)
+                c_period.fill = row_fill
+
+                c_sales = ws.cell(row=row_idx, column=2, value=value)
+                c_sales.number_format = '"\u20b1"#,##0.00'
+                c_sales.alignment     = right_align
+                c_sales.fill          = row_fill
+
+                c_pct = ws.cell(row=row_idx, column=3, value=round(pct, 2))
+                c_pct.number_format = "0.00%"
+                c_pct.alignment     = right_align
+                c_pct.fill          = row_fill
+
+            # ── Totals row ────────────────────────────────────────────────────
+            totals_row = len(data) + 6
+            ws.cell(row=totals_row, column=1, value="TOTAL").font = Font(bold=True, size=10)
+            ws.cell(row=totals_row, column=1).fill = total_fill
+
+            c_total = ws.cell(row=totals_row, column=2, value=total_sales)
+            c_total.number_format = '"\u20b1"#,##0.00'
+            c_total.font          = Font(bold=True, size=10)
+            c_total.alignment     = right_align
+            c_total.fill          = total_fill
+
+            c_total_pct = ws.cell(row=totals_row, column=3, value=1.0)
+            c_total_pct.number_format = "0.00%"
+            c_total_pct.font          = Font(bold=True, size=10)
+            c_total_pct.alignment     = right_align
+            c_total_pct.fill          = total_fill
+
+            # ── Column widths ─────────────────────────────────────────────────
+            ws.column_dimensions["A"].width = 22
+            ws.column_dimensions["B"].width = 20
+            ws.column_dimensions["C"].width = 14
+
+            # ── Freeze header rows ────────────────────────────────────────────
+            ws.freeze_panes = "A6"
 
             wb.save(file_path)
-            messagebox.showinfo("Excel Exported", f"Saved to:\n{file_path}")
+            messagebox.showinfo("Excel Exported", f"Report saved to:\n{file_path}")
         except Exception as e:
             messagebox.showerror("Excel Export Error", f"Failed to export Excel.\n\n{e}")

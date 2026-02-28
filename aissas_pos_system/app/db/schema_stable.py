@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-# =============================================================================
 # COMPLETE DATABASE SCHEMA
-# =============================================================================
 # This file defines ALL_SCHEMAS and INDEX_STATEMENTS for the POS system.
 # All columns are defined here to ensure DAO queries match exactly.
 # =============================================================================
@@ -107,9 +105,7 @@ ALL_SCHEMAS: list[str] = [
     """,
 ]
 
-# =============================================================================
 # INDEXES - For Query Performance
-# =============================================================================
 INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);",
     "CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);",
@@ -119,8 +115,6 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);",
 ]
 
-# =============================================================================
 # BACKWARD COMPATIBILITY ALIASES
-# =============================================================================
 SCHEMAS = ALL_SCHEMAS
 TABLE_SCHEMAS = ALL_SCHEMAS

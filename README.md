@@ -1,169 +1,176 @@
 # Aissa's Kitchenette Management System
 
-## Project Description
+## Overview
 
-### What the System Is
-Aissa's Kitchenette Management System is a comprehensive Point-of-Sale (POS) application built with Python and Tkinter. It provides a user-friendly desktop interface for managing sales, inventory, and transactions in a fully offline environment.
+Aissa's Kitchenette Management System is a standalone desktop Point‑of‑Sale (POS) and inventory application built entirely with **Python 3** and **Tkinter**. It combines sales processing, inventory management, transaction history, reporting and user authentication into one offline package. All data is stored locally using SQLite; no internet connection is required.
 
-### What Problem It Solves
-This system addresses the challenges of manual inventory tracking, order management, and sales recording in small businesses. It eliminates paperwork, reduces errors in calculations, and provides real-time insights into business operations without requiring internet connectivity.
+## Key Features
 
-### Who It Is For
-This application is designed for small business owners, particularly those running kitchenettes, cafes, retail stores, or similar establishments that need efficient offline management of products, orders, and sales data.
+- **User Authentication & Roles** (ADMIN, MANAGER, CLERK)
+- **Point‑of‑Sale**: barcode‑style item lookup, search, categories, cart management
+- **Draft Orders**: save and recall unfinished sales
+- **Discounts**: per‑item or whole‑order, amount/percentage
+- **Receipts**: PDF thermal receipts via `reportlab` (fallback to plain‑text)
+- **Inventory CRUD**: create/edit/delete products and categories, stock updates
+- **Transaction History**: search by ID, filter by status/payment/date
+- **Date Picker**: offline calendar built with `tkcalendar`
+- **Reporting**: sales/inventory charts with export to CSV, PDF, Excel (`matplotlib` & `openpyxl`)
+- **Machine‑learning Suggestions**: offline recommender engine for upsells
+- **Settings & User Management**: password changes, database backup/restore, manage users
+- **Offline‑first**: works with no network at all
 
-## Features / Functions
+## Technology Stack
 
-The system includes the following main functions:
+- **Language:** Python 3.10+ (tested)
+- **GUI:** Tkinter (built‑in; Linux may require `python3-tk`)
+- **Database:** SQLite (via `sqlite3` module)
+- **Architecture:** DAO/services/views pattern
+- **Dependencies:** Pillow, matplotlib, reportlab, openpyxl, tkcalendar (see `requirements.txt`)
 
-- **User Authentication**: Secure login system to protect access to the POS interface
-- **Product Management**: Add, edit, and delete products with stock level tracking
-- **Category Management**: Organize products into categories for better organization
-- **Order Processing**: Create and manage customer orders with dynamic cart functionality
-- **Draft Orders**: Save incomplete orders for later completion
-- **Discount System**: Apply discounts to individual items or entire orders
-- **Payment Processing**: Handle checkout and calculate totals automatically
-- **Receipt Generation**: Create and print transaction receipts
-- **Transaction History**: View and search past sales records
-- **Inventory Tracking**: Monitor stock levels and manage product availability
-- **Reporting**: Generate reports on sales and inventory data
-- **Offline Operation**: All data stored locally using SQLite database
+## Repository Structure
+
+```
+AissasKitchenette-Management-System/
+├── aissas_pos_system/           # main application
+│   ├── main.py                  # launch script
+│   ├── requirements.txt         # Python package list
+│   ├── app/                     # application package
+│   │   ├── config.py            # paths, theme, defaults
+│   │   ├── constants.py         # roles, permissions, messages
+│   │   ├── utils.py             # helper functions (hashing, money)
+│   │   ├── validators.py        # input validation
+│   │   ├── db/                  # data layer
+│   │   │   ├── database.py      # SQLite connection & schema
+│   │   │   ├── dao.py           # DAOs for each table
+│   │   │   ├── schema.py        # incremental schema updates
+│   │   │   ├── schema_stable.py # complete table definitions
+│   │   │   ├── seed_menu.py     # initial product data
+│   │   │   └── seed_users.py    # default admin user
+│   │   ├── ml/                  # recommender engine (pure Python)
+│   │   ├── models/              # lightweight data models
+│   │   ├── services/            # business logic modules
+│   │   └── ui/                  # Tkinter view classes and dialogs
+│   ├── assets/                  # icons, logo, product images
+│   ├── exports/                 # generated CSV/PDF files
+│   ├── product_images/          # raw image files for products
+│   └── data/                    # runtime database file (`pos.db`)
+├── _write_shell.py              # helper script (not part of core app)
+├── _write_files.py              # helper script (not part of core app)
+└── README.md                    # this file
+```
 
 ## Installation
 
-Follow these step-by-step instructions to set up the project on your computer:
-
-1. **Clone the Repository**
-   ```
-   git clone <repository-url>
-   cd AissasKitchenette-Management-System
+1. Clone and `cd` into the repository:
+   ```bash
+   git clone <repo-url>
+   cd AissasKitchenette-Management-System/aissas_pos_system
    ```
 
-2. **Navigate into the Project Directory**
-   ```
-   cd aissas_pos_system
-   ```
+2. Create a virtual environment:
+   - **Windows:** `python -m venv .venv`
+   - **macOS/Linux:** `python3 -m venv .venv`
 
-3. **Create a Virtual Environment**
-   - **Windows**:
-     ```
-     python -m venv .venv
-     ```
-   - **macOS/Linux**:
-     ```
-     python3 -m venv .venv
-     ```
+3. Activate it:
+   - **Windows (PowerShell):** `.\.venv\Scripts\Activate.ps1`
+   - **Windows (cmd):** `.\.venv\Scripts\activate.bat`
+   - **macOS/Linux:** `source .venv/bin/activate`
 
-4. **Activate the Virtual Environment**
-   - **Windows**:
-     ```
-     .\.venv\Scripts\Activate.ps1
-     ```
-   - **macOS/Linux**:
-     ```
-     source .venv/bin/activate
-     ```
-
-5. **Install Dependencies**
-   ```
+4. Install dependencies:
+   ```bash
+   pip install --upgrade pip
    pip install -r requirements.txt
    ```
 
-   The `requirements.txt` file contains a list of all Python packages required for the project to run. It specifies the package names and their minimum versions. Running `pip install -r requirements.txt` automatically downloads and installs all these dependencies, ensuring the project has everything it needs to function properly.
+## Running the Application
 
-## How to Run
+From the `aissas_pos_system` directory with the venv activated:
 
-Once installation is complete, start the application with this command:
-
-```
+```bash
 python main.py
 ```
 
-The application window will open, and you can log in with the default credentials (username: admin, password: admin123).
+A main window appears. Use the seeded admin credentials to log in:
 
-## Project Structure
+- **Username:** `admin`
+- **Password:** `admin123`
 
-Here's a brief overview of the important files and folders in the repository:
+These defaults can be changed in `app/config.py` or via the user management screen after logging in.
 
-- `aissas_pos_system/` - Main application directory
-  - `main.py` - Entry point script to launch the application
-  - `requirements.txt` - List of Python dependencies
-  - `app/` - Core application package
-    - `config.py` - Application configuration settings
-    - `constants.py` - Constant values used throughout the app
-    - `utils.py` - Utility functions
-    - `validators.py` - Input validation functions
-    - `db/` - Database layer
-      - `database.py` - Database connection and initialization
-      - `dao.py` - Data Access Objects for database operations
-      - `schema.py` - Database table definitions
-      - `seed_*.py` - Scripts to populate initial data
-    - `models/` - Data model classes
-      - `user.py`, `product.py`, `order.py`, etc. - Business object definitions
-    - `services/` - Business logic layer
-      - `auth_service.py` - User authentication
-      - `pos_service.py` - Point of sale operations
-      - `inventory_service.py` - Inventory management
-      - `report_service.py` - Report generation
-    - `ui/` - User interface components
-      - `app_window.py` - Main application window
-      - `login_view.py` - Login screen
-      - `pos_view.py` - Point of sale interface
-      - `inventory_view.py` - Inventory management screens
-      - `reports_view.py` - Reporting interface
-      - `theme.py` - UI styling and themes
-- `assets/` - Static assets like icons
-- `product_images/` - Product image files
-- `exports/` - Generated reports and exports
-- `data/` - Additional data files
+## Using the System
+
+### Login
+
+- Enter your username/password.
+- Only active users may access the system; roles determine available modules.
+
+### POS Screen
+
+1. Search or select a category to find products.
+2. Click a product card to add it to the cart.
+3. Adjust quantity or remove items in the cart area.
+4. Click `Discount` to apply a global or per-item discount.
+5. Use `Save as Draft` to store orders that are not yet complete.
+6. To complete a sale, click `Checkout`, select payment method, enter amount, and confirm.
+7. A PDF receipt is generated and saved under `receipts/`.
+
+### Inventory Module
+
+- **Overview:** key metrics and quick links.
+- **Sales:** display historical sales charts, exportable to PDF/Excel.
+- **Products:** manage product list; double‑click to edit or delete.
+- **Categories:** manage categories indirectly via products or via settings.
+
+### Transactions
+
+- Search by transaction ID.
+- Filter by status (Completed, Pending, etc.) or payment method.
+- Set a date range using calendar picker or manual `YYYY-MM-DD` entry.
+- Open a transaction to view line items and reprint the receipt.
+- Resolve outstanding/pending orders with an admin action.
+
+### Reports
+
+- Access from sidebar.
+- Generate best‑seller lists, low‑stock reports, etc.
+- Export to CSV (visible `exports/`) or PDF/Excel via built‑in options.
+
+### Settings & User Management
+
+- Open via the gear icon or *Settings* menu.
+- **Profile:** change your password.
+- **Database:** backup or restore the SQLite `.db` file (password protected).
+- **Users:** admins may create, deactivate, and assign roles.
+
+### Additional Notes
+
+- **ML Suggestions:** adds likely complementary items to the POS cart based on past orders.
+- **Offline Operation:** no external network calls; everything runs locally.
 
 ## Troubleshooting
 
-### Common Issues and Fixes
+- **Module errors**: ensure the virtual environment is active and `pip install -r requirements.txt` completed successfully.
+- **Tkinter not found**: install OS package (`python3-tk` on Debian/Ubuntu).
+- **Database locked**: close other instances or delete `data/pos.db` to recreate.
+- **Receipt generation fails**: install `reportlab` or fallback text receipts are created.
+- **tkcalendar errors**: install it in the same environment; avoid naming conflicts with local files.
+- **Permissions**: ensure the program can write to `data/`, `receipts/`, and `exports/`.
 
-1. **Python Not Found Error**
-   - Ensure Python 3.10 or higher is installed
-   - Check that `python` or `python3` command is available in your terminal
-   - On Windows, you may need to add Python to your PATH during installation
+## Packaging Suggestion
 
-2. **Virtual Environment Issues**
-   - Make sure you're in the correct directory when creating/activating the virtual environment
-   - On Windows, ensure you're using PowerShell or Command Prompt with execution policy allowing scripts
-   - Try deactivating and reactivating if activation fails
+To build a standalone executable with PyInstaller:
 
-3. **Dependencies Installation Fails**
-   - Ensure pip is up to date: `python -m pip install --upgrade pip`
-   - Check your internet connection
-   - Some packages may require additional system libraries (e.g., Pillow may need image libraries)
+```bash
+pip install pyinstaller
+pyinstaller --onefile main.py
+```
 
-4. **Application Won't Start**
-   - Verify all dependencies are installed correctly
-   - Check that you're running from the `aissas_pos_system` directory
-   - Ensure no other instances of the application are running
+Include asset directories manually via a spec file if distributing.
 
-5. **Database Errors**
-   - The application creates its database automatically on first run
-   - If you encounter database issues, try deleting any existing `.db` files in the data directory
-   - Ensure the application has write permissions in its directory
+## Credits & License
 
-6. **UI Issues (e.g., Tkinter not working)**
-   - Tkinter comes built-in with Python, but on some Linux distributions you may need to install it separately
-   - Ubuntu/Debian: `sudo apt-get install python3-tk`
-   - Ensure your display environment supports GUI applications
+(This section can be filled by project owner.)
 
-If you encounter issues not covered here, check the application logs or try reinstalling the dependencies.
-- Offline machine learning for sales prediction
-- Customer purchase tracking and loyalty programs
-- Low stock alerts and automated reordering suggestions
-- Enhanced sales reports with charts and export options
-- Multi-user support with role-based access
-- Integration with external devices like cash drawers
+---
 
-## Notes / UI Tips
-
-- Use the search box in the POS screen (shows a muted placeholder `Search…` when empty).
-- Mouse wheel scrolling works by hovering over the Categories, Items, or Current Order areas (no need to click first).
-- The Transactions view has labeled date filters (`From` / `To`) and placeholders `YYYY-MM-DD` to make filtering easier.
-- Printing a receipt will generate a text receipt and attempt to open it automatically on your platform; if auto-open fails, the path to the saved receipt will be shown.
-
-If you need help running the app or adjusting settings (e.g., switching to a packaged PDF receipt printer), feel free to ask for step-by-step instructions.
-
+Enjoy using Aissa's Kitchenette Management System! Feel free to modify, extend, or package it for your own business needs.

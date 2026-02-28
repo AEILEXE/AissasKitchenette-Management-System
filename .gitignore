@@ -1,3 +1,16 @@
+# Claude Code agent memory / session data
+.claude/
+
+# Temporary write-helper scripts (auto-generated, safe to delete)
+_write_*.py
+
+# Database backup files (created during development)
+*.db.bak
+aissas_pos_system/app/db/seed_menu.py.bak
+
+# PDF receipts generated at runtime
+receipts/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

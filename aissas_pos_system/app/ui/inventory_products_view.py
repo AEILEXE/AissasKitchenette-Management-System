@@ -343,7 +343,7 @@ class ProductEditor(tk.Toplevel):
 
         self.title("Edit Product" if product_id else "Create Product")
         self.configure(bg=THEME["bg"])
-        self.geometry(f"{ui_scale.s(700)}x{ui_scale.s(560)}")
+        self.geometry(f"{ui_scale.s(700)}x{ui_scale.s(680)}")
         self.transient(parent)
         self.grab_set()
 
@@ -356,6 +356,10 @@ class ProductEditor(tk.Toplevel):
         self.var_image    = tk.StringVar()
         self.var_category = tk.StringVar()
 
+        # Image preview reference (prevent garbage collection)
+        self._img_ref = None
+        self._preview_lbl: tk.Label | None = None
+
         self._build()
         self._load()
 
@@ -363,20 +367,83 @@ class ProductEditor(tk.Toplevel):
         f   = ui_scale.scale_font
         sp  = ui_scale.s
 
-        # Title
+        # ── Title (top) ───────────────────────────────────────────────────────
         tk.Label(
             self, text=self.title(),
             bg=THEME["bg"], fg=THEME["text"],
             font=("Segoe UI", f(14), "bold"),
-        ).pack(anchor="w", padx=18, pady=(14, 10))
+        ).pack(anchor="w", padx=18, pady=(14, 6))
 
-        # Content card
-        box = tk.Frame(self, bg=THEME["panel"])
-        box.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+        # ── Footer (bottom — packed BEFORE the scroll area so it's always visible) ──
+        footer = tk.Frame(self, bg=THEME["bg"])
+        footer.pack(side="bottom", fill="x", padx=18, pady=(6, 14))
+
+        tk.Button(
+            footer, text="Close",
+            bg=THEME["panel2"], fg=THEME["text"],
+            bd=0, padx=sp(12), pady=sp(8), cursor="hand2",
+            font=("Segoe UI", f(9)),
+            command=self.destroy,
+        ).pack(side="right")
+
+        label = "Update Product" if self.product_id else "Save Product"
+        tk.Button(
+            footer, text=label,
+            bg=THEME["success"], fg="white",
+            bd=0, padx=sp(12), pady=sp(8), cursor="hand2",
+            font=("Segoe UI", f(9), "bold"),
+            command=self._save,
+        ).pack(side="right", padx=(0, 10))
+
+        if self.product_id:
+            tk.Button(
+                footer, text="Delete",
+                bg=THEME["danger"], fg="white",
+                bd=0, padx=sp(12), pady=sp(8), cursor="hand2",
+                font=("Segoe UI", f(9)),
+                command=self._delete,
+            ).pack(side="left")
+
+        # ── Scrollable form area (fills remaining space) ──────────────────────
+        scroll_wrap = tk.Frame(self, bg=THEME["panel"])
+        scroll_wrap.pack(fill="both", expand=True, padx=18, pady=(0, 4))
+        scroll_wrap.rowconfigure(0, weight=1)
+        scroll_wrap.columnconfigure(0, weight=1)
+
+        form_canvas = tk.Canvas(scroll_wrap, bg=THEME["panel"], highlightthickness=0)
+        form_canvas.grid(row=0, column=0, sticky="nsew")
+
+        form_sb = ttk.Scrollbar(scroll_wrap, orient="vertical", command=form_canvas.yview)
+        form_sb.grid(row=0, column=1, sticky="ns")
+        form_canvas.configure(yscrollcommand=form_sb.set)
+
+        # Inner frame — all form fields go here
+        box = tk.Frame(form_canvas, bg=THEME["panel"])
         box.columnconfigure(0, weight=1)
         box.columnconfigure(1, weight=1)
+        _win_id = form_canvas.create_window((0, 0), window=box, anchor="nw")
 
-        # Image row
+        box.bind(
+            "<Configure>",
+            lambda _e: form_canvas.configure(scrollregion=form_canvas.bbox("all")),
+            add="+",
+        )
+        form_canvas.bind(
+            "<Configure>",
+            lambda e: form_canvas.itemconfigure(_win_id, width=e.width),
+            add="+",
+        )
+
+        # Mousewheel — bind only while hovering the canvas
+        def _scroll(event):
+            if not form_canvas.winfo_exists():
+                return
+            form_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+        form_canvas.bind("<Enter>", lambda _e: form_canvas.bind_all("<MouseWheel>", _scroll), add="+")
+        form_canvas.bind("<Leave>", lambda _e: form_canvas.unbind_all("<MouseWheel>"), add="+")
+
+        # ── Image row ─────────────────────────────────────────────────────────
         tk.Label(
             box, text="Product Image",
             bg=THEME["panel"], fg=THEME["muted"],
@@ -406,34 +473,53 @@ class ProductEditor(tk.Toplevel):
             font=("Segoe UI", f(9)),
         ).grid(row=0, column=1, sticky="ew", padx=(10, 0), ipady=sp(6))
 
-        # Name
+        # Image preview — fixed 140px height, proportional resize, centered
+        preview_frame = tk.Frame(
+            box, bg=THEME["panel2"],
+            highlightthickness=1, highlightbackground=THEME["border"],
+            height=sp(140),
+        )
+        preview_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=14, pady=(8, 0))
+        preview_frame.pack_propagate(False)
+        preview_frame.grid_propagate(False)
+
+        self._preview_lbl = tk.Label(
+            preview_frame,
+            text="No Image Selected",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", f(9)),
+            compound="center",
+        )
+        self._preview_lbl.place(relx=0.5, rely=0.5, anchor="center")
+
+        # ── Product Name ──────────────────────────────────────────────────────
         tk.Label(
             box, text="Product Name",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(9)),
-        ).grid(row=3, column=0, sticky="w", padx=14, pady=(12, 4))
+        ).grid(row=4, column=0, sticky="w", padx=14, pady=(12, 4))
         tk.Entry(
             box, textvariable=self.var_name,
             bd=0, bg=THEME["panel2"], fg=THEME["text"],
             font=("Segoe UI", f(10)),
-        ).grid(row=4, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 8), ipady=sp(8))
+        ).grid(row=5, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 8), ipady=sp(8))
 
-        # Description
+        # ── Description ───────────────────────────────────────────────────────
         tk.Label(
             box, text="Description",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(9)),
-        ).grid(row=5, column=0, sticky="w", padx=14)
+        ).grid(row=6, column=0, sticky="w", padx=14)
         self._desc_text = tk.Text(
             box, height=4, bd=0,
             bg=THEME["panel2"], fg=THEME["text"],
             font=("Segoe UI", f(9)),
         )
-        self._desc_text.grid(row=6, column=0, columnspan=2, sticky="ew", padx=14, pady=(4, 10))
+        self._desc_text.grid(row=7, column=0, columnspan=2, sticky="ew", padx=14, pady=(4, 10))
 
-        # Category row
+        # ── Category row ──────────────────────────────────────────────────────
         cat_row = tk.Frame(box, bg=THEME["panel"])
-        cat_row.grid(row=7, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 10))
+        cat_row.grid(row=8, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 10))
         cat_row.columnconfigure(1, weight=1)
 
         tk.Label(
@@ -456,56 +542,26 @@ class ProductEditor(tk.Toplevel):
             command=self._add_category,
         ).grid(row=0, column=2)
 
-        # Price
+        # ── Price ─────────────────────────────────────────────────────────────
         tk.Label(
-            box, text="Price (₱)",
+            box, text="Price (\u20b1)",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(9)),
-        ).grid(row=8, column=0, sticky="w", padx=14)
+        ).grid(row=9, column=0, sticky="w", padx=14)
         tk.Entry(
             box, textvariable=self.var_price,
             bd=0, bg=THEME["panel2"], fg=THEME["text"],
             font=("Segoe UI", f(10)),
-        ).grid(row=8, column=1, sticky="ew", padx=14, pady=(0, 8), ipady=sp(8))
+        ).grid(row=9, column=1, sticky="ew", padx=14, pady=(0, 8), ipady=sp(8))
 
-        # Available checkbox
+        # ── Available checkbox ────────────────────────────────────────────────
         tk.Checkbutton(
             box, text="Available  (uncheck to hide from POS)",
             variable=self.var_active,
             bg=THEME["panel"], fg=THEME["text"],
             activebackground=THEME["panel"],
             font=("Segoe UI", f(9)),
-        ).grid(row=9, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 14))
-
-        # Footer
-        footer = tk.Frame(self, bg=THEME["bg"])
-        footer.pack(fill="x", padx=18, pady=(0, 14))
-
-        tk.Button(
-            footer, text="Close",
-            bg=THEME["panel2"], fg=THEME["text"],
-            bd=0, padx=sp(12), pady=sp(8), cursor="hand2",
-            font=("Segoe UI", f(9)),
-            command=self.destroy,
-        ).pack(side="right")
-
-        label = "Update Product" if self.product_id else "Save Product"
-        tk.Button(
-            footer, text=label,
-            bg=THEME["success"], fg="white",
-            bd=0, padx=sp(12), pady=sp(8), cursor="hand2",
-            font=("Segoe UI", f(9), "bold"),
-            command=self._save,
-        ).pack(side="right", padx=(0, 10))
-
-        if self.product_id:
-            tk.Button(
-                footer, text="Delete",
-                bg=THEME["danger"], fg="white",
-                bd=0, padx=sp(12), pady=sp(8), cursor="hand2",
-                font=("Segoe UI", f(9)),
-                command=self._delete,
-            ).pack(side="left")
+        ).grid(row=10, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 14))
 
     def _refresh_categories(self):
         cats  = self.categories.list_categories()
@@ -534,7 +590,8 @@ class ProductEditor(tk.Toplevel):
             return
 
         self.var_name.set(r["name"])
-        self.var_image.set(r["image_path"] or "")
+        img_path = r["image_path"] or ""
+        self.var_image.set(img_path)
         self.var_price.set(str(r["price"]))
         self.var_stock.set(str(r["stock_qty"]))
         self.var_low.set(str(r["low_stock"]))
@@ -543,6 +600,43 @@ class ProductEditor(tk.Toplevel):
 
         self._desc_text.delete("1.0", "end")
         self._desc_text.insert("1.0", r["description"] or "")
+
+        # Show image preview for existing product
+        if img_path:
+            self.after(100, lambda: self._show_preview(img_path))
+
+    def _show_preview(self, image_path: str) -> None:
+        """Display a proportionally-resized thumbnail centred in the preview frame."""
+        if self._preview_lbl is None:
+            return
+        if not image_path:
+            self._preview_lbl.configure(image="", text="No Image Selected", compound="none")
+            self._img_ref = None
+            return
+        if not HAS_PIL:
+            self._preview_lbl.configure(image="", text="Install Pillow for preview", compound="none")
+            self._img_ref = None
+            return
+        abs_path = image_path if os.path.isabs(image_path) else os.path.join(os.getcwd(), image_path)
+        if not os.path.exists(abs_path):
+            self._preview_lbl.configure(image="", text="Image file not found", compound="none")
+            self._img_ref = None
+            return
+        try:
+            from PIL import Image as PILImage, ImageTk
+            img = PILImage.open(abs_path).convert("RGBA")
+            # Proportional resize: fit within 260×120 keeping aspect ratio
+            MAX_W, MAX_H = 260, 120
+            img.thumbnail((MAX_W, MAX_H), PILImage.LANCZOS)
+            # Composite onto a bg-coloured canvas to avoid alpha artefacts
+            bg = PILImage.new("RGBA", img.size, (242, 238, 232, 255))
+            bg.paste(img, mask=img.split()[3] if img.mode == "RGBA" else None)
+            tk_img = ImageTk.PhotoImage(bg.convert("RGB"))
+            self._img_ref = tk_img  # prevent GC
+            self._preview_lbl.configure(image=tk_img, text="", compound="center")
+        except Exception:
+            self._preview_lbl.configure(image="", text="Could not load preview", compound="none")
+            self._img_ref = None
 
     def _choose_file(self):
         path = filedialog.askopenfilename(
@@ -564,9 +658,10 @@ class ProductEditor(tk.Toplevel):
                     "JPG images require Pillow.\n\npip install Pillow")
                 return
             try:
-                img = Image.open(path)
+                from PIL import Image as PILImage
+                img = PILImage.open(path)
                 if img.mode == "RGBA":
-                    bg = Image.new("RGB", img.size, (255, 255, 255))
+                    bg = PILImage.new("RGB", img.size, (255, 255, 255))
                     bg.paste(img, mask=img.split()[3])
                     img = bg
                 elif img.mode != "RGB":
@@ -574,8 +669,9 @@ class ProductEditor(tk.Toplevel):
                 filename  = os.path.splitext(os.path.basename(path))[0] + ".png"
                 dest_path = os.path.join(img_dir, filename)
                 img.save(dest_path, "PNG")
-                self.var_image.set(os.path.join("product_images", filename))
-                messagebox.showinfo("Success", "Image converted to PNG and saved.")
+                rel_path = os.path.join("product_images", filename)
+                self.var_image.set(rel_path)
+                self._show_preview(rel_path)
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to convert JPG:\n{e}")
             return
@@ -591,8 +687,9 @@ class ProductEditor(tk.Toplevel):
                 filename  = f"{base}_{counter}{ext2}"
                 dest_path = os.path.join(img_dir, filename)
             shutil.copy2(path, dest_path)
-            self.var_image.set(os.path.join("product_images", filename))
-            messagebox.showinfo("Success", "Image saved successfully.")
+            rel_path = os.path.join("product_images", filename)
+            self.var_image.set(rel_path)
+            self._show_preview(rel_path)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to copy image:\n{e}")
 

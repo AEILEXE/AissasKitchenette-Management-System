@@ -22,9 +22,7 @@ except Exception as e:
     _TKCAL_ERROR = e
 
 
-# =========================================================
-# ===================== TRANSACTIONS VIEW =================
-# =========================================================
+# TRANSACTIONS VIEW
 
 class TransactionsView(tk.Frame):
     def __init__(self, parent: tk.Frame, db: Database, auth: AuthService):
@@ -252,7 +250,7 @@ class TransactionsView(tk.Frame):
             font=("Segoe UI", 22, "bold"),
         ).grid(row=0, column=0, sticky="w", padx=18, pady=(14, 10))
 
-        # ================= FILTER BAR (redesigned + calendar) =================
+        # FILTER BAR (redesigned + calendar)
         bar = tk.Frame(
             self,
             bg=THEME["panel"],
@@ -375,7 +373,7 @@ class TransactionsView(tk.Frame):
             command=self._clear_all,
         ).grid(row=1, column=4, sticky="w")
 
-        # ================= TABLE CARD =================
+        # TABLE CARD
         table_card = tk.Frame(self, bg=THEME["panel"], highlightthickness=1, highlightbackground=THEME["panel2"])
         table_card.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
         table_card.columnconfigure(0, weight=1)
@@ -512,10 +510,7 @@ class TransactionsView(tk.Frame):
         TransactionDetailsDialog(self, self.db, oid, on_refresh=self.refresh)
 
 
-# =========================================================
-# ================ TRANSACTION DETAILS DIALOG ==============
-# (keep your current version here)
-# =========================================================
+# TRANSACTION DETAILS DIALOG
 
 class TransactionDetailsDialog(tk.Toplevel):
     MAX_COLLAPSED_ROWS = 5
@@ -880,9 +875,7 @@ class TransactionDetailsDialog(tk.Toplevel):
             messagebox.showerror("Receipt Error", f"Failed to generate receipt.\n\n{e}")
 
 
-# =========================================================
-# ======================= RESOLVE DIALOG ==================
-# =========================================================
+# RESOLVE DIALOG
 
 class ResolveDialog(tk.Toplevel):
     def __init__(self, parent: tk.Widget, db: Database, order_id: int, on_done=None):
