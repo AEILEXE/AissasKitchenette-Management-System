@@ -99,6 +99,7 @@ class ReceiptService:
         start_dt  = str(order_data.get("start_dt", "—"))
         end_dt    = str(order_data.get("end_dt", ""))
         customer  = str(order_data.get("customer_name", "—"))
+        cashier   = str(order_data.get("cashier_username", "") or "Unknown").strip() or "Unknown"
         payment   = str(order_data.get("payment_method", "—"))
         status    = str(order_data.get("status", "—"))
         reference = str(order_data.get("reference_no", "") or "").strip()
@@ -119,9 +120,10 @@ class ReceiptService:
         PAGE_W = 80 * mm
         MARGIN = 6 * mm
 
-        # Generous height estimate — never clips content
-        base_lines = 28 + len(items) * 3
-        PAGE_H     = max(130 * mm, base_lines * 5.5 * mm + 28 * mm)
+        # Height: base overhead + per-item lines + extra for 5 dividers with 6 mm gap.
+        # Adding ~40 mm buffer so long product names and discounts never get clipped.
+        base_lines = 32 + len(items) * 4
+        PAGE_H     = max(180 * mm, base_lines * 6.5 * mm + 60 * mm)
 
         c = rl_canvas.Canvas(file_path, pagesize=(PAGE_W, PAGE_H))
         y = PAGE_H - 10 * mm   # cursor starts near top
@@ -173,8 +175,10 @@ class ReceiptService:
         move(0.5)
         draw_text("AISSA'S KITCHENETTE", font=FONT_BOLD, size=11, align="center")
         draw_text("Official Receipt",     size=8,         align="center")
-        move(1)
-        draw_hr(1.0, 1.5)
+        move(3)
+        # gap_after=6 keeps the next text baseline 6 mm below the line;
+        # 8-pt ascenders are ~2 mm, giving 4 mm clearance — clearly separated.
+        draw_hr(1.0, 6.0)
 
         # ── Order metadata ────────────────────────────────────────────────────
         draw_row("Order #:", str(order_id))
@@ -182,29 +186,31 @@ class ReceiptService:
         if end_dt and end_dt not in ("None", "—", ""):
             draw_row("Completed:", end_dt[:19] if len(end_dt) > 19 else end_dt)
         draw_row("Customer:", customer)
+        draw_row("Cashier:", cashier)
         draw_row("Payment:", payment)
         if payment == "Bank/E-Wallet" and reference:
             draw_row("Reference:", reference)
         draw_row("Status:", status)
 
-        move(1)
-        draw_hr(0.4, 1)
+        move(3)
+        draw_hr(0.4, 6.0)
 
         # ── Items ─────────────────────────────────────────────────────────────
         draw_text("ITEMS", font=FONT_BOLD, size=8)
-        move(0.5)
+        move(1)
 
         for item in items:
-            qty      = item.get("qty", 0)
-            name     = item.get("name") or f"#{item.get('product_id', '?')}"
-            unit_p   = float(item.get("unit_price", 0.0))
-            sub      = float(item.get("subtotal",   0.0))
+            qty    = item.get("qty", 0)
+            name   = item.get("name") or f"#{item.get('product_id', '?')}"
+            unit_p = float(item.get("unit_price", 0.0))
+            sub    = float(item.get("subtotal",   0.0))
 
             draw_text(name, size=8)
             draw_row(f"  {qty} x {fmt_money(unit_p)}", fmt_money(sub), size=7)
+            move(0.5)   # small breath between items
 
-        move(1)
-        draw_hr(0.4, 1)
+        move(2)
+        draw_hr(0.4, 6.0)
 
         # ── Totals ────────────────────────────────────────────────────────────
         if discount_v > 0:
@@ -213,24 +219,24 @@ class ReceiptService:
         if tax_v > 0:
             draw_row("Tax:", fmt_money(tax_v))
 
-        move(0.5)
+        move(1)
         draw_row("TOTAL:", fmt_money(total_v), size=10,
                  bold_right=True, bold_left=True)
-        move(0.5)
-        draw_hr(0.4, 1)
+        move(3)
+        draw_hr(0.4, 6.0)
 
         draw_row("Amount Paid:", fmt_money(paid_v))
         if payment == "Cash":
             draw_row("Change:", fmt_money(change_v))
 
-        move(2)
-        draw_hr(1.0, 1)
+        move(4)
+        draw_hr(1.0, 6.0)
 
         # ── Footer ────────────────────────────────────────────────────────────
         draw_text(f"Printed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                   size=7, align="center")
         draw_text("Thank you for your order!", font=FONT_BOLD, size=8, align="center")
-        move(3)
+        move(4)
 
         c.save()
         return file_path

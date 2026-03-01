@@ -119,6 +119,7 @@ class DatePickerDialog(tk.Toplevel):
         ).pack(side="right")
 
         self._render_days()
+        self.bind("<Escape>", lambda _e: self.destroy(), add="+")
 
     def _render_days(self):
         if self._day_frame is None:
@@ -302,7 +303,7 @@ class TransactionsView(tk.Frame):
         style.configure(
             "Tx.Treeview",
             font=("Segoe UI", 10),
-            rowheight=30,
+            rowheight=24,
             background=THEME["panel"],
             fieldbackground=THEME["panel"],
             foreground=THEME["text"],
@@ -480,27 +481,31 @@ class TransactionsView(tk.Frame):
         #   ID/Items        → center
         #   Names           → left ("w")
 
+        # (id, heading, width, anchor, stretch, minwidth)
         col_cfg = [
-            # (id,        heading,    width, anchor, stretch)
-            ("id",        "ID",         65, "center", False),
-            ("payment",   "PAYMENT",   140, "w",      False),
-            ("paid",      "PAID",      110, "e",      False),
-            ("change",    "CHANGE",    100, "e",      False),
-            ("items",     "ITEMS",      60, "center", False),
-            ("status",    "STATUS",    110, "center", False),
-            ("total",     "TOTAL",     120, "e",      False),
-            ("start",     "START",     180, "center", True),
-            ("end",       "END",       160, "center", False),
-            ("details",   "",           60, "center", False),
+            ("id",      "ID",       65, "center", False,  45),
+            ("payment", "PAYMENT", 140, "w",      False,  90),
+            ("paid",    "PAID",    110, "e",      False,  80),
+            ("change",  "CHANGE",  100, "e",      False,  80),
+            ("items",   "ITEMS",    60, "center", False,  40),
+            ("status",  "STATUS",  110, "center", False,  80),
+            ("total",   "TOTAL",   120, "e",      False,  90),
+            ("start",   "START",   180, "center", True,  120),
+            ("end",     "END",     160, "center", False,  80),
+            ("details", "",         60, "center", False,  40),
         ]
 
-        for cid, hdr, width, anchor, stretch in col_cfg:
+        for cid, hdr, width, anchor, stretch, minw in col_cfg:
             self.tbl.heading(cid, text=hdr, anchor="center")
-            self.tbl.column(cid, width=width, anchor=anchor, stretch=stretch)
+            self.tbl.column(cid, width=width, anchor=anchor, stretch=stretch, minwidth=minw)
 
-        self.tbl.tag_configure("top_sale",       background="#dff6ef")
-        self.tbl.tag_configure("latest_sale",    background="#e9efff")
-        self.tbl.tag_configure("top_and_latest", background="#d7f0ff")
+        # Tags ONLY change background/foreground — font must be set explicitly so
+        # the ttk theme cannot override it and cause misaligned row heights.
+        _row_font = ("Segoe UI", 10)
+        _row_fg   = THEME["text"]
+        self.tbl.tag_configure("top_sale",       background="#dff6ef", foreground=_row_fg, font=_row_font)
+        self.tbl.tag_configure("latest_sale",    background="#e9efff", foreground=_row_fg, font=_row_font)
+        self.tbl.tag_configure("top_and_latest", background="#d7f0ff", foreground=_row_fg, font=_row_font)
 
         self.tbl.bind("<Double-Button-1>", lambda _e: self.open_selected())
         self.tbl.bind("<Return>",          lambda _e: self.open_selected())
@@ -564,14 +569,14 @@ class TransactionsView(tk.Frame):
                 tags=tag,
                 values=(
                     oid,
-                    r["payment_method"],
+                    str(r["payment_method"] or ""),
                     money(r["amount_paid"]),
                     money(r["change_due"]),
                     int(r["items_count"]),
-                    r["status"],
+                    str(r["status"] or ""),
                     money(r["total"]),
-                    r["start_dt"],
-                    r["end_dt"],
+                    str(r["start_dt"] or ""),
+                    str(r["end_dt"]   or ""),   # None → "" (never show literal "None")
                     "View",
                 ),
             )
@@ -848,6 +853,8 @@ class TransactionDetailsDialog(tk.Toplevel):
             command=self._print_receipt,
         ).pack(side="right", padx=(0, sp(8)))
 
+        self.bind("<Escape>", lambda _e: self.destroy(), add="+")
+
     def _toggle_details(self):
         self._details_expanded.set(not self._details_expanded.get())
         self._render_details()
@@ -1028,6 +1035,9 @@ class ResolveDialog(tk.Toplevel):
             bd=0, padx=12, pady=8, cursor="hand2",
             command=self._complete,
         ).pack(side="right", padx=(0, 10))
+
+        self.bind("<Return>", lambda _e: self._complete(), add="+")
+        self.bind("<Escape>", lambda _e: self.destroy(), add="+")
 
     def _complete(self):
         ref = self.var_ref.get().strip()

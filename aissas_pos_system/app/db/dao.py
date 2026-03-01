@@ -443,24 +443,26 @@ class OrderDAO:
         )
 
     def get_order(self, order_id: int):
-        """Get order details."""
+        """Get order details including cashier username."""
         return self.db.fetchone(
             """
-            SELECT id AS order_id,
-                   datetime AS start_dt,
-                   end_datetime AS end_dt,
-                   customer_name,
-                   payment_method,
-                   status,
-                   reference_no,
-                   subtotal,
-                   discount,
-                   tax,
-                   total,
-                   amount_paid,
-                   change_due
-            FROM orders
-            WHERE id=?;
+            SELECT o.id AS order_id,
+                   o.datetime AS start_dt,
+                   o.end_datetime AS end_dt,
+                   o.customer_name,
+                   o.payment_method,
+                   o.status,
+                   o.reference_no,
+                   o.subtotal,
+                   o.discount,
+                   o.tax,
+                   o.total,
+                   o.amount_paid,
+                   o.change_due,
+                   COALESCE(u.username, 'Unknown') AS cashier_username
+            FROM orders o
+            LEFT JOIN users u ON o.cashier_id = u.id
+            WHERE o.id=?;
             """,
             (int(order_id),),
         )
