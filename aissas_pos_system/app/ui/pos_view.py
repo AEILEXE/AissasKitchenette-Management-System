@@ -129,6 +129,7 @@ class POSView(tk.Frame):
         # Unified after() tracking — all IDs stored here; _destroyed prevents late callbacks
         self._after_ids: set[int] = set()
         self._destroyed: bool = False
+        self._building: bool = True
         self._suggest_after: int | None = None
         self._global_click_id: str | None = None
 
@@ -146,6 +147,7 @@ class POSView(tk.Frame):
         self._suggestions_frame: tk.Frame | None = None
 
         self._build()
+        self._building = False
         self.search_var.set("")
         self._after(50, self._refresh_categories)
         self._after(100, self._refresh_products)
@@ -156,6 +158,7 @@ class POSView(tk.Frame):
     def destroy(self) -> None:
         """Cancel all pending after() jobs and unbind global events before destroy."""
         self._destroyed = True
+        self._building = False
         for aid in list(self._after_ids):
             try:
                 self.after_cancel(aid)
@@ -192,7 +195,7 @@ class POSView(tk.Frame):
 
     def _after(self, ms: int, fn, *a) -> int | None:
         """Schedule fn(*a) in ms milliseconds; auto-tracks ID for safe cleanup."""
-        if self._destroyed or not self.winfo_exists():
+        if self._destroyed or self._building or not self.winfo_exists():
             return None
         def _cb():
             self._after_ids.discard(aid)
@@ -647,11 +650,13 @@ class POSView(tk.Frame):
         return 3 if width >= 860 else 2
 
     def _debounced_relayout(self) -> None:
+        if self._destroyed or self._building or not self.winfo_exists():
+            return
         self._cancel_after(self._prod_resize_after)
         self._prod_resize_after = self._after(80, self._relayout_products)
 
     def _refresh_products(self):
-        if self._destroyed or not self.winfo_exists():
+        if self._destroyed or self._building or not self.winfo_exists():
             return
         search_text = self.search_var.get().strip()
         if search_text == "Search…":
@@ -664,7 +669,7 @@ class POSView(tk.Frame):
 
     def _start_batch_load(self) -> None:
         """Cancel any in-flight batch, clear the grid, start fresh."""
-        if not self.winfo_exists():
+        if self._destroyed or self._building or not self.winfo_exists():
             return
 
         self._cancel_after(self._batch_after)
@@ -697,7 +702,7 @@ class POSView(tk.Frame):
 
     def _render_product_batch(self) -> None:
         self._batch_after = None
-        if self._destroyed or not self.winfo_exists():
+        if self._destroyed or self._building or not self.winfo_exists():
             return
 
         if self._loading_lbl is not None:
@@ -723,7 +728,7 @@ class POSView(tk.Frame):
 
     def _relayout_products(self, rebuild_cards: bool = False) -> None:
         """Called by debounced resize — just re-grid existing cards."""
-        if not self.winfo_exists():
+        if self._destroyed or self._building or not self.winfo_exists():
             return
         self._do_product_grid_layout()
 

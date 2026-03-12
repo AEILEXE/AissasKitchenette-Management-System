@@ -183,6 +183,8 @@ class AccountSettingsDialog(tk.Toplevel):
             self._build_db_section(inner)
             self._section_header(inner, "User Management")
             self._build_user_mgmt(inner)
+            self._section_header(inner, "Seed Demo Sales")
+            self._build_seed_section(inner)
             self._section_header(inner, "Role Permissions")
             self._build_role_mgmt(inner)
 
@@ -488,6 +490,13 @@ class AccountSettingsDialog(tk.Toplevel):
                     font=("Segoe UI", ui_scale.scale_font(8)),
                     command=lambda uid=user_row["user_id"]: self._deactivate_user(uid),
                 ).pack(side="right", padx=(4, 10), pady=6)
+                tk.Button(
+                    row_frame, text="Delete",
+                    bg=THEME["panel2"], fg=THEME["danger"],
+                    bd=1, relief="solid", padx=ui_scale.s(8), pady=ui_scale.s(4), cursor="hand2",
+                    font=("Segoe UI", ui_scale.scale_font(8)),
+                    command=lambda uid=user_row["user_id"], uname=user_row["username"]: self._delete_user(uid, uname),
+                ).pack(side="right", padx=(4, 2), pady=6)
 
         # -- Create new user --
         create_card = self._card(parent, pady=(8, 4))
@@ -563,6 +572,155 @@ class AccountSettingsDialog(tk.Toplevel):
             AccountSettingsDialog(self.master, self.db, self.auth)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to deactivate user.\n{e}")
+
+    def _delete_user(self, user_id: int, username: str):
+        """Delete user only if they have zero linked transactions."""
+        if self.user_dao.has_transactions(user_id):
+            messagebox.showerror(
+                "Cannot Delete",
+                "User cannot be deleted because transactions are linked to this account. "
+                "Deactivate instead.",
+            )
+            return
+        if not messagebox.askyesno(
+            "Delete User",
+            f"Permanently delete user '{username}'?\n\nThis cannot be undone.",
+        ):
+            return
+        try:
+            self.user_dao.delete(user_id)
+            messagebox.showinfo("Deleted", f"User '{username}' deleted.")
+            self.destroy()
+            AccountSettingsDialog(self.master, self.db, self.auth)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete user.\n{e}")
+
+    # ── Seed Demo Sales ───────────────────────────────────────────────────────
+
+    def _build_seed_section(self, parent):
+        import threading
+        from app.services.seed_sales_service import SeedSalesService
+
+        seed_card = self._card(parent)
+        tk.Label(
+            seed_card, text="Generate Demo Sales Data",
+            bg=THEME["panel"], fg=THEME["text"],
+            font=("Segoe UI", ui_scale.scale_font(11), "bold"),
+        ).pack(anchor="w", padx=16, pady=(14, 4))
+        tk.Label(
+            seed_card,
+            text="Creates realistic synthetic completed orders for testing and demos.\n"
+                 "Existing real data is NOT deleted. Runs in the background.",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", ui_scale.scale_font(9)), justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 10))
+
+        # Progress label — hidden until a job is running
+        progress_var = tk.StringVar(value="")
+        progress_lbl = tk.Label(
+            seed_card,
+            textvariable=progress_var,
+            bg=THEME["panel"], fg=THEME["brown"],
+            font=("Segoe UI", ui_scale.scale_font(9), "italic"),
+        )
+        progress_lbl.pack(anchor="w", padx=16, pady=(0, 4))
+
+        btn_row = tk.Frame(seed_card, bg=THEME["panel"])
+        btn_row.pack(fill="x", padx=16, pady=(0, 16))
+
+        seed_buttons: list[tk.Button] = []
+
+        def _set_buttons_state(state: str):
+            for b in seed_buttons:
+                try:
+                    b.configure(state=state)
+                except Exception:
+                    pass
+
+        def _seed(num_orders: int, days_back: int, label: str):
+            if not messagebox.askyesno(
+                "Generate Demo Sales",
+                f"Generate {label} of demo sales data?\n\nExisting real data will NOT be deleted.",
+            ):
+                return
+
+            _set_buttons_state("disabled")
+            progress_var.set(f"Generating {label}… please wait")
+
+            def _worker():
+                # SQLite connections cannot be shared across threads.
+                # Open a dedicated connection for this worker thread.
+                thread_db = Database()
+                try:
+                    thread_db.connect()
+                    svc = SeedSalesService(thread_db)
+
+                    def _progress(done, total):
+                        pct = int(done / total * 100) if total else 0
+                        try:
+                            self.after(0, lambda: progress_var.set(
+                                f"Generating {label}… {pct}%"
+                            ))
+                        except Exception:
+                            pass
+
+                    result = svc.run(
+                        num_orders=num_orders,
+                        days_back=days_back,
+                        progress_cb=_progress,
+                    )
+                except Exception as exc:
+                    result = {"orders_created": 0, "total_sales": 0.0, "error": str(exc)}
+                finally:
+                    try:
+                        thread_db.disconnect()
+                    except Exception:
+                        pass
+
+                # All UI updates must happen on the main thread
+                def _done():
+                    _set_buttons_state("normal")
+                    if result.get("error"):
+                        progress_var.set("")
+                        messagebox.showerror("Seed Error", result["error"])
+                    else:
+                        progress_var.set(
+                            f"✓ Done — {result['orders_created']} orders created"
+                        )
+                        messagebox.showinfo(
+                            "Done",
+                            f"Created {result['orders_created']} demo orders.\n"
+                            f"Total simulated sales: ₱{result['total_sales']:,.2f}\n\n"
+                            "Suggestions will refresh automatically in the POS.",
+                        )
+
+                try:
+                    self.after(0, _done)
+                except Exception:
+                    pass
+
+            t = threading.Thread(target=_worker, daemon=True)
+            t.start()
+
+        configs = [
+            ("Generate 7 Days",    100,  7,  "7 days"),
+            ("Generate 30 Days",   200, 30,  "30 days"),
+            ("Generate 100 Orders", 100, 30, "100 orders"),
+            ("Generate 500 Orders", 500, 60, "500 orders"),
+        ]
+
+        for text, num, days, lbl in configs:
+            btn = tk.Button(
+                btn_row,
+                text=text,
+                bg=THEME["accent"], fg="white",
+                bd=0, padx=ui_scale.s(10), pady=ui_scale.s(7),
+                cursor="hand2",
+                font=("Segoe UI", ui_scale.scale_font(9), "bold"),
+                command=lambda n=num, d=days, l=lbl: _seed(n, d, l),
+            )
+            btn.pack(side="left", padx=(0, 8))
+            seed_buttons.append(btn)
 
     # ── Role Permissions (RBAC) ───────────────────────────────────────────────
 

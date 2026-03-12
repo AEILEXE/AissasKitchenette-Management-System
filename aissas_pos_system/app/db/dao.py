@@ -78,6 +78,18 @@ class UserDAO:
             (active, user_id),
         )
 
+    def has_transactions(self, user_id: int) -> bool:
+        """Return True if user has any linked orders."""
+        r = self.db.fetchone(
+            "SELECT COUNT(*) AS c FROM orders WHERE cashier_id=?;",
+            (user_id,),
+        )
+        return (int(r["c"]) if r else 0) > 0
+
+    def delete(self, user_id: int) -> None:
+        """Hard-delete user (only safe when has_transactions returns False)."""
+        self.db.execute("DELETE FROM users WHERE id=?;", (user_id,))
+
 
 # CATEGORY DATA ACCESS OBJECT
 
@@ -428,6 +440,8 @@ class OrderDAO:
             f"""
             SELECT o.id AS order_id,
                    o.payment_method,
+                   o.customer_name,
+                   COALESCE(u.username, 'Unknown') AS cashier_username,
                    o.amount_paid,
                    o.change_due,
                    (SELECT COALESCE(SUM(qty), 0) FROM order_items oi WHERE oi.order_id=o.id) AS items_count,
@@ -436,6 +450,7 @@ class OrderDAO:
                    o.datetime AS start_dt,
                    o.end_datetime AS end_dt
             FROM orders o
+            LEFT JOIN users u ON o.cashier_id = u.id
             {where_sql}
             ORDER BY datetime(o.datetime) DESC;
             """,

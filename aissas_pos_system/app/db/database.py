@@ -207,6 +207,18 @@ class Database:
             if r and int(r["c"]) == 0:
                 self._seed_default_role_permissions()
 
+        # =====================================================================
+        # APP_META TABLE — key-value store for app-level flags
+        # =====================================================================
+        if not self._table_exists("app_meta"):
+            try:
+                self.execute(
+                    "CREATE TABLE IF NOT EXISTS app_meta "
+                    "(key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '');"
+                )
+            except Exception:
+                pass
+
     def _seed_default_role_permissions(self) -> None:
         """Populate role_permissions with hardcoded defaults (runs once on fresh DB)."""
         try:

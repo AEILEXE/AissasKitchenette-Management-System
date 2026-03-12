@@ -105,6 +105,14 @@ ALL_SCHEMAS: list[str] = [
         timestamp TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     """,
+
+    # ── App-level key-value meta (used for recommender dirty flag, etc.) ──────
+    """
+    CREATE TABLE IF NOT EXISTS app_meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT ''
+    );
+    """,
 ]
 
 INDEX_STATEMENTS: list[str] = [

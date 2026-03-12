@@ -466,7 +466,8 @@ class TransactionsView(tk.Frame):
         table_card.columnconfigure(0, weight=1)
         table_card.rowconfigure(0, weight=1)
 
-        cols = ("id", "payment", "paid", "change", "items", "status", "total", "start", "end", "details")
+        # FIX B: updated column order — ID | PAYMENT | CASHIER | CUSTOMER | PAID | CHANGE | ITEMS | STATUS | TOTAL | START | END | View
+        cols = ("id", "payment", "cashier", "customer", "paid", "change", "items", "status", "total", "start", "end", "details")
         self.tbl = ttk.Treeview(table_card, columns=cols, show="headings", style="Tx.Treeview")
         self.tbl.grid(row=0, column=0, sticky="nsew")
 
@@ -474,33 +475,26 @@ class TransactionsView(tk.Frame):
         ysb.grid(row=0, column=1, sticky="ns")
         self.tbl.configure(yscrollcommand=ysb.set)
 
-        # ── Column headings & alignment (C-fix) ───────────────────────────────
-        #   Money columns   → right ("e")
-        #   Status/Payment  → center
-        #   Dates           → center
-        #   ID/Items        → center
-        #   Names           → left ("w")
-
         # (id, heading, width, anchor, stretch, minwidth)
         col_cfg = [
-            ("id",      "ID",       65, "center", False,  45),
-            ("payment", "PAYMENT", 140, "w",      False,  90),
-            ("paid",    "PAID",    110, "e",      False,  80),
-            ("change",  "CHANGE",  100, "e",      False,  80),
-            ("items",   "ITEMS",    60, "center", False,  40),
-            ("status",  "STATUS",  110, "center", False,  80),
-            ("total",   "TOTAL",   120, "e",      False,  90),
-            ("start",   "START",   180, "center", True,  120),
-            ("end",     "END",     160, "center", False,  80),
-            ("details", "",         60, "center", False,  40),
+            ("id",      "ID",        65, "center", False,  45),
+            ("payment", "PAYMENT",  140, "w",      False,  90),
+            ("cashier", "CASHIER",  120, "w",      False,  80),
+            ("customer","CUSTOMER", 160, "w",      False, 100),
+            ("paid",    "PAID",     110, "e",      False,  80),
+            ("change",  "CHANGE",   100, "e",      False,  80),
+            ("items",   "ITEMS",     60, "center", False,  40),
+            ("status",  "STATUS",   110, "center", False,  80),
+            ("total",   "TOTAL",    120, "e",      False,  90),
+            ("start",   "START",    180, "center", True,  120),
+            ("end",     "END",      160, "center", False,  80),
+            ("details", "",          60, "center", False,  40),
         ]
 
         for cid, hdr, width, anchor, stretch, minw in col_cfg:
             self.tbl.heading(cid, text=hdr, anchor="center")
             self.tbl.column(cid, width=width, anchor=anchor, stretch=stretch, minwidth=minw)
 
-        # Tags ONLY change background/foreground — font must be set explicitly so
-        # the ttk theme cannot override it and cause misaligned row heights.
         _row_font = ("Segoe UI", 10)
         _row_fg   = THEME["text"]
         self.tbl.tag_configure("top_sale",       background="#dff6ef", foreground=_row_fg, font=_row_font)
@@ -563,6 +557,8 @@ class TransactionsView(tk.Frame):
             else:
                 tag = ()
 
+            end_val = str(r["end_dt"] or "")   # Never display literal "None"
+
             self.tbl.insert(
                 "", tk.END,
                 iid=str(oid),
@@ -570,13 +566,15 @@ class TransactionsView(tk.Frame):
                 values=(
                     oid,
                     str(r["payment_method"] or ""),
+                    str(r["cashier_username"] or "Unknown"),
+                    str(r["customer_name"] or ""),
                     money(r["amount_paid"]),
                     money(r["change_due"]),
                     int(r["items_count"]),
                     str(r["status"] or ""),
                     money(r["total"]),
                     str(r["start_dt"] or ""),
-                    str(r["end_dt"]   or ""),   # None → "" (never show literal "None")
+                    end_val,
                     "View",
                 ),
             )
@@ -741,7 +739,8 @@ class TransactionDetailsDialog(tk.Toplevel):
             ).pack(side="left")
 
         info_line("Order Start:", str(data["start_dt"]))
-        info_line("Order End:",   str(data["end_dt"]))
+        info_line("Order End:",   str(data["end_dt"] or ""))
+        info_line("Cashier:",     str(data["cashier_username"]))
         info_line("Customer:",    str(data["customer_name"]), bold_val=True)
         info_line("Payment:",     str(data["payment_method"]))
 
