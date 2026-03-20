@@ -321,6 +321,10 @@ class DraftDAO:
         """Delete draft."""
         self.db.execute("DELETE FROM drafts WHERE id=?;", (int(draft_id),))
 
+    def delete_all_drafts(self) -> None:
+        """Delete all drafts in a single query (one commit)."""
+        self.db.execute("DELETE FROM drafts;")
+
     def count_drafts(self) -> int:
         """Count total drafts."""
         r = self.db.fetchone("SELECT COUNT(*) AS c FROM drafts;")

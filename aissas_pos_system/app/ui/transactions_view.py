@@ -303,7 +303,7 @@ class TransactionsView(tk.Frame):
         style.configure(
             "Tx.Treeview",
             font=("Segoe UI", 10),
-            rowheight=24,
+            rowheight=34,
             background=THEME["panel"],
             fieldbackground=THEME["panel"],
             foreground=THEME["text"],
@@ -316,7 +316,7 @@ class TransactionsView(tk.Frame):
             background=THEME["panel2"],
             foreground=THEME["text"],
             relief="flat",
-            padding=(10, 10),
+            padding=(10, 12),
         )
         style.map("Tx.Treeview.Heading", background=[("active", THEME["panel2"])])
 
@@ -497,14 +497,39 @@ class TransactionsView(tk.Frame):
 
         _row_font = ("Segoe UI", 10)
         _row_fg   = THEME["text"]
-        self.tbl.tag_configure("top_sale",       background="#dff6ef", foreground=_row_fg, font=_row_font)
-        self.tbl.tag_configure("latest_sale",    background="#e9efff", foreground=_row_fg, font=_row_font)
-        self.tbl.tag_configure("top_and_latest", background="#d7f0ff", foreground=_row_fg, font=_row_font)
 
-        self.tbl.bind("<Double-Button-1>", lambda _e: self.open_selected())
-        self.tbl.bind("<Return>",          lambda _e: self.open_selected())
+        # Status-based row colors — very subtle tints so the row is scannable
+        # but the STATUS column badge text carries the real color signal.
+        # Completed → near-white green tint   (normal; the majority)
+        # Pending   → near-white amber tint   (needs cashier attention)
+        # Cancelled → near-white RED tint     (voided — NOT pink; fg is deep red)
+        self.tbl.tag_configure("row_completed",
+                               background="#F4FBF4", foreground=_row_fg,
+                               font=_row_font)
+        self.tbl.tag_configure("row_pending",
+                               background="#FFFBEE", foreground="#7D5A00",
+                               font=("Segoe UI", 10, "bold"))
+        self.tbl.tag_configure("row_cancelled",
+                               background="#FFF0F0", foreground="#B71C1C",
+                               font=_row_font)
+
+        # Highlight tags (top-sale / latest) — more distinct, won't wash out
+        self.tbl.tag_configure("top_sale",       background="#B9EDDA", foreground=_row_fg, font=("Segoe UI", 10, "bold"))
+        self.tbl.tag_configure("latest_sale",    background="#C9DBFF", foreground=_row_fg, font=_row_font)
+        self.tbl.tag_configure("top_and_latest", background="#B3D9FF", foreground=_row_fg, font=("Segoe UI", 10, "bold"))
+
+        self.tbl.bind("<Double-Button-1>",  lambda _e: self.open_selected())
+        self.tbl.bind("<Return>",           lambda _e: self.open_selected())
+        self.tbl.bind("<ButtonRelease-1>",  self._on_tbl_click)
 
     # ── data ──────────────────────────────────────────────────────────────────
+
+    # Badge-style display labels for the STATUS column (display only — DB values unchanged)
+    _STATUS_BADGE: dict[str, str] = {
+        "completed": "✔ Completed",
+        "pending":   "● Pending",
+        "cancelled": "✖ Cancelled",
+    }
 
     def refresh(self):
         for iid in self.tbl.get_children():
@@ -548,16 +573,42 @@ class TransactionsView(tk.Frame):
         for r in rows:
             oid = int(r["order_id"])
 
-            if top_id == oid and latest_id == oid:
-                tag = ("top_and_latest",)
-            elif top_id == oid:
-                tag = ("top_sale",)
-            elif latest_id == oid:
-                tag = ("latest_sale",)
+            # ── Status-based base color (applied first; lower priority) ────────
+            status_str = str(r["status"] or "").lower()
+            if status_str == "pending":
+                status_tag = "row_pending"
+            elif status_str == "cancelled":
+                status_tag = "row_cancelled"
             else:
-                tag = ()
+                status_tag = "row_completed"
+
+            # ── Highlight modifier (applied last; wins over base color) ────────
+            # Pending/cancelled always keep their status color so the cashier
+            # can instantly spot unpaid/voided orders regardless of rank.
+            if status_tag in ("row_pending", "row_cancelled"):
+                if top_id == oid and latest_id == oid:
+                    tag = ("top_and_latest", status_tag)
+                elif top_id == oid:
+                    tag = ("top_sale", status_tag)
+                elif latest_id == oid:
+                    tag = ("latest_sale", status_tag)
+                else:
+                    tag = (status_tag,)
+            else:
+                # Completed rows: highlight bg wins when applicable
+                if top_id == oid and latest_id == oid:
+                    tag = (status_tag, "top_and_latest")
+                elif top_id == oid:
+                    tag = (status_tag, "top_sale")
+                elif latest_id == oid:
+                    tag = (status_tag, "latest_sale")
+                else:
+                    tag = (status_tag,)
 
             end_val = str(r["end_dt"] or "")   # Never display literal "None"
+
+            raw_status = str(r["status"] or "")
+            badge_status = self._STATUS_BADGE.get(raw_status.lower(), raw_status)
 
             self.tbl.insert(
                 "", tk.END,
@@ -571,13 +622,27 @@ class TransactionsView(tk.Frame):
                     money(r["amount_paid"]),
                     money(r["change_due"]),
                     int(r["items_count"]),
-                    str(r["status"] or ""),
+                    badge_status,
                     money(r["total"]),
                     str(r["start_dt"] or ""),
                     end_val,
-                    "View",
+                    "View ▶",
                 ),
             )
+
+    def _on_tbl_click(self, event: tk.Event) -> None:
+        """Open transaction details when the View column cell is clicked."""
+        region = self.tbl.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        col_id = self.tbl.identify_column(event.x)
+        cols = self.tbl["columns"]
+        try:
+            idx = int(col_id.lstrip("#")) - 1
+            if cols[idx] == "details":
+                self.open_selected()
+        except (ValueError, IndexError):
+            pass
 
     def open_selected(self):
         sel = self.tbl.selection()

@@ -74,28 +74,38 @@ class POSService:
     ) -> int:
         """
         Create a completed or pending order and persist all items.
-        Signature matches OrderDAO.insert_order() exactly.
+        All INSERTs are wrapped in a single transaction — one commit regardless
+        of how many items are in the cart (was N+1 commits before).
         """
-        order_id = self.orders.insert_order(
-            cashier_id=cashier_id,
-            customer_name=customer_name,
-            payment_method=payment_method,
-            status=status,
-            reference_no=reference_no,
-            subtotal=subtotal,
-            discount=discount,
-            tax=tax,
-            total=total,
-            amount_paid=amount_paid,
-            cash_received=cash_received,
-            change_due=change_due,
-        )
-        for it in items:
-            self.orders.insert_item(
-                order_id,
-                int(it["product_id"]),
-                int(it["qty"]),
-                float(it["unit_price"]),
-                str(it.get("note", "")),
+        try:
+            order_id = self.db.execute_no_commit(
+                """
+                INSERT INTO orders(
+                    cashier_id, customer_name, payment_method, status, reference_no,
+                    subtotal, discount, tax, total,
+                    amount_paid, cash_received, change_due
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?);
+                """,
+                (
+                    int(cashier_id), str(customer_name), str(payment_method),
+                    str(status), str(reference_no),
+                    float(subtotal), float(discount), float(tax), float(total),
+                    float(amount_paid), float(cash_received), float(change_due),
+                ),
             )
-        return order_id
+            for it in items:
+                qty = int(it["qty"])
+                unit_price = float(it["unit_price"])
+                self.db.execute_no_commit(
+                    """
+                    INSERT INTO order_items(order_id, product_id, qty, unit_price, note, subtotal)
+                    VALUES(?,?,?,?,?,?);
+                    """,
+                    (order_id, int(it["product_id"]), qty, unit_price,
+                     str(it.get("note", "")), qty * unit_price),
+                )
+            self.db.commit()
+            return order_id
+        except Exception:
+            self.db.rollback()
+            raise

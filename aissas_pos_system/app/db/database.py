@@ -23,11 +23,16 @@ class Database:
         Establish database connection.
         - Creates data directory if missing
         - Enables foreign key constraints
+        - Enables WAL journal mode for faster concurrent reads/writes
         """
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON;")
+        # WAL mode: reads don't block writes; writes are ~2x faster on spinning disks
+        self.conn.execute("PRAGMA journal_mode=WAL;")
+        # NORMAL sync is safe with WAL and much faster than FULL
+        self.conn.execute("PRAGMA synchronous=NORMAL;")
 
     def disconnect(self) -> None:
         """Close database connection."""
@@ -51,6 +56,22 @@ class Database:
         cur = self.conn.execute(sql, tuple(params))
         self.conn.commit()
         return int(cur.lastrowid)
+
+    def execute_no_commit(self, sql: str, params: Iterable[Any] = ()) -> int:
+        """Execute SQL without committing. Returns lastrowid. Use with commit()."""
+        assert self.conn is not None, "Database not connected"
+        cur = self.conn.execute(sql, tuple(params))
+        return int(cur.lastrowid) if cur.lastrowid else 0
+
+    def commit(self) -> None:
+        """Explicitly commit the current transaction."""
+        assert self.conn is not None, "Database not connected"
+        self.conn.commit()
+
+    def rollback(self) -> None:
+        """Roll back the current transaction."""
+        assert self.conn is not None, "Database not connected"
+        self.conn.rollback()
 
     def fetchone(self, sql: str, params: Iterable[Any] = ()) -> Optional[sqlite3.Row]:
         """Fetch single row."""

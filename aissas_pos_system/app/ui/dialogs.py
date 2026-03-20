@@ -16,50 +16,97 @@ class DiscountDialog(tk.Toplevel):
 
     def __init__(self, parent: tk.Widget):
         super().__init__(parent)
-        self.title("Add discount")
+        self.title("Add Discount")
         self.configure(bg=THEME["panel"])
         self.resizable(False, False)
         self.grab_set()
 
         self.result: Optional[tuple[str, float]] = None
 
-        tk.Label(self, text="Discount Type", bg=THEME["panel"], fg=THEME["text"],
-                 font=("Segoe UI", 10, "bold")).pack(padx=18, pady=(16, 6), anchor="w")
+        # ── Header bar ────────────────────────────────────────────────────────
+        hdr = tk.Frame(self, bg=THEME["brown_dark"])
+        hdr.pack(fill="x")
+        tk.Label(
+            hdr, text="Add Discount",
+            bg=THEME["brown_dark"], fg="white",
+            font=("Segoe UI", 11, "bold"),
+            padx=18, pady=12,
+        ).pack(side="left")
+
+        # ── Body ──────────────────────────────────────────────────────────────
+        body = tk.Frame(self, bg=THEME["panel"])
+        body.pack(fill="both", expand=True, padx=20, pady=16)
+
+        tk.Label(
+            body, text="Discount Type",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+        ).pack(anchor="w")
 
         self._mode = tk.StringVar(value="amount")
 
-        row = tk.Frame(self, bg=THEME["panel"])
-        row.pack(padx=18, pady=(0, 10), fill="x")
+        radio_row = tk.Frame(body, bg=THEME["panel2"])
+        radio_row.pack(fill="x", pady=(4, 14))
 
-        tk.Radiobutton(row, text="₱ Amount", variable=self._mode, value="amount",
-                       bg=THEME["panel"], fg=THEME["text"], selectcolor=THEME["panel"]).pack(side="left")
-        tk.Radiobutton(row, text="% Percent", variable=self._mode, value="percent",
-                       bg=THEME["panel"], fg=THEME["text"], selectcolor=THEME["panel"]).pack(side="left", padx=(14, 0))
+        tk.Radiobutton(
+            radio_row, text="  ₱  Peso Amount", variable=self._mode, value="amount",
+            bg=THEME["panel2"], fg=THEME["text"],
+            selectcolor=THEME["beige"],
+            font=("Segoe UI", 10),
+            activebackground=THEME["panel2"],
+            padx=10, pady=8,
+        ).pack(side="left")
+        tk.Radiobutton(
+            radio_row, text="  %  Percent", variable=self._mode, value="percent",
+            bg=THEME["panel2"], fg=THEME["text"],
+            selectcolor=THEME["beige"],
+            font=("Segoe UI", 10),
+            activebackground=THEME["panel2"],
+            padx=10, pady=8,
+        ).pack(side="left")
 
-        tk.Label(self, text="Value", bg=THEME["panel"], fg=THEME["text"],
-                 font=("Segoe UI", 10, "bold")).pack(padx=18, pady=(6, 6), anchor="w")
+        tk.Label(
+            body, text="Value",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(0, 4))
 
-        self.value_var = tk.StringVar(value="0")
-        self.entry = tk.Entry(self, textvariable=self.value_var, font=("Segoe UI", 11),
-                              bg=THEME["panel2"], bd=0)
-        self.entry.pack(padx=18, pady=(0, 12), fill="x", ipady=8)
+        # Value field starts EMPTY — not prefilled with 0
+        self.value_var = tk.StringVar(value="")
+        self.entry = tk.Entry(
+            body, textvariable=self.value_var,
+            font=("Segoe UI", 13),
+            bg=THEME["panel2"], bd=0,
+            insertbackground=THEME["text"],
+        )
+        self.entry.pack(fill="x", ipady=10)
         self.entry.focus_set()
 
-        btns = tk.Frame(self, bg=THEME["panel"])
-        btns.pack(padx=18, pady=(0, 16), fill="x")
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btns = tk.Frame(body, bg=THEME["panel"])
+        btns.pack(fill="x", pady=(16, 0))
 
-        tk.Button(btns, text="Close", command=self.destroy,
-                  bg=THEME["panel2"], fg=THEME["text"], bd=0,
-                  padx=14, pady=8, cursor="hand2").pack(side="right")
+        tk.Button(
+            btns, text="Cancel", command=self.destroy,
+            bg=THEME["panel2"], fg=THEME["text"], bd=0,
+            padx=16, pady=9, cursor="hand2",
+            font=("Segoe UI", 10),
+        ).pack(side="left")
 
-        tk.Button(btns, text="Confirm", command=self._confirm,
-                  bg=THEME["brown2"], fg="white", bd=0,
-                  padx=14, pady=8, cursor="hand2").pack(side="right", padx=(0, 8))
+        tk.Button(
+            btns, text="Apply Discount", command=self._confirm,
+            bg=THEME["brown2"], fg="white", bd=0,
+            padx=16, pady=9, cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="right")
 
         self.bind("<Return>", lambda e: self._confirm())
         self.bind("<Escape>", lambda e: self.destroy())
 
         self.update_idletasks()
+        # Enforce minimum width — auto-height from content
+        if self.winfo_width() < 360:
+            self.geometry(f"360x{self.winfo_height()}")
         self._center(parent)
 
     def _center(self, parent: tk.Widget) -> None:
@@ -103,38 +150,74 @@ class DraftTitleDialog(tk.Toplevel):
 
     def __init__(self, parent: tk.Widget, default_title: str = "Draft"):
         super().__init__(parent)
-        self.title("Save order as draft")
+        self.title("Save Order as Draft")
         self.configure(bg=THEME["panel"])
         self.resizable(False, False)
         self.grab_set()
 
         self.result: Optional[str] = None
 
-        tk.Label(self, text="Draft title", bg=THEME["panel"], fg=THEME["text"],
-                 font=("Segoe UI", 10, "bold")).pack(padx=18, pady=(16, 6), anchor="w")
+        # ── Header bar ────────────────────────────────────────────────────────
+        hdr = tk.Frame(self, bg=THEME["brown_dark"])
+        hdr.pack(fill="x")
+        tk.Label(
+            hdr, text="Save Order as Draft",
+            bg=THEME["brown_dark"], fg="white",
+            font=("Segoe UI", 11, "bold"),
+            padx=18, pady=12,
+        ).pack(side="left")
+
+        # ── Body ──────────────────────────────────────────────────────────────
+        body = tk.Frame(self, bg=THEME["panel"])
+        body.pack(fill="both", expand=True, padx=20, pady=16)
+
+        tk.Label(
+            body, text="Draft Title",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(0, 4))
 
         self.var = tk.StringVar(value=default_title)
-        self.entry = tk.Entry(self, textvariable=self.var, font=("Segoe UI", 11),
-                              bg=THEME["panel2"], bd=0)
-        self.entry.pack(padx=18, pady=(0, 12), fill="x", ipady=8)
+        self.entry = tk.Entry(
+            body, textvariable=self.var,
+            font=("Segoe UI", 12),
+            bg=THEME["panel2"], bd=0,
+            insertbackground=THEME["text"],
+        )
+        self.entry.pack(fill="x", ipady=10)
         self.entry.focus_set()
         self.entry.select_range(0, "end")
 
-        btns = tk.Frame(self, bg=THEME["panel"])
-        btns.pack(padx=18, pady=(0, 16), fill="x")
+        tk.Label(
+            body, text='e.g. "Table 3" or "Takeout - Maria"',
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", 8, "italic"),
+        ).pack(anchor="w", pady=(4, 0))
 
-        tk.Button(btns, text="Close", command=self.destroy,
-                  bg=THEME["panel2"], fg=THEME["text"], bd=0,
-                  padx=14, pady=8, cursor="hand2").pack(side="right")
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btns = tk.Frame(body, bg=THEME["panel"])
+        btns.pack(fill="x", pady=(18, 0))
 
-        tk.Button(btns, text="Save", command=self._save,
-                  bg=THEME["brown2"], fg="white", bd=0,
-                  padx=14, pady=8, cursor="hand2").pack(side="right", padx=(0, 8))
+        tk.Button(
+            btns, text="Cancel", command=self.destroy,
+            bg=THEME["panel2"], fg=THEME["text"], bd=0,
+            padx=16, pady=9, cursor="hand2",
+            font=("Segoe UI", 10),
+        ).pack(side="left")
+
+        tk.Button(
+            btns, text="Save Draft", command=self._save,
+            bg=THEME["brown_dark"], fg="white", bd=0,
+            padx=16, pady=9, cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="right")
 
         self.bind("<Return>", lambda e: self._save())
         self.bind("<Escape>", lambda e: self.destroy())
 
         self.update_idletasks()
+        if self.winfo_width() < 380:
+            self.geometry(f"380x{self.winfo_height()}")
         self._center(parent)
 
     def _center(self, parent: tk.Widget) -> None:
@@ -177,44 +260,79 @@ class TextPromptDialog(tk.Toplevel):
 
         self.result: Optional[dict] = None
 
-        # Single heading label (uses the passed `label` parameter)
-        tk.Label(self, text=label, bg=THEME["panel"], fg=THEME["text"],
-                 font=("Segoe UI", 10, "bold")).pack(padx=18, pady=(16, 10), anchor="w")
+        # ── Header bar ────────────────────────────────────────────────────────
+        hdr = tk.Frame(self, bg=THEME["brown_dark"])
+        hdr.pack(fill="x")
+        tk.Label(
+            hdr, text=label,
+            bg=THEME["brown_dark"], fg="white",
+            font=("Segoe UI", 11, "bold"),
+            padx=18, pady=12,
+        ).pack(side="left")
+
+        # ── Body ──────────────────────────────────────────────────────────────
+        body = tk.Frame(self, bg=THEME["panel"])
+        body.pack(fill="both", expand=True, padx=20, pady=16)
 
         # Reference Number
-        tk.Label(self, text="Reference Number", bg=THEME["panel"], fg=THEME["muted"],
-                 font=("Segoe UI", 9)).pack(padx=18, pady=(0, 2), anchor="w")
+        tk.Label(
+            body, text="Reference Number",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(0, 4))
+
         self.ref_var = tk.StringVar(value=default)
-        self.ref_entry = tk.Entry(self, textvariable=self.ref_var, font=("Segoe UI", 11),
-                                  bg=THEME["panel2"], bd=0)
-        self.ref_entry.pack(padx=18, pady=(0, 10), fill="x", ipady=8)
+        self.ref_entry = tk.Entry(
+            body, textvariable=self.ref_var,
+            font=("Segoe UI", 11),
+            bg=THEME["panel2"], bd=0,
+            insertbackground=THEME["text"],
+        )
+        self.ref_entry.pack(fill="x", ipady=9)
         self.ref_entry.focus_set()
         if default:
             self.ref_entry.select_range(0, "end")
 
         # Amount Paid
-        tk.Label(self, text="Amount Paid", bg=THEME["panel"], fg=THEME["muted"],
-                 font=("Segoe UI", 9)).pack(padx=18, pady=(0, 2), anchor="w")
+        tk.Label(
+            body, text="Amount Paid",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(12, 4))
+
         self.amount_var = tk.StringVar(value="")
-        self.amount_entry = tk.Entry(self, textvariable=self.amount_var, font=("Segoe UI", 11),
-                                     bg=THEME["panel2"], bd=0)
-        self.amount_entry.pack(padx=18, pady=(0, 12), fill="x", ipady=8)
+        self.amount_entry = tk.Entry(
+            body, textvariable=self.amount_var,
+            font=("Segoe UI", 11),
+            bg=THEME["panel2"], bd=0,
+            insertbackground=THEME["text"],
+        )
+        self.amount_entry.pack(fill="x", ipady=9)
 
-        btns = tk.Frame(self, bg=THEME["panel"])
-        btns.pack(padx=18, pady=(0, 16), fill="x")
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btns = tk.Frame(body, bg=THEME["panel"])
+        btns.pack(fill="x", pady=(18, 0))
 
-        tk.Button(btns, text="Close", command=self.destroy,
-                  bg=THEME["panel2"], fg=THEME["text"], bd=0,
-                  padx=14, pady=8, cursor="hand2").pack(side="right")
+        tk.Button(
+            btns, text="Cancel", command=self.destroy,
+            bg=THEME["panel2"], fg=THEME["text"], bd=0,
+            padx=16, pady=9, cursor="hand2",
+            font=("Segoe UI", 10),
+        ).pack(side="left")
 
-        tk.Button(btns, text="Confirm", command=self._confirm,
-                  bg=THEME["brown2"], fg="white", bd=0,
-                  padx=14, pady=8, cursor="hand2").pack(side="right", padx=(0, 8))
+        tk.Button(
+            btns, text="Confirm", command=self._confirm,
+            bg=THEME["brown2"], fg="white", bd=0,
+            padx=16, pady=9, cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="right")
 
         self.bind("<Return>", lambda e: self._confirm())
         self.bind("<Escape>", lambda e: self.destroy())
 
         self.update_idletasks()
+        if self.winfo_width() < 380:
+            self.geometry(f"380x{self.winfo_height()}")
         self._center(parent)
 
     def _center(self, parent: tk.Widget) -> None:
