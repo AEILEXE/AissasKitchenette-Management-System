@@ -94,16 +94,46 @@ class POSService:
                 ),
             )
             for it in items:
-                qty = int(it["qty"])
+                qty        = int(it["qty"])
                 unit_price = float(it["unit_price"])
+                product_id = int(it["product_id"])
+
+                # Verify stock inside the transaction before committing.
+                # Raises ValueError (→ rollback) when requested qty exceeds available stock.
+                row = self.db.fetchone(
+                    "SELECT name, stock FROM products WHERE id=? AND active=1;",
+                    (product_id,),
+                )
+                if row is None:
+                    raise ValueError(f"Product (id={product_id}) is no longer available.")
+                available = int(row["stock"])
+                if qty > available:
+                    raise ValueError(
+                        f"Insufficient stock for '{row['name']}': "
+                        f"requested {qty}, only {available} available."
+                    )
+
                 self.db.execute_no_commit(
                     """
                     INSERT INTO order_items(order_id, product_id, qty, unit_price, note, subtotal)
                     VALUES(?,?,?,?,?,?);
                     """,
-                    (order_id, int(it["product_id"]), qty, unit_price,
+                    (order_id, product_id, qty, unit_price,
                      str(it.get("note", "")), qty * unit_price),
                 )
+
+                # Deduct stock in the same transaction.
+                # Both Completed and Pending orders deduct stock immediately
+                # (pending = item is being prepared, so stock is reserved).
+                # MAX(0,...) is a last-resort safety net; the check above already
+                # guarantees qty <= available at this point.
+                self.db.execute_no_commit(
+                    "UPDATE products SET stock = MAX(0, stock - ?) WHERE id=?;",
+                    (qty, product_id),
+                )
+
+            # Single commit: order + all items + all stock updates are atomic.
+            # If anything above threw, the except block rolls everything back.
             self.db.commit()
             return order_id
         except Exception:

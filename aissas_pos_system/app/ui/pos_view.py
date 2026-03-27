@@ -10,7 +10,8 @@ from app.config import THEME
 from app.db.database import Database
 from app.db.dao import CategoryDAO, ProductDAO, DraftDAO, OrderDAO
 from app.services.auth_service import AuthService
-from app.ui.dialogs import DiscountDialog
+from app.services.pos_service import POSService
+from app.ui.dialogs import DiscountDialog, DraftTitleDialog
 from app.ui import ui_scale
 from app.utils import money
 from app.ml.recommender import Recommender
@@ -30,113 +31,8 @@ def _truncate_text(text: str, max_len: int = 20, suffix: str = "…") -> str:
     return text[:max_len].rstrip() + suffix
 
 
-class SimpleDraftTitleDialog(tk.Toplevel):
-    def __init__(
-        self,
-        parent: tk.Widget,
-        title: str = "Save Order as Draft",
-        prompt: str = 'Enter a title for this draft (e.g. "Table 3" or "Takeout"):',
-    ):
-        super().__init__(parent)
-        self.configure(bg=THEME["panel"])
-        self.title(title)
-        self.resizable(False, False)
-        self.transient(parent)
-        self.grab_set()
-
-        self.result: str | None = None
-        self.var = tk.StringVar()
-
-        # ── Header bar ────────────────────────────────────────────────────────
-        hdr = tk.Frame(self, bg=THEME["brown_dark"])
-        hdr.pack(fill="x")
-        tk.Label(
-            hdr, text="Save Order as Draft",
-            bg=THEME["brown_dark"], fg="white",
-            font=("Segoe UI", 11, "bold"),
-            padx=18, pady=12,
-        ).pack(side="left")
-
-        # ── Body ──────────────────────────────────────────────────────────────
-        body = tk.Frame(self, bg=THEME["panel"])
-        body.pack(fill="both", expand=True, padx=20, pady=16)
-
-        tk.Label(
-            body, text="Draft Title",
-            bg=THEME["panel"], fg=THEME["muted"],
-            font=("Segoe UI", 9),
-        ).pack(anchor="w", pady=(0, 4))
-
-        ent = tk.Entry(
-            body, textvariable=self.var,
-            font=("Segoe UI", 12),
-            bd=0, bg=THEME["panel2"], fg=THEME["text"],
-            insertbackground=THEME["text"],
-        )
-        ent.pack(fill="x", ipady=10)
-        ent.focus_set()
-
-        tk.Label(
-            body, text=prompt,
-            bg=THEME["panel"], fg=THEME["muted"],
-            font=("Segoe UI", 8, "italic"),
-        ).pack(anchor="w", pady=(4, 0))
-
-        # ── Buttons ───────────────────────────────────────────────────────────
-        btns = tk.Frame(body, bg=THEME["panel"])
-        btns.pack(fill="x", pady=(18, 0))
-
-        tk.Button(
-            btns, text="Cancel",
-            bg=THEME["panel2"], fg=THEME["text"],
-            bd=0, padx=16, pady=9,
-            cursor="hand2",
-            font=("Segoe UI", 10),
-            command=self.destroy,
-        ).pack(side="left")
-
-        tk.Button(
-            btns, text="Save Draft",
-            bg=THEME["brown_dark"], fg="white",
-            bd=0, padx=16, pady=9,
-            cursor="hand2",
-            font=("Segoe UI", 10, "bold"),
-            command=self._ok,
-        ).pack(side="right")
-
-        self.bind("<Return>", lambda _e: self._ok(), add="+")
-        self.bind("<Escape>", lambda _e: self.destroy(), add="+")
-
-        self.update_idletasks()
-        if self.winfo_width() < 400:
-            self.geometry(f"400x{self.winfo_height()}")
-        self._center(parent)
-
-    def _center(self, parent: tk.Widget) -> None:
-        try:
-            px = parent.winfo_rootx()
-            py = parent.winfo_rooty()
-            pw = parent.winfo_width()
-            ph = parent.winfo_height()
-        except Exception:
-            return
-        w = self.winfo_width()
-        h = self.winfo_height()
-        x = px + (pw - w) // 2
-        y = py + (ph - h) // 2
-        self.geometry(f"+{x}+{y}")
-
-    def _ok(self):
-        val = self.var.get().strip()
-        if not val:
-            messagebox.showerror("Draft title", "Please enter a draft title.")
-            return
-        self.result = val
-        self.destroy()
-
-
 class POSView(tk.Frame):
-    SCROLL_SPEED_UNITS = 10
+    SCROLL_SPEED_UNITS = 3
 
     def __init__(self, parent: tk.Frame, db: Database, auth: AuthService):
         super().__init__(parent, bg=THEME["bg"])
@@ -149,6 +45,7 @@ class POSView(tk.Frame):
         self.order_dao = OrderDAO(db)
 
         self.cart: dict[int, tuple[str, float, int, str]] = {}
+        self._product_stock: dict[int, int] = {}   # pid → known stock level from last card render
         self.discount_mode: str = "amount"
         self.discount_value: float = 0.0
 
@@ -880,7 +777,7 @@ class POSView(tk.Frame):
 
         def _bind_click(w: tk.Widget):
             if is_available:
-                w.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price), add="+")
+                w.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price, stock), add="+")
 
         _bind_click(card)
 
@@ -933,7 +830,7 @@ class POSView(tk.Frame):
         if is_available:
             tk.Button(
                 card, text="Add",
-                command=lambda: self._add_to_cart(pid, name, price),
+                command=lambda: self._add_to_cart(pid, name, price, stock),
                 bg=THEME.get("brown", "#6b4a3a"), fg="white",
                 bd=0, padx=12, pady=6, cursor="hand2",
             ).grid(row=2, column=1, sticky="w", padx=(10, 12), pady=(8, 12))
@@ -944,9 +841,40 @@ class POSView(tk.Frame):
         return card
 
     # Cart
-    def _add_to_cart(self, pid: int, name: str, price: float):
+    def _get_stock(self, pid: int) -> int:
+        """Return the last-known stock for pid (cache → DAO). 0 = unknown/unavailable."""
+        if pid in self._product_stock:
+            return self._product_stock[pid]
+        # Fallback: scan the already-loaded product cache
+        for r in self._all_products_cache:
+            if int(r["product_id"]) == pid:
+                val = int(_row_get(r, "stock_qty", 0))
+                self._product_stock[pid] = val
+                return val
+        # Last resort: hit the DB
+        try:
+            prod = self.prod_dao.get(pid)
+            if prod is not None:
+                self._product_stock[pid] = prod.stock_qty
+                return prod.stock_qty
+        except Exception:
+            pass
+        return 0
+
+    def _add_to_cart(self, pid: int, name: str, price: float, stock: int = 0):
+        # Store the fresh stock value whenever the product card provides it
+        if stock > 0:
+            self._product_stock[pid] = stock
+        available = self._get_stock(pid)
         if pid in self.cart:
             n, p, qty, note = self.cart[pid]
+            if available > 0 and qty >= available:
+                messagebox.showwarning(
+                    "Stock limit",
+                    f"Only {available} unit(s) of '{n}' available.\n"
+                    "Cannot add more to the cart.",
+                )
+                return
             self.cart[pid] = (n, p, qty + 1, note)
         else:
             self.cart[pid] = (name, price, 1, "")
@@ -961,11 +889,19 @@ class POSView(tk.Frame):
         if pid not in self.cart:
             return
         n, p, qty, note = self.cart[pid]
-        qty = qty + delta
-        if qty <= 0:
+        new_qty = qty + delta
+        if delta > 0:
+            available = self._get_stock(pid)
+            if available > 0 and new_qty > available:
+                messagebox.showwarning(
+                    "Stock limit",
+                    f"Only {available} unit(s) of '{n}' available.",
+                )
+                return
+        if new_qty <= 0:
             del self.cart[pid]
         else:
-            self.cart[pid] = (n, p, qty, note)
+            self.cart[pid] = (n, p, new_qty, note)
         self._refresh_cart()
 
     def _calc_totals(self):
@@ -1347,7 +1283,7 @@ class POSView(tk.Frame):
             messagebox.showinfo("Draft", "No items to save.")
             return
 
-        dlg = SimpleDraftTitleDialog(self)
+        dlg = DraftTitleDialog(self)
         self.wait_window(dlg)
         if not dlg.result:
             return
@@ -1391,6 +1327,7 @@ class POSView(tk.Frame):
         self.discount_value = float(payload.get("discount_value", 0.0))
 
         self.cart.clear()
+        self._product_stock.clear()
         for it in payload.get("cart", []):
             pid = int(it.get("product_id", 0))
             name = str(it.get("name", ""))
@@ -1400,6 +1337,17 @@ class POSView(tk.Frame):
             if pid:
                 self.cart[pid] = (name, price, qty, note)
 
+        # Check stock for each restored item and warn if any qty exceeds current stock
+        stock_warnings: list[str] = []
+        for pid, (name, price, qty, note) in self.cart.items():
+            available = self._get_stock(pid)
+            if available > 0:
+                self._product_stock[pid] = available
+            if 0 < available < qty:
+                stock_warnings.append(
+                    f"  \u2022 {name}: draft has {qty}, only {available} in stock"
+                )
+
         try:
             self.draft_dao.delete_draft(did)
         except Exception:
@@ -1408,6 +1356,14 @@ class POSView(tk.Frame):
         self._refresh_cart()
         self._refresh_drafts_panel()
         messagebox.showinfo("Draft loaded", f"Loaded: {d['title']}")
+
+        if stock_warnings:
+            messagebox.showwarning(
+                "Stock warning",
+                "Some items in this draft exceed current stock:\n\n"
+                + "\n".join(stock_warnings)
+                + "\n\nAdjust quantities or remove items before checking out.",
+            )
 
     def _delete_selected_draft(self):
         did = self._get_selected_draft_id()
@@ -1439,23 +1395,27 @@ class POSView(tk.Frame):
             return
         ConfirmOrderDialog(self, self.db, self.auth, self.cart, self.discount_mode, self.discount_value, on_done=self._checkout_done)
 
-    # ✅ FIX: cache is only invalidated when the order was actually Completed.
-    #         Pending orders do NOT update the ML pair-frequency data.
     def _checkout_done(self, cleared: bool = True, completed: bool = False):
         if cleared:
             self.cart.clear()
+            self._product_stock.clear()
             self.discount_mode = "amount"
             self.discount_value = 0.0
             self._refresh_cart()
             self._refresh_drafts_panel()
 
-            if completed and self.recommender is not None:
-                # Only invalidate when a real sale was recorded
-                self.recommender.invalidate_cache()
+        # Invalidate product cache so updated stock counts show immediately
+        self._all_products_cache = []
+        self._all_products_cache_cat = ""
+        self._after(80, self._refresh_products)
+
+        if completed and self.recommender is not None:
+            # Only invalidate ML cache for real (Completed) sales
+            self.recommender.invalidate_cache()
 
 
 class ConfirmOrderDialog(tk.Toplevel):
-    SCROLL_SPEED_UNITS = 10
+    SCROLL_SPEED_UNITS = 3
 
     def __init__(
         self,
@@ -1471,8 +1431,7 @@ class ConfirmOrderDialog(tk.Toplevel):
         self.parent_view = parent
         self.db = db
         self.auth = auth
-        self.order_dao = OrderDAO(db)
-        self.draft_dao = DraftDAO(db)
+        self.svc = POSService(db)
 
         self.cart = dict(cart)
         self.discount_mode = discount_mode
@@ -1747,7 +1706,40 @@ class ConfirmOrderDialog(tk.Toplevel):
             bd=0, bg=THEME["panel2"], fg=THEME["text"],
             insertbackground=THEME["text"],
             font=("Segoe UI", f(10)),
-        ).pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 10))
+        ).pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 4))
+
+        # Live change / insufficient label
+        self._change_lbl = tk.Label(
+            right, text="",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", f(9), "bold"),
+            anchor="w",
+        )
+        self._change_lbl.pack(anchor="w", padx=pad, pady=(0, 8))
+
+        def _update_change_lbl(*_):
+            try:
+                paid = float(self.var_amount_paid.get().strip() or "0")
+            except ValueError:
+                self._change_lbl.configure(text="", fg=THEME["muted"])
+                return
+            if self.var_payment.get() == "Bank/E-Wallet":
+                self._change_lbl.configure(text="", fg=THEME["muted"])
+                return
+            diff = paid - self._total_amount
+            if diff < 0:
+                self._change_lbl.configure(
+                    text=f"Insufficient  (need {money(abs(diff))} more)",
+                    fg=THEME["danger"],
+                )
+            else:
+                self._change_lbl.configure(
+                    text=f"Change: {money(diff)}",
+                    fg=THEME["success"],
+                )
+
+        self.var_amount_paid.trace_add("write", _update_change_lbl)
+        self.var_payment.trace_add("write", _update_change_lbl)
 
         # Spacer — pushes buttons to the very bottom of the right column
         tk.Frame(right, bg=THEME["panel"]).pack(fill="both", expand=True)
@@ -1892,13 +1884,18 @@ class ConfirmOrderDialog(tk.Toplevel):
         u = self.auth.get_current_user()
         cashier_id = u.user_id if u else 0
 
+        items = [
+            {"product_id": pid, "qty": qty, "unit_price": price, "note": note}
+            for pid, (_name, price, qty, note) in self.cart.items()
+        ]
         try:
-            order_id = self.order_dao.insert_order(
+            order_id = self.svc.create_order(
                 cashier_id=cashier_id,
                 customer_name=customer,
                 payment_method=payment,
                 status=status,
                 reference_no="",
+                items=items,
                 subtotal=subtotal,
                 discount=discount,
                 tax=tax,
@@ -1907,17 +1904,12 @@ class ConfirmOrderDialog(tk.Toplevel):
                 cash_received=cash_received,
                 change_due=change,
             )
-            for pid, (_name, price, qty, note) in self.cart.items():
-                self.order_dao.insert_item(order_id, pid, qty, price, note)
 
             if status == "Pending":
                 messagebox.showinfo("Saved", f"Order saved as Pending.\n\nTransaction ID: {order_id}")
             else:
                 messagebox.showinfo("Completed", f"Order completed.\n\nTransaction ID: {order_id}\nChange: {money(change)}")
 
-            # ✅ FIX: pass completed=True only when status is "Completed"
-            #         so the ML cache is only invalidated for real sales,
-            #         not for Pending (bank/e-wallet) orders.
             if self.on_done:
                 self.on_done(True, status == "Completed")
 

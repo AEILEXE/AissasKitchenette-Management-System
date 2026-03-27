@@ -656,7 +656,7 @@ class TransactionsView(tk.Frame):
 
 class TransactionDetailsDialog(tk.Toplevel):
     MAX_COLLAPSED_ROWS = 5
-    SCROLL_SPEED_UNITS = 10
+    SCROLL_SPEED_UNITS = 3
 
     def __init__(self, parent: tk.Widget, db: Database, order_id: int, on_refresh=None):
         super().__init__(parent)
@@ -1124,7 +1124,11 @@ class ResolveDialog(tk.Toplevel):
     def _cancel(self):
         if not messagebox.askyesno("Cancel", "Cancel this transaction?"):
             return
-        self.orders.cancel_order(self.order_id)
+        try:
+            self.orders.cancel_order(self.order_id)
+        except Exception as e:
+            messagebox.showerror("Cancel Error", f"Failed to cancel order.\n\n{e}")
+            return
         if self.on_done:
             self.on_done()
         self.destroy()
