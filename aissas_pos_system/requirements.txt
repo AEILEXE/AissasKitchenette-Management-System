@@ -10,3 +10,4 @@ openpyxl>=3.0.0
 
 # Optional / packaging
 pyinstaller>=5.0.0
+pyinstaller-hooks-contrib>=2023.0  # auto-bundles matplotlib mpl-data and other hook-heavy libs

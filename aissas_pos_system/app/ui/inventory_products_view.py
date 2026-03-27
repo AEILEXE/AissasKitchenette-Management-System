@@ -16,7 +16,7 @@ import shutil
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-from app.config import THEME
+from app.config import THEME, resolve_image_path, PRODUCT_IMAGES_DIR
 from app.db.database import Database
 from app.db.dao import ProductDAO, CategoryDAO
 from app.services.auth_service import AuthService
@@ -617,8 +617,9 @@ class ProductEditor(tk.Toplevel):
             self._preview_lbl.configure(image="", text="Install Pillow for preview", compound="none")
             self._img_ref = None
             return
-        abs_path = image_path if os.path.isabs(image_path) else os.path.join(os.getcwd(), image_path)
-        if not os.path.exists(abs_path):
+        resolved = resolve_image_path(image_path)
+        abs_path = str(resolved) if resolved else image_path
+        if not resolved or not os.path.exists(abs_path):
             self._preview_lbl.configure(image="", text="Image file not found", compound="none")
             self._img_ref = None
             return
@@ -646,7 +647,9 @@ class ProductEditor(tk.Toplevel):
         if not path:
             return
 
-        img_dir = os.path.join(os.getcwd(), "product_images")
+        # PRODUCT_IMAGES_DIR is always the correct writable location
+        # (next to the EXE in packaged mode, project root in dev mode)
+        img_dir = str(PRODUCT_IMAGES_DIR)
         os.makedirs(img_dir, exist_ok=True)
 
         _, ext = os.path.splitext(path)

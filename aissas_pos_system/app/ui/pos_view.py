@@ -6,7 +6,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from app.config import THEME
+from app.config import THEME, resolve_image_path
 from app.db.database import Database
 from app.db.dao import CategoryDAO, ProductDAO, DraftDAO, OrderDAO
 from app.services.auth_service import AuthService
@@ -261,22 +261,30 @@ class POSView(tk.Frame):
         if key in self._img_cache:
             return self._img_cache[key]
 
-        path = os.path.join(os.getcwd(), "product_images", "images.png")
-        try:
-            from PIL import Image, ImageTk
-
-            img = Image.open(path)
-            img = img.resize((64, 64), Image.LANCZOS)
-            photo = ImageTk.PhotoImage(img)
-            self._img_cache[key] = photo
-            return photo
-        except Exception:
+        # Try several candidate default image names/locations
+        for rel in (
+            os.path.join("product_images", "images.png"),
+            os.path.join("product_images", "images.jpg"),
+            os.path.join("assets", "product_images", "images.jpg"),
+        ):
+            path = resolve_image_path(rel)
+            if path is None:
+                continue
             try:
-                img = tk.PhotoImage(file=path)
-                self._img_cache[key] = img
-                return img
+                from PIL import Image, ImageTk
+                img = Image.open(path)
+                img = img.resize((64, 64), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                self._img_cache[key] = photo
+                return photo
             except Exception:
-                return None
+                try:
+                    img = tk.PhotoImage(file=str(path))
+                    self._img_cache[key] = img
+                    return img
+                except Exception:
+                    continue
+        return None
 
     def _load_image(self, rel_path: str | None) -> object:
         if not rel_path:
@@ -286,18 +294,20 @@ class POSView(tk.Frame):
         if key in self._img_cache:
             return self._img_cache[key]
 
-        abs_path = os.path.join(os.getcwd(), rel_path)
+        path = resolve_image_path(rel_path)
+        if path is None:
+            return self._load_default_image()
+
         try:
             from PIL import Image, ImageTk
-
-            img = Image.open(abs_path)
+            img = Image.open(path)
             img = img.resize((64, 64), Image.LANCZOS)
             photo = ImageTk.PhotoImage(img)
             self._img_cache[key] = photo
             return photo
         except Exception:
             try:
-                img = tk.PhotoImage(file=abs_path)
+                img = tk.PhotoImage(file=str(path))
                 self._img_cache[key] = img
                 return img
             except Exception:
@@ -663,7 +673,7 @@ class POSView(tk.Frame):
         self._start_batch_load()
 
     # ------ Batch card loading ------
-    _BATCH_SIZE = 12
+    _BATCH_SIZE = 6
 
     def _start_batch_load(self) -> None:
         """Cancel any in-flight batch, clear the grid, start fresh."""

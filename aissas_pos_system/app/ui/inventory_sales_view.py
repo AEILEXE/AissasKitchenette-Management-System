@@ -14,8 +14,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from datetime import datetime
 
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
 import openpyxl
 import os
 
@@ -278,6 +276,9 @@ class InventorySalesView(tk.Frame):
                 font=("Segoe UI", 12),
             ).pack(expand=True)
             return
+
+        from matplotlib.figure import Figure  # deferred — avoids freeze on first tab open
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg  # noqa: F811
 
         fig = Figure(figsize=(10, 5), dpi=80)
         ax  = fig.add_subplot(111)

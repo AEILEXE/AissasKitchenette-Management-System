@@ -582,9 +582,16 @@ class AccountSettingsDialog(tk.Toplevel):
         try:
             self.db.close()
             shutil.copy2(src, str(DB_PATH))
+            # Re-open the connection immediately so the app keeps working.
+            # Without this, any navigation after the dialog closes hits
+            # "assert self.conn is not None" and crashes silently in EXE mode.
+            try:
+                self.db.connect()
+            except Exception:
+                pass
             messagebox.showinfo(
                 "Import Complete",
-                "Database replaced successfully.\n\nPlease restart the application.",
+                "Database replaced successfully.\n\nRestart the application to reload all data.",
             )
             self.destroy()
         except Exception as e:

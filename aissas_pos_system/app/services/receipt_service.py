@@ -7,10 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from app.utils import money
+from app.config import RECEIPTS_DIR as _RECEIPTS_DIR, ASSETS_DIR as _ASSETS_DIR
 
-# Receipt output folder (created automatically)
-_RECEIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "receipts"
-_RECEIPTS_DIR.mkdir(parents=True, exist_ok=True)
+# _RECEIPTS_DIR is already created by config.py at startup.
 
 
 def _receipt_money(value: Any) -> str:
@@ -37,15 +36,15 @@ def _try_register_unicode_font():
         from reportlab.pdfbase.ttfonts import TTFont
 
         # Search common locations for DejaVuSans
-        base = Path(__file__).resolve().parent.parent.parent
+        # _ASSETS_DIR resolves correctly in both dev and packaged EXE modes
         candidates_reg = [
-            base / "assets" / "fonts" / "DejaVuSans.ttf",
+            _ASSETS_DIR / "fonts" / "DejaVuSans.ttf",
             Path(r"C:\Windows\Fonts\DejaVuSans.ttf"),
             Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
             Path("/usr/share/fonts/dejavu/DejaVuSans.ttf"),
         ]
         candidates_bold = [
-            base / "assets" / "fonts" / "DejaVuSans-Bold.ttf",
+            _ASSETS_DIR / "fonts" / "DejaVuSans-Bold.ttf",
             Path(r"C:\Windows\Fonts\DejaVuSans-Bold.ttf"),
             Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
             Path("/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"),
