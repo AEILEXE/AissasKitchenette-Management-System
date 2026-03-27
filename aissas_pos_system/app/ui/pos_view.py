@@ -1480,7 +1480,7 @@ class ConfirmOrderDialog(tk.Toplevel):
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
         w  = min(860, sw - 80)
-        h  = min(540, sh - 80)
+        h  = min(500, sh - 80)
         x  = (sw - w) // 2
         y  = max(30, (sh - h) // 2)
         self.geometry(f"{w}x{h}+{x}+{y}")
@@ -1628,13 +1628,13 @@ class ConfirmOrderDialog(tk.Toplevel):
             total_bar, text="TOTAL",
             bg=THEME["success"], fg="white",
             font=("Segoe UI", f(9), "bold"),
-            padx=pad, pady=13,
+            padx=pad, pady=16,
         ).pack(side="left")
         tk.Label(
             total_bar, text=money(total),
             bg=THEME["success"], fg="white",
             font=("Segoe UI", f(17), "bold"),
-            padx=pad, pady=13,
+            padx=pad, pady=16,
         ).pack(side="right")
 
         # Discount notice (shown only when a discount is applied)
@@ -1653,12 +1653,12 @@ class ConfirmOrderDialog(tk.Toplevel):
             ).pack(side="right")
 
         # ── Customer ──────────────────────────────────────────────────────────
-        tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x", pady=(10, 0))
+        tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x", pady=(14, 0))
         tk.Label(
             right, text="CUSTOMER",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(8), "bold"),
-        ).pack(anchor="w", padx=pad, pady=(8, 2))
+        ).pack(anchor="w", padx=pad, pady=(10, 2))
 
         tk.Label(
             right, text="Customer Name  (required)",
@@ -1672,7 +1672,7 @@ class ConfirmOrderDialog(tk.Toplevel):
             insertbackground=THEME["text"],
             font=("Segoe UI", f(10)),
         )
-        ent_name.pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 10))
+        ent_name.pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 14))
         ent_name.focus_set()
 
         # ── Payment ───────────────────────────────────────────────────────────
@@ -1681,10 +1681,10 @@ class ConfirmOrderDialog(tk.Toplevel):
             right, text="PAYMENT",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(8), "bold"),
-        ).pack(anchor="w", padx=pad, pady=(8, 4))
+        ).pack(anchor="w", padx=pad, pady=(10, 6))
 
         radio_frame = tk.Frame(right, bg=THEME["panel"])
-        radio_frame.pack(fill="x", padx=pad, pady=(0, 4))
+        radio_frame.pack(fill="x", padx=pad, pady=(0, 6))
         for val, label in [("Cash", "Cash"), ("Bank/E-Wallet", "Bank Transfer / E-Wallet")]:
             tk.Radiobutton(
                 radio_frame, text=label,
@@ -1693,49 +1693,59 @@ class ConfirmOrderDialog(tk.Toplevel):
                 activebackground=THEME["panel"],
                 font=("Segoe UI", f(10)),
                 selectcolor=THEME["beige"],
-            ).pack(anchor="w", pady=sp(2))
+            ).pack(anchor="w", pady=sp(4))
 
         tk.Label(
             right, text="Amount Paid",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(8)),
-        ).pack(anchor="w", padx=pad, pady=(6, 3))
+        ).pack(anchor="w", padx=pad, pady=(8, 3))
 
+        amt_frame = tk.Frame(right, bg=THEME["panel2"])
+        amt_frame.pack(fill="x", padx=pad, pady=(0, 4))
+        amt_frame.columnconfigure(1, weight=1)
+        tk.Label(
+            amt_frame, text="₱",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", f(10)),
+        ).grid(row=0, column=0, padx=(8, 2), sticky="ns")
         tk.Entry(
-            right, textvariable=self.var_amount_paid,
+            amt_frame, textvariable=self.var_amount_paid,
             bd=0, bg=THEME["panel2"], fg=THEME["text"],
             insertbackground=THEME["text"],
             font=("Segoe UI", f(10)),
-        ).pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 4))
+        ).grid(row=0, column=1, sticky="ew", ipady=sp(8), padx=(0, 4))
 
-        # Live change / insufficient label
+        # Live change / insufficient feedback — fills width with colored bg when active
         self._change_lbl = tk.Label(
             right, text="",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(9), "bold"),
             anchor="w",
         )
-        self._change_lbl.pack(anchor="w", padx=pad, pady=(0, 8))
+        self._change_lbl.pack(fill="x", padx=pad, pady=(0, 10), ipady=4)
 
         def _update_change_lbl(*_):
             try:
                 paid = float(self.var_amount_paid.get().strip() or "0")
             except ValueError:
-                self._change_lbl.configure(text="", fg=THEME["muted"])
+                self._change_lbl.configure(text="", fg=THEME["muted"], bg=THEME["panel"])
                 return
             if self.var_payment.get() == "Bank/E-Wallet":
-                self._change_lbl.configure(text="", fg=THEME["muted"])
+                self._change_lbl.configure(text="", fg=THEME["muted"], bg=THEME["panel"])
                 return
             diff = paid - self._total_amount
             if diff < 0:
                 self._change_lbl.configure(
-                    text=f"Insufficient  (need {money(abs(diff))} more)",
+                    text=f"  Insufficient  —  need {money(abs(diff))} more",
                     fg=THEME["danger"],
+                    bg="#FEF2F2",
                 )
             else:
                 self._change_lbl.configure(
-                    text=f"Change: {money(diff)}",
+                    text=f"  Change:  {money(diff)}",
                     fg=THEME["success"],
+                    bg="#F0FDF4",
                 )
 
         self.var_amount_paid.trace_add("write", _update_change_lbl)
@@ -1747,7 +1757,7 @@ class ConfirmOrderDialog(tk.Toplevel):
         # ── Action buttons (pinned to bottom-right) ───────────────────────────
         tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x")
         btn_row = tk.Frame(right, bg=THEME["panel"])
-        btn_row.pack(fill="x", padx=pad, pady=12)
+        btn_row.pack(fill="x", padx=pad, pady=14)
         btn_row.columnconfigure(0, weight=1, uniform="cbtn")
         btn_row.columnconfigure(1, weight=2, uniform="cbtn")
 
@@ -1805,13 +1815,16 @@ class ConfirmOrderDialog(tk.Toplevel):
         self.btn_toggle.configure(text="▾ Hide" if expanded else "▸ Show")
 
         rows = self._details_rows if expanded else self._details_rows[:5]
-        for left_text, right_text in rows:
-            r = tk.Frame(self.details_body, bg="#ffffff")
-            r.pack(fill="x", pady=sp(4))
-            tk.Label(r, text=left_text,  bg="#ffffff", fg=THEME["text"],
-                     font=("Segoe UI", f(9))).pack(side="left")
-            tk.Label(r, text=right_text, bg="#ffffff", fg=THEME["text"],
-                     font=("Segoe UI", f(9))).pack(side="right")
+        for i, (left_text, right_text) in enumerate(rows):
+            row_bg = "#F8F9FA" if i % 2 == 0 else "#ffffff"
+            r = tk.Frame(self.details_body, bg=row_bg)
+            r.pack(fill="x")
+            tk.Label(r, text=left_text, bg=row_bg, fg=THEME["text"],
+                     font=("Segoe UI", f(9)), anchor="w",
+                     ).pack(side="left", padx=(12, 4), pady=sp(6))
+            tk.Label(r, text=right_text, bg=row_bg, fg=THEME["text"],
+                     font=("Segoe UI", f(9), "bold"), anchor="e",
+                     ).pack(side="right", padx=(4, 12), pady=sp(6))
 
         if not expanded and len(self._details_rows) > 5:
             tk.Label(
@@ -1822,14 +1835,24 @@ class ConfirmOrderDialog(tk.Toplevel):
             ).pack(anchor="w", pady=(sp(4), 0))
 
         if self._discount_amount > 0:
+            subtotal_val = self._total_amount + self._discount_amount
+            srow = tk.Frame(self.details_body, bg="#ffffff")
+            srow.pack(fill="x", pady=(sp(6), 0))
+            tk.Label(srow, text="Subtotal",
+                     bg="#ffffff", fg=THEME["muted"],
+                     font=("Segoe UI", f(9))).pack(side="left", padx=(12, 4))
+            tk.Label(srow, text=money(subtotal_val),
+                     bg="#ffffff", fg=THEME["muted"],
+                     font=("Segoe UI", f(9))).pack(side="right", padx=(4, 12))
+
             drow = tk.Frame(self.details_body, bg="#ffffff")
-            drow.pack(fill="x", pady=(sp(8), 0))
+            drow.pack(fill="x", pady=(sp(2), 0))
             tk.Label(drow, text="Discount",
                      bg="#ffffff", fg=THEME["muted"],
-                     font=("Segoe UI", f(9))).pack(side="left")
+                     font=("Segoe UI", f(9))).pack(side="left", padx=(12, 4))
             tk.Label(drow, text=f"−{money(self._discount_amount)}",
                      bg="#ffffff", fg=THEME["danger"],
-                     font=("Segoe UI", f(9), "bold")).pack(side="right")
+                     font=("Segoe UI", f(9), "bold")).pack(side="right", padx=(4, 12))
 
         tk.Frame(self.details_body, bg=THEME["border"], height=1).pack(
             fill="x", pady=(sp(8), 0))

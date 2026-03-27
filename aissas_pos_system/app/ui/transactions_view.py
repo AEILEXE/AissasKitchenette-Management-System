@@ -303,7 +303,7 @@ class TransactionsView(tk.Frame):
         style.configure(
             "Tx.Treeview",
             font=("Segoe UI", 10),
-            rowheight=34,
+            rowheight=38,
             background=THEME["panel"],
             fieldbackground=THEME["panel"],
             foreground=THEME["text"],
@@ -319,6 +319,11 @@ class TransactionsView(tk.Frame):
             padding=(10, 12),
         )
         style.map("Tx.Treeview.Heading", background=[("active", THEME["panel2"])])
+        style.map(
+            "Tx.Treeview",
+            background=[("selected", THEME["brown"])],
+            foreground=[("selected", "white")],
+        )
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
@@ -498,37 +503,66 @@ class TransactionsView(tk.Frame):
         _row_font = ("Segoe UI", 10)
         _row_fg   = THEME["text"]
 
-        # Status-based row colors — very subtle tints so the row is scannable
-        # but the STATUS column badge text carries the real color signal.
-        # Completed → near-white green tint   (normal; the majority)
-        # Pending   → near-white amber tint   (needs cashier attention)
-        # Cancelled → near-white RED tint     (voided — NOT pink; fg is deep red)
+        # ── Status row tags ───────────────────────────────────────────────────
+        # Subtle tint + distinct foreground — entire row is tinted so the eye
+        # can quickly spot Pending/Cancelled without the status column needing
+        # to do all the work.
+        # Completed → near-white (majority; neutral to avoid fatigue)
+        # Pending   → warm amber tint + amber text  (needs attention)
+        # Cancelled → clear red tint + red text     (voided; NOT pink)
         self.tbl.tag_configure("row_completed",
-                               background="#F4FBF4", foreground=_row_fg,
+                               background="#FAFFFE", foreground=_row_fg,
                                font=_row_font)
         self.tbl.tag_configure("row_pending",
-                               background="#FFFBEE", foreground="#7D5A00",
+                               background="#FFFBEB", foreground="#92400E",
                                font=("Segoe UI", 10, "bold"))
         self.tbl.tag_configure("row_cancelled",
-                               background="#FFF0F0", foreground="#B71C1C",
+                               background="#FEF2F2", foreground="#991B1B",
                                font=_row_font)
 
-        # Highlight tags (top-sale / latest) — more distinct, won't wash out
-        self.tbl.tag_configure("top_sale",       background="#B9EDDA", foreground=_row_fg, font=("Segoe UI", 10, "bold"))
-        self.tbl.tag_configure("latest_sale",    background="#C9DBFF", foreground=_row_fg, font=_row_font)
-        self.tbl.tag_configure("top_and_latest", background="#B3D9FF", foreground=_row_fg, font=("Segoe UI", 10, "bold"))
+        # ── Highlight tags ────────────────────────────────────────────────────
+        # Subtle — should not conflict with status colors or overpower the table.
+        # Highest Sale → very light gold/yellow
+        # Latest Order → very light blue accent
+        self.tbl.tag_configure("top_sale",       background="#FEFCE8", foreground=_row_fg, font=("Segoe UI", 10, "bold"))
+        self.tbl.tag_configure("latest_sale",    background="#EFF6FF", foreground=_row_fg, font=_row_font)
+        self.tbl.tag_configure("top_and_latest", background="#FEF9C3", foreground=_row_fg, font=("Segoe UI", 10, "bold"))
 
         self.tbl.bind("<Double-Button-1>",  lambda _e: self.open_selected())
         self.tbl.bind("<Return>",           lambda _e: self.open_selected())
         self.tbl.bind("<ButtonRelease-1>",  self._on_tbl_click)
 
+        # ── Bottom action bar ─────────────────────────────────────────────────
+        action_bar = tk.Frame(
+            table_card, bg=THEME["panel2"],
+            highlightthickness=1, highlightbackground=THEME["border"],
+        )
+        action_bar.grid(row=1, column=0, columnspan=2, sticky="ew")
+        action_bar.columnconfigure(0, weight=1)
+
+        self._count_var = tk.StringVar(value="")
+        tk.Label(
+            action_bar, textvariable=self._count_var,
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+        ).grid(row=0, column=0, sticky="w", padx=14, pady=7)
+
+        tk.Button(
+            action_bar, text="View Details  ▶",
+            bg=THEME["brown"], fg="white",
+            activebackground=THEME["brown_dark"], activeforeground="white",
+            bd=0, padx=16, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"),
+            command=self._open_selected_from_btn,
+        ).grid(row=0, column=1, sticky="e", padx=12, pady=6)
+
     # ── data ──────────────────────────────────────────────────────────────────
 
     # Badge-style display labels for the STATUS column (display only — DB values unchanged)
     _STATUS_BADGE: dict[str, str] = {
-        "completed": "✔ Completed",
-        "pending":   "● Pending",
-        "cancelled": "✖ Cancelled",
+        "completed": "✔  Completed",
+        "pending":   "◉  Pending",
+        "cancelled": "✕  Cancelled",
     }
 
     def refresh(self):
@@ -630,6 +664,10 @@ class TransactionsView(tk.Frame):
                 ),
             )
 
+        n = len(rows)
+        if hasattr(self, "_count_var"):
+            self._count_var.set(f"{n} transaction{'s' if n != 1 else ''} shown")
+
     def _on_tbl_click(self, event: tk.Event) -> None:
         """Open transaction details when the View column cell is clicked."""
         region = self.tbl.identify_region(event.x, event.y)
@@ -650,6 +688,16 @@ class TransactionsView(tk.Frame):
             return
         oid = int(sel[0])
         TransactionDetailsDialog(self, self.db, oid, on_refresh=self.refresh)
+
+    def _open_selected_from_btn(self):
+        """Called by the View Details button — shows a message if nothing is selected."""
+        if not self.tbl.selection():
+            messagebox.showinfo(
+                "No Selection",
+                "Select a transaction row first, then click View Details.",
+            )
+            return
+        self.open_selected()
 
 
 # ── TRANSACTION DETAILS DIALOG ────────────────────────────────────────────────
@@ -1122,12 +1170,23 @@ class ResolveDialog(tk.Toplevel):
         self.destroy()
 
     def _cancel(self):
-        if not messagebox.askyesno("Cancel", "Cancel this transaction?"):
+        confirmed = messagebox.askyesno(
+            "Cancel Transaction",
+            f"Cancel order #{self.order_id}?\n\n"
+            "• The order will be marked as Cancelled.\n"
+            "• Stock for all items will be restored.\n\n"
+            "This action cannot be undone.",
+            icon="warning",
+        )
+        if not confirmed:
             return
         try:
             self.orders.cancel_order(self.order_id)
         except Exception as e:
-            messagebox.showerror("Cancel Error", f"Failed to cancel order.\n\n{e}")
+            messagebox.showerror(
+                "Cancel Failed",
+                f"Could not cancel order #{self.order_id}.\n\n{e}",
+            )
             return
         if self.on_done:
             self.on_done()
