@@ -142,7 +142,7 @@ class AppWindow:
         # Settings dropdown
         self.settings_btn = tk.Button(
             self.nav,
-            text="Settings ▾",
+            text="\u2699  Settings  \u25be",
             bg=THEME["primary"],
             fg=THEME["text_on_primary"],
             activebackground=THEME["primary_light"],
@@ -156,10 +156,26 @@ class AppWindow:
         )
         self.settings_btn.pack(side=tk.LEFT, padx=6, pady=6)
 
-        self.settings_menu = Menu(self.root, tearoff=0)
-        self.settings_menu.add_command(label="Account", command=self.show_account_settings)
+        self.settings_menu = Menu(
+            self.root,
+            tearoff=0,
+            bg=THEME["panel"],
+            fg=THEME["text"],
+            activebackground=THEME["brown"],
+            activeforeground="white",
+            font=("Segoe UI", 10),
+            bd=1,
+            relief="solid",
+        )
+        self.settings_menu.add_command(
+            label="  Account  ",
+            command=self.show_account_settings,
+        )
         self.settings_menu.add_separator()
-        self.settings_menu.add_command(label="Logout", command=self.logout)
+        self.settings_menu.add_command(
+            label="  Logout  ",
+            command=self.logout,
+        )
 
         # Right area
         self.user_label = tk.Label(

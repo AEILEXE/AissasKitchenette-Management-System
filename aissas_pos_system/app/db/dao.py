@@ -78,6 +78,18 @@ class UserDAO:
             (active, user_id),
         )
 
+    def has_transactions(self, user_id: int) -> bool:
+        """Return True if user has any linked orders."""
+        r = self.db.fetchone(
+            "SELECT COUNT(*) AS c FROM orders WHERE cashier_id=?;",
+            (user_id,),
+        )
+        return (int(r["c"]) if r else 0) > 0
+
+    def delete(self, user_id: int) -> None:
+        """Hard-delete user (only safe when has_transactions returns False)."""
+        self.db.execute("DELETE FROM users WHERE id=?;", (user_id,))
+
 
 # CATEGORY DATA ACCESS OBJECT
 
@@ -240,6 +252,13 @@ class ProductDAO:
             (int(new_qty), int(product_id)),
         )
 
+    def decrement_stock(self, product_id: int, qty: int) -> None:
+        """Decrease product stock by qty (floor 0). Called after a confirmed sale."""
+        self.db.execute(
+            "UPDATE products SET stock = MAX(0, stock - ?) WHERE id=?;",
+            (int(qty), int(product_id)),
+        )
+
     def set_active(self, product_id: int, active: int) -> None:
         """Activate/deactivate product."""
         self.db.execute(
@@ -308,6 +327,10 @@ class DraftDAO:
     def delete_draft(self, draft_id: int) -> None:
         """Delete draft."""
         self.db.execute("DELETE FROM drafts WHERE id=?;", (int(draft_id),))
+
+    def delete_all_drafts(self) -> None:
+        """Delete all drafts in a single query (one commit)."""
+        self.db.execute("DELETE FROM drafts;")
 
     def count_drafts(self) -> int:
         """Count total drafts."""
@@ -428,6 +451,8 @@ class OrderDAO:
             f"""
             SELECT o.id AS order_id,
                    o.payment_method,
+                   o.customer_name,
+                   COALESCE(u.username, 'Unknown') AS cashier_username,
                    o.amount_paid,
                    o.change_due,
                    (SELECT COALESCE(SUM(qty), 0) FROM order_items oi WHERE oi.order_id=o.id) AS items_count,
@@ -436,6 +461,7 @@ class OrderDAO:
                    o.datetime AS start_dt,
                    o.end_datetime AS end_dt
             FROM orders o
+            LEFT JOIN users u ON o.cashier_id = u.id
             {where_sql}
             ORDER BY datetime(o.datetime) DESC;
             """,
@@ -500,16 +526,46 @@ class OrderDAO:
         )
 
     def cancel_order(self, order_id: int) -> None:
-        """Cancel order."""
-        self.db.execute(
-            """
-            UPDATE orders
-            SET status='Cancelled',
-                end_datetime=datetime('now','localtime')
-            WHERE id=?;
-            """,
-            (int(order_id),),
-        )
+        """
+        Cancel a Pending order and restore stock atomically.
+        Raises ValueError if the order is not in Pending status — prevents
+        double-cancel and accidental cancellation of Completed orders.
+        """
+        try:
+            order = self.db.fetchone(
+                "SELECT status FROM orders WHERE id=?;",
+                (int(order_id),),
+            )
+            if order is None:
+                raise ValueError(f"Order {order_id} not found.")
+            if order["status"] != "Pending":
+                raise ValueError(
+                    f"Order {order_id} cannot be cancelled "
+                    f"(current status: {order['status']})."
+                )
+
+            items = self.db.fetchall(
+                "SELECT product_id, qty FROM order_items WHERE order_id=?;",
+                (int(order_id),),
+            )
+            for row in items:
+                self.db.execute_no_commit(
+                    "UPDATE products SET stock = stock + ? WHERE id=?;",
+                    (int(row["qty"]), int(row["product_id"])),
+                )
+            self.db.execute_no_commit(
+                """
+                UPDATE orders
+                SET status='Cancelled',
+                    end_datetime=datetime('now','localtime')
+                WHERE id=? AND status='Pending';
+                """,
+                (int(order_id),),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
 
     def count_by_status(self, status: str) -> int:
         """Count orders by status."""

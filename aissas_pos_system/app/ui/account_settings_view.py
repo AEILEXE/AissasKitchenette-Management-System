@@ -72,7 +72,7 @@ def _ask_password(parent: tk.Widget, title: str, prompt: str):
     ).pack(side="right")
     tk.Button(
         btns, text="Confirm",
-        bg=THEME["danger"], fg="white",
+        bg=THEME["brown"], fg="white",
         bd=0, padx=12, pady=8, cursor="hand2",
         command=_ok,
     ).pack(side="right", padx=(0, 8))
@@ -103,8 +103,8 @@ class AccountSettingsDialog(tk.Toplevel):
 
         self.title("Settings")
         self.configure(bg=THEME["bg"])
-        self.geometry(f"{ui_scale.s(700)}x{ui_scale.s(660)}")
-        self.minsize(580, 520)
+        self.geometry(f"{ui_scale.s(860)}x{ui_scale.s(600)}")
+        self.minsize(700, 500)
         if isinstance(parent, tk.Toplevel):
             self.transient(parent)
         self.grab_set()
@@ -114,85 +114,183 @@ class AccountSettingsDialog(tk.Toplevel):
     # ── Layout ────────────────────────────────────────────────────────────────
 
     def _build(self):
+        sf = ui_scale.scale_font
+        sp = ui_scale.s
+
         u        = self.auth.get_current_user()
         is_admin = bool(u and u.role.upper() == ROLE_ADMIN)
+        self._user     = u
+        self._is_admin = is_admin
 
-        outer = tk.Frame(self, bg=THEME["bg"])
-        outer.pack(fill="both", expand=True)
-        outer.rowconfigure(0, weight=1)
-        outer.columnconfigure(0, weight=1)
+        # ── Top header ────────────────────────────────────────────────────────
+        hdr = tk.Frame(self, bg=THEME["brown_dark"])
+        hdr.pack(fill="x")
 
-        canvas = tk.Canvas(outer, bg=THEME["bg"], highlightthickness=0)
-        canvas.grid(row=0, column=0, sticky="nsew")
+        tk.Label(
+            hdr, text="Settings",
+            bg=THEME["brown_dark"], fg="white",
+            font=("Segoe UI", sf(14), "bold"),
+        ).pack(side="left", padx=18, pady=12)
 
-        sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        tk.Button(
+            hdr, text="\u2715  Close",
+            bg=THEME["brown_dark"], fg="white",
+            activebackground=THEME["brown"], activeforeground="white",
+            bd=0, padx=12, pady=8, cursor="hand2",
+            font=("Segoe UI", sf(9)),
+            command=self.destroy,
+        ).pack(side="right", padx=8, pady=6)
+
+        tk.Label(
+            hdr,
+            text=f"{u.username}  \u00b7  {u.role}" if u else "",
+            bg=THEME["brown_dark"], fg="#c9b8a8",
+            font=("Segoe UI", sf(8)),
+        ).pack(side="right", padx=(0, 4))
+
+        # ── Sidebar + content body (3 columns: sidebar | divider | content) ──────
+        body = tk.Frame(self, bg=THEME["bg"])
+        body.pack(fill="both", expand=True)
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, minsize=sp(175))   # sidebar — fixed width
+        body.columnconfigure(1, minsize=1)          # divider
+        body.columnconfigure(2, weight=1)           # content — expands
+
+        # ── Left sidebar ──────────────────────────────────────────────────────
+        sidebar = tk.Frame(body, bg=THEME["beige"], width=sp(175))
+        sidebar.grid(row=0, column=0, sticky="nsew")
+        sidebar.grid_propagate(False)
+
+        tk.Label(
+            sidebar, text="NAVIGATE",
+            bg=THEME["beige"], fg=THEME["muted"],
+            font=("Segoe UI", sf(7), "bold"),
+        ).pack(anchor="w", padx=14, pady=(14, 6))
+
+        # Vertical divider between sidebar and content
+        tk.Frame(body, bg=THEME["border"], width=1).grid(row=0, column=1, sticky="ns")
+
+        # ── Right scrollable canvas ───────────────────────────────────────────
+        right = tk.Frame(body, bg=THEME["bg"])
+        right.grid(row=0, column=2, sticky="nsew")
+        right.rowconfigure(0, weight=1)
+        right.columnconfigure(0, weight=1)
+
+        self._right_canvas = tk.Canvas(right, bg=THEME["bg"], highlightthickness=0)
+        self._right_canvas.grid(row=0, column=0, sticky="nsew")
+
+        sb = ttk.Scrollbar(right, orient="vertical", command=self._right_canvas.yview)
         sb.grid(row=0, column=1, sticky="ns")
-        canvas.configure(yscrollcommand=sb.set)
+        self._right_canvas.configure(yscrollcommand=sb.set)
+        _bind_mousewheel(self._right_canvas)
 
-        inner = tk.Frame(canvas, bg=THEME["bg"])
-        win   = canvas.create_window((0, 0), window=inner, anchor="nw")
+        # ── Sidebar nav buttons ───────────────────────────────────────────────
+        self._nav_btns_settings: dict[str, tk.Button] = {}
+        self._current_section: str = ""
+
+        sections: list[tuple[str, str, bool]] = [
+            ("profile",   "Profile",             False),
+            ("security",  "Security",            False),
+            ("database",  "Database",            True),
+            ("users",     "User Management",     True),
+            ("seed",      "Demo Seed",           True),
+            ("roles",     "Role Permissions",    True),
+        ]
+
+        for key, label, admin_only in sections:
+            if admin_only and not is_admin:
+                continue
+            btn = tk.Button(
+                sidebar,
+                text=f"  {label}",
+                anchor="w",
+                bg=THEME["beige"],
+                fg=THEME["text"],
+                activebackground=THEME["brown"],
+                activeforeground="white",
+                bd=0,
+                padx=sp(6),
+                pady=sp(9),
+                cursor="hand2",
+                font=("Segoe UI", sf(9)),
+                command=lambda k=key: self._show_section(k),
+            )
+            btn.pack(fill="x", padx=6, pady=1)
+            self._nav_btns_settings[key] = btn
+
+        # Default section
+        self._show_section("profile")
+
+    # ── Sidebar navigation ────────────────────────────────────────────────────
+
+    def _show_section(self, key: str) -> None:
+        """Clear the right canvas, rebuild the selected section, update highlights."""
+        sf = ui_scale.scale_font
+        self._current_section = key
+
+        # Rebuild inner frame inside the canvas
+        self._right_canvas.delete("all")
+        inner = tk.Frame(self._right_canvas, bg=THEME["bg"])
+        win = self._right_canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        # Immediately fill the canvas width — prevents narrow first render after section switch
+        self._right_canvas.update_idletasks()
+        cw = self._right_canvas.winfo_width()
+        if cw > 1:
+            self._right_canvas.itemconfigure(win, width=cw)
 
         inner.bind(
             "<Configure>",
-            lambda _e: canvas.configure(scrollregion=canvas.bbox("all")),
+            lambda _e: self._right_canvas.configure(
+                scrollregion=self._right_canvas.bbox("all")
+            ),
             add="+",
         )
-        canvas.bind(
+        # Replace (not accumulate) — only current win tracks canvas resizes
+        self._right_canvas.bind(
             "<Configure>",
-            lambda e: canvas.itemconfigure(win, width=e.width),
-            add="+",
+            lambda e: self._right_canvas.itemconfigure(win, width=e.width),
         )
-        _bind_mousewheel(canvas)
 
-        # ── Title row ─────────────────────────────────────────────────────────
-        title_row = tk.Frame(inner, bg=THEME["bg"])
-        title_row.pack(fill="x", padx=24, pady=(18, 2))
+        # Dispatch to the right builder
+        u = self._user
+        builders = {
+            "profile":  lambda: (self._section_header(inner, "Profile"),             self._build_profile(inner, u)),
+            "security": lambda: (self._section_header(inner, "Security"),            self._build_security(inner)),
+            "database": lambda: (self._section_header(inner, "Database Management"), self._build_db_section(inner)),
+            "users":    lambda: (self._section_header(inner, "User Management"),     self._build_user_mgmt(inner)),
+            "seed":     lambda: (self._section_header(inner, "Seed Demo Sales"),      self._build_seed_section(inner)),
+            "roles":    lambda: (self._section_header(inner, "Role Permissions"),     self._build_role_mgmt(inner)),
+        }
+        if key in builders:
+            builders[key]()
 
-        tk.Label(
-            title_row, text="Settings",
-            bg=THEME["bg"], fg=THEME["text"],
-            font=("Segoe UI", ui_scale.scale_font(20), "bold"),
-        ).pack(side="left")
+        tk.Frame(inner, bg=THEME["bg"], height=ui_scale.s(24)).pack()
 
-        tk.Button(
-            title_row, text="X  Close",
-            bg=THEME["panel2"], fg=THEME["muted"],
-            bd=0, padx=ui_scale.s(10), pady=ui_scale.s(6),
-            cursor="hand2",
-            font=("Segoe UI", ui_scale.scale_font(9)),
-            command=self.destroy,
-        ).pack(side="right")
+        # Scroll to top
+        try:
+            self._right_canvas.yview_moveto(0)
+        except Exception:
+            pass
 
-        tk.Label(
-            inner, text="Manage your account and system preferences.",
-            bg=THEME["bg"], fg=THEME["muted"],
-            font=("Segoe UI", ui_scale.scale_font(9)),
-        ).pack(anchor="w", padx=24, pady=(0, 16))
-
-        # ── Profile ───────────────────────────────────────────────────────────
-        self._section_header(inner, "Profile")
-        self._build_profile(inner, u)
-
-        # ── Security ──────────────────────────────────────────────────────────
-        self._section_header(inner, "Security")
-        self._build_security(inner)
-
-        # ── Admin-only sections ───────────────────────────────────────────────
-        if is_admin:
-            self._section_header(inner, "Database Management")
-            self._build_db_section(inner)
-            self._section_header(inner, "User Management")
-            self._build_user_mgmt(inner)
-            self._section_header(inner, "Role Permissions")
-            self._build_role_mgmt(inner)
-
-        tk.Frame(inner, bg=THEME["bg"], height=ui_scale.s(28)).pack()
+        # Update sidebar button highlights
+        for k, btn in self._nav_btns_settings.items():
+            if k == key:
+                btn.configure(
+                    bg=THEME["brown"], fg="white",
+                    font=("Segoe UI", sf(9), "bold"),
+                )
+            else:
+                btn.configure(
+                    bg=THEME["beige"], fg=THEME["text"],
+                    font=("Segoe UI", sf(9)),
+                )
 
     # ── Section helpers ───────────────────────────────────────────────────────
 
     def _section_header(self, parent, text: str):
         row = tk.Frame(parent, bg=THEME["bg"])
-        row.pack(fill="x", padx=24, pady=(18, 6))
+        row.pack(fill="x", padx=12, pady=(18, 6))
         tk.Label(
             row, text=text.upper(),
             bg=THEME["bg"], fg=THEME["muted"],
@@ -202,7 +300,7 @@ class AccountSettingsDialog(tk.Toplevel):
             side="left", fill="x", expand=True, padx=(8, 0), pady=6,
         )
 
-    def _card(self, parent, padx=24, pady=(0, 4)) -> tk.Frame:
+    def _card(self, parent, padx=12, pady=(0, 4)) -> tk.Frame:
         card = tk.Frame(
             parent, bg=THEME["panel"],
             highlightthickness=1, highlightbackground=THEME["border"],
@@ -226,27 +324,69 @@ class AccountSettingsDialog(tk.Toplevel):
         ent.pack(fill="x", padx=16, pady=(0, 4), ipady=ui_scale.s(8))
         return ent
 
+    def _labeled_pwd_entry(self, parent, label: str) -> tk.Entry:
+        """Password entry with an inline Show/Hide toggle. Returns the Entry widget."""
+        tk.Label(
+            parent, text=label,
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", ui_scale.scale_font(9)),
+        ).pack(anchor="w", padx=16, pady=(6, 2))
+
+        row = tk.Frame(parent, bg=THEME["panel2"])
+        row.pack(fill="x", padx=16, pady=(0, 4))
+        row.columnconfigure(0, weight=1)
+
+        ent = tk.Entry(
+            row, bd=0,
+            bg=THEME["panel2"], fg=THEME["text"],
+            insertbackground=THEME["text"],
+            show="*",
+            font=("Segoe UI", ui_scale.scale_font(10)),
+        )
+        ent.grid(row=0, column=0, sticky="ew", ipady=ui_scale.s(8), padx=(6, 0))
+
+        _state = {"visible": False}
+
+        def _toggle():
+            _state["visible"] = not _state["visible"]
+            ent.configure(show="" if _state["visible"] else "*")
+            toggle_btn.configure(text="Hide" if _state["visible"] else "Show")
+
+        toggle_btn = tk.Button(
+            row, text="Show",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            activebackground=THEME["panel2"], activeforeground=THEME["text"],
+            bd=0, padx=8, pady=0, cursor="hand2", relief="flat",
+            font=("Segoe UI", ui_scale.scale_font(8)),
+            command=_toggle,
+        )
+        toggle_btn.grid(row=0, column=1, padx=(2, 4), sticky="ns")
+
+        return ent
+
     # ── Profile ───────────────────────────────────────────────────────────────
 
     def _build_profile(self, parent, u):
-        card     = self._card(parent)
+        card = self._card(parent)
+
+        # ── Avatar + name row ────────────────────────────────────────────────
         info_row = tk.Frame(card, bg=THEME["panel"])
-        info_row.pack(fill="x", padx=16, pady=(14, 14))
+        info_row.pack(fill="x", padx=20, pady=(20, 16))
 
         avatar = (u.username[0].upper() if u and u.username else "?")
         tk.Label(
             info_row, text=avatar,
             bg=THEME["brown"], fg="white",
-            font=("Segoe UI", ui_scale.scale_font(20), "bold"),
-            width=3, pady=ui_scale.s(6),
-        ).pack(side="left", padx=(0, 16))
+            font=("Segoe UI", ui_scale.scale_font(22), "bold"),
+            width=3, pady=ui_scale.s(8),
+        ).pack(side="left", padx=(0, 20))
 
         user_info = tk.Frame(info_row, bg=THEME["panel"])
         user_info.pack(side="left", fill="x", expand=True)
         tk.Label(
             user_info, text=u.username if u else "\u2014",
             bg=THEME["panel"], fg=THEME["text"],
-            font=("Segoe UI", ui_scale.scale_font(13), "bold"), anchor="w",
+            font=("Segoe UI", ui_scale.scale_font(14), "bold"), anchor="w",
         ).pack(anchor="w")
         role_text  = u.role.upper() if u else "\u2014"
         role_color = THEME["brown"] if role_text == ROLE_ADMIN else THEME["accent"]
@@ -255,7 +395,34 @@ class AccountSettingsDialog(tk.Toplevel):
             bg=role_color, fg="white",
             font=("Segoe UI", ui_scale.scale_font(8), "bold"),
             padx=4, pady=2,
-        ).pack(anchor="w", pady=(4, 0))
+        ).pack(anchor="w", pady=(6, 0))
+
+        # ── Details grid ─────────────────────────────────────────────────────
+        tk.Frame(card, bg=THEME["border"], height=1).pack(fill="x", padx=16)
+
+        details = tk.Frame(card, bg=THEME["panel"])
+        details.pack(fill="x", padx=20, pady=(14, 18))
+        details.columnconfigure(0, weight=1)
+        details.columnconfigure(1, weight=1)
+
+        def _detail(lbl_text: str, val_text: str, row: int, col: int) -> None:
+            cell = tk.Frame(details, bg=THEME["panel"])
+            cell.grid(row=row, column=col, sticky="w", padx=(0, 16), pady=6)
+            tk.Label(
+                cell, text=lbl_text,
+                bg=THEME["panel"], fg=THEME["muted"],
+                font=("Segoe UI", ui_scale.scale_font(8)),
+            ).pack(anchor="w")
+            tk.Label(
+                cell, text=val_text,
+                bg=THEME["panel"], fg=THEME["text"],
+                font=("Segoe UI", ui_scale.scale_font(10), "bold"),
+            ).pack(anchor="w")
+
+        _detail("Username",  u.username if u else "\u2014",              0, 0)
+        _detail("Role",      u.role if u else "\u2014",                  0, 1)
+        _detail("User ID",   f"#{u.user_id}" if u else "\u2014",         1, 0)
+        _detail("Status",    "Active" if u and u.is_active else "Inactive", 1, 1)
 
     # ── Security ──────────────────────────────────────────────────────────────
 
@@ -283,9 +450,9 @@ class AccountSettingsDialog(tk.Toplevel):
             fill="x", padx=16, pady=(6, 4),
         )
 
-        self.old_pwd     = self._labeled_entry(sec_card, "Current Password", show="*")
-        self.new_pwd     = self._labeled_entry(sec_card, "New Password",     show="*")
-        self.confirm_pwd = self._labeled_entry(sec_card, "Confirm New Password", show="*")
+        self.old_pwd     = self._labeled_pwd_entry(sec_card, "Current Password")
+        self.new_pwd     = self._labeled_pwd_entry(sec_card, "New Password")
+        self.confirm_pwd = self._labeled_pwd_entry(sec_card, "Confirm New Password")
 
         pwd_footer = tk.Frame(sec_card, bg=THEME["panel"])
         pwd_footer.pack(fill="x", padx=16, pady=(8, 14))
@@ -347,22 +514,24 @@ class AccountSettingsDialog(tk.Toplevel):
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", ui_scale.scale_font(9)), justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 12))
-        btn_row = tk.Frame(db_card, bg=THEME["panel"])
-        btn_row.pack(fill="x", padx=16, pady=(0, 16))
+        btn_grid = tk.Frame(db_card, bg=THEME["panel"])
+        btn_grid.pack(fill="x", padx=16, pady=(0, 16))
+        btn_grid.columnconfigure(0, weight=1)
+        btn_grid.columnconfigure(1, weight=1)
         tk.Button(
-            btn_row, text="Export Database (.db)",
+            btn_grid, text="Export Database (.db)",
             bg=THEME["accent"], fg="white",
-            bd=0, padx=ui_scale.s(14), pady=ui_scale.s(8), cursor="hand2",
+            bd=0, pady=ui_scale.s(9), cursor="hand2",
             font=("Segoe UI", ui_scale.scale_font(9), "bold"),
             command=self._export_db,
-        ).pack(side="left", padx=(0, 10))
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 6), ipady=2)
         tk.Button(
-            btn_row, text="Import Database (.db)",
+            btn_grid, text="Import Database (.db)",
             bg=THEME["danger"], fg="white",
-            bd=0, padx=ui_scale.s(14), pady=ui_scale.s(8), cursor="hand2",
+            bd=0, pady=ui_scale.s(9), cursor="hand2",
             font=("Segoe UI", ui_scale.scale_font(9), "bold"),
             command=self._import_db,
-        ).pack(side="left")
+        ).grid(row=0, column=1, sticky="ew", ipady=2)
 
     def _export_db(self):
         dest = filedialog.asksaveasfilename(
@@ -419,6 +588,11 @@ class AccountSettingsDialog(tk.Toplevel):
             )
             self.destroy()
         except Exception as e:
+            # Reconnect so the app keeps working if the copy failed
+            try:
+                self.db.connect()
+            except Exception:
+                pass
             messagebox.showerror("Import Failed", f"Could not import database:\n{e}")
 
     # ── User Management ───────────────────────────────────────────────────────
@@ -488,6 +662,13 @@ class AccountSettingsDialog(tk.Toplevel):
                     font=("Segoe UI", ui_scale.scale_font(8)),
                     command=lambda uid=user_row["user_id"]: self._deactivate_user(uid),
                 ).pack(side="right", padx=(4, 10), pady=6)
+                tk.Button(
+                    row_frame, text="Delete",
+                    bg=THEME["panel2"], fg=THEME["danger"],
+                    bd=1, relief="solid", padx=ui_scale.s(8), pady=ui_scale.s(4), cursor="hand2",
+                    font=("Segoe UI", ui_scale.scale_font(8)),
+                    command=lambda uid=user_row["user_id"], uname=user_row["username"]: self._delete_user(uid, uname),
+                ).pack(side="right", padx=(4, 2), pady=6)
 
         # -- Create new user --
         create_card = self._card(parent, pady=(8, 4))
@@ -504,8 +685,8 @@ class AccountSettingsDialog(tk.Toplevel):
         ).pack(anchor="w", padx=16, pady=(0, 6))
 
         self.create_user_ent = self._labeled_entry(create_card, "Username")
-        self.create_pass_ent = self._labeled_entry(create_card, "Password", show="*")
-        self.create_conf_ent = self._labeled_entry(create_card, "Confirm Password", show="*")
+        self.create_pass_ent = self._labeled_pwd_entry(create_card, "Password")
+        self.create_conf_ent = self._labeled_pwd_entry(create_card, "Confirm Password")
 
         tk.Label(
             create_card, text="Role",
@@ -563,6 +744,157 @@ class AccountSettingsDialog(tk.Toplevel):
             AccountSettingsDialog(self.master, self.db, self.auth)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to deactivate user.\n{e}")
+
+    def _delete_user(self, user_id: int, username: str):
+        """Delete user only if they have zero linked transactions."""
+        if self.user_dao.has_transactions(user_id):
+            messagebox.showerror(
+                "Cannot Delete",
+                "User cannot be deleted because transactions are linked to this account. "
+                "Deactivate instead.",
+            )
+            return
+        if not messagebox.askyesno(
+            "Delete User",
+            f"Permanently delete user '{username}'?\n\nThis cannot be undone.",
+        ):
+            return
+        try:
+            self.user_dao.delete(user_id)
+            messagebox.showinfo("Deleted", f"User '{username}' deleted.")
+            self.destroy()
+            AccountSettingsDialog(self.master, self.db, self.auth)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete user.\n{e}")
+
+    # ── Seed Demo Sales ───────────────────────────────────────────────────────
+
+    def _build_seed_section(self, parent):
+        import threading
+        from app.services.seed_sales_service import SeedSalesService
+
+        seed_card = self._card(parent)
+        tk.Label(
+            seed_card, text="Generate Demo Sales Data",
+            bg=THEME["panel"], fg=THEME["text"],
+            font=("Segoe UI", ui_scale.scale_font(11), "bold"),
+        ).pack(anchor="w", padx=16, pady=(14, 4))
+        tk.Label(
+            seed_card,
+            text="Creates realistic synthetic completed orders for testing and demos.\n"
+                 "Existing real data is NOT deleted. Runs in the background.",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", ui_scale.scale_font(9)), justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 10))
+
+        # Progress label — hidden until a job is running
+        progress_var = tk.StringVar(value="")
+        progress_lbl = tk.Label(
+            seed_card,
+            textvariable=progress_var,
+            bg=THEME["panel"], fg=THEME["brown"],
+            font=("Segoe UI", ui_scale.scale_font(9), "italic"),
+        )
+        progress_lbl.pack(anchor="w", padx=16, pady=(0, 4))
+
+        btn_grid = tk.Frame(seed_card, bg=THEME["panel"])
+        btn_grid.pack(fill="x", padx=16, pady=(0, 16))
+        btn_grid.columnconfigure(0, weight=1)
+        btn_grid.columnconfigure(1, weight=1)
+
+        seed_buttons: list[tk.Button] = []
+
+        def _set_buttons_state(state: str):
+            for b in seed_buttons:
+                try:
+                    b.configure(state=state)
+                except Exception:
+                    pass
+
+        def _seed(num_orders: int, days_back: int, label: str):
+            if not messagebox.askyesno(
+                "Generate Demo Sales",
+                f"Generate {label} of demo sales data?\n\nExisting real data will NOT be deleted.",
+            ):
+                return
+
+            _set_buttons_state("disabled")
+            progress_var.set(f"Generating {label}… please wait")
+
+            def _worker():
+                # SQLite connections cannot be shared across threads.
+                # Open a dedicated connection for this worker thread.
+                thread_db = Database()
+                try:
+                    thread_db.connect()
+                    svc = SeedSalesService(thread_db)
+
+                    def _progress(done, total):
+                        pct = int(done / total * 100) if total else 0
+                        try:
+                            self.after(0, lambda: progress_var.set(
+                                f"Generating {label}… {pct}%"
+                            ))
+                        except Exception:
+                            pass
+
+                    result = svc.run(
+                        num_orders=num_orders,
+                        days_back=days_back,
+                        progress_cb=_progress,
+                    )
+                except Exception as exc:
+                    result = {"orders_created": 0, "total_sales": 0.0, "error": str(exc)}
+                finally:
+                    try:
+                        thread_db.disconnect()
+                    except Exception:
+                        pass
+
+                # All UI updates must happen on the main thread
+                def _done():
+                    _set_buttons_state("normal")
+                    if result.get("error"):
+                        progress_var.set("")
+                        messagebox.showerror("Seed Error", result["error"])
+                    else:
+                        progress_var.set(
+                            f"✓ Done — {result['orders_created']} orders created"
+                        )
+                        messagebox.showinfo(
+                            "Done",
+                            f"Created {result['orders_created']} demo orders.\n"
+                            f"Total simulated sales: ₱{result['total_sales']:,.2f}\n\n"
+                            "Suggestions will refresh automatically in the POS.",
+                        )
+
+                try:
+                    self.after(0, _done)
+                except Exception:
+                    pass
+
+            t = threading.Thread(target=_worker, daemon=True)
+            t.start()
+
+        configs = [
+            ("Generate 7 Days",     100,  7,  "7 days"),
+            ("Generate 30 Days",    200, 30,  "30 days"),
+            ("Generate 100 Orders", 100, 30, "100 orders"),
+            ("Generate 500 Orders", 500, 60, "500 orders"),
+        ]
+
+        for i, (text, num, days, lbl) in enumerate(configs):
+            btn = tk.Button(
+                btn_grid,
+                text=text,
+                bg=THEME["accent"], fg="white",
+                bd=0, pady=ui_scale.s(8),
+                cursor="hand2",
+                font=("Segoe UI", ui_scale.scale_font(9), "bold"),
+                command=lambda n=num, d=days, l=lbl: _seed(n, d, l),
+            )
+            btn.grid(row=i // 2, column=i % 2, sticky="ew", padx=(0, 6) if i % 2 == 0 else 0, pady=(0, 6))
+            seed_buttons.append(btn)
 
     # ── Role Permissions (RBAC) ───────────────────────────────────────────────
 
@@ -627,11 +959,12 @@ class AccountSettingsDialog(tk.Toplevel):
                     padx=6,
                 ).pack(side="left")
 
-            # ── Permission checkbox grid (2 columns) ──────────────────────────
+            # ── Permission checkbox grid (3 columns) ──────────────────────────
             perm_frame = tk.Frame(card, bg=THEME["panel"])
             perm_frame.pack(fill="x", padx=20, pady=(4, 4))
             perm_frame.columnconfigure(0, weight=1, uniform="permcol")
             perm_frame.columnconfigure(1, weight=1, uniform="permcol")
+            perm_frame.columnconfigure(2, weight=1, uniform="permcol")
 
             for idx, perm in enumerate(ALL_PERMISSION_KEYS):
                 label = PERMISSION_LABELS.get(perm, perm)
@@ -652,7 +985,7 @@ class AccountSettingsDialog(tk.Toplevel):
                     state="disabled" if is_admin_role else "normal",
                     command=lambda r=role, p=perm, v=var: _toggle(r, p, v),
                 )
-                chk.grid(row=idx // 2, column=idx % 2, sticky="w", padx=8, pady=2)
+                chk.grid(row=idx // 3, column=idx % 3, sticky="w", padx=8, pady=2)
 
             # Thin divider between roles
             tk.Frame(card, bg=THEME["border"], height=1).pack(

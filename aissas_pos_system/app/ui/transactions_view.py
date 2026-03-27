@@ -303,7 +303,7 @@ class TransactionsView(tk.Frame):
         style.configure(
             "Tx.Treeview",
             font=("Segoe UI", 10),
-            rowheight=24,
+            rowheight=38,
             background=THEME["panel"],
             fieldbackground=THEME["panel"],
             foreground=THEME["text"],
@@ -316,9 +316,14 @@ class TransactionsView(tk.Frame):
             background=THEME["panel2"],
             foreground=THEME["text"],
             relief="flat",
-            padding=(10, 10),
+            padding=(10, 12),
         )
         style.map("Tx.Treeview.Heading", background=[("active", THEME["panel2"])])
+        style.map(
+            "Tx.Treeview",
+            background=[("selected", THEME["brown"])],
+            foreground=[("selected", "white")],
+        )
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
@@ -466,7 +471,8 @@ class TransactionsView(tk.Frame):
         table_card.columnconfigure(0, weight=1)
         table_card.rowconfigure(0, weight=1)
 
-        cols = ("id", "payment", "paid", "change", "items", "status", "total", "start", "end", "details")
+        # FIX B: updated column order — ID | PAYMENT | CASHIER | CUSTOMER | PAID | CHANGE | ITEMS | STATUS | TOTAL | START | END | View
+        cols = ("id", "payment", "cashier", "customer", "paid", "change", "items", "status", "total", "start", "end", "details")
         self.tbl = ttk.Treeview(table_card, columns=cols, show="headings", style="Tx.Treeview")
         self.tbl.grid(row=0, column=0, sticky="nsew")
 
@@ -474,43 +480,90 @@ class TransactionsView(tk.Frame):
         ysb.grid(row=0, column=1, sticky="ns")
         self.tbl.configure(yscrollcommand=ysb.set)
 
-        # ── Column headings & alignment (C-fix) ───────────────────────────────
-        #   Money columns   → right ("e")
-        #   Status/Payment  → center
-        #   Dates           → center
-        #   ID/Items        → center
-        #   Names           → left ("w")
-
         # (id, heading, width, anchor, stretch, minwidth)
         col_cfg = [
-            ("id",      "ID",       65, "center", False,  45),
-            ("payment", "PAYMENT", 140, "w",      False,  90),
-            ("paid",    "PAID",    110, "e",      False,  80),
-            ("change",  "CHANGE",  100, "e",      False,  80),
-            ("items",   "ITEMS",    60, "center", False,  40),
-            ("status",  "STATUS",  110, "center", False,  80),
-            ("total",   "TOTAL",   120, "e",      False,  90),
-            ("start",   "START",   180, "center", True,  120),
-            ("end",     "END",     160, "center", False,  80),
-            ("details", "",         60, "center", False,  40),
+            ("id",      "ID",        65, "center", False,  45),
+            ("payment", "PAYMENT",  140, "w",      False,  90),
+            ("cashier", "CASHIER",  120, "w",      False,  80),
+            ("customer","CUSTOMER", 160, "w",      False, 100),
+            ("paid",    "PAID",     110, "e",      False,  80),
+            ("change",  "CHANGE",   100, "e",      False,  80),
+            ("items",   "ITEMS",     60, "center", False,  40),
+            ("status",  "STATUS",   110, "center", False,  80),
+            ("total",   "TOTAL",    120, "e",      False,  90),
+            ("start",   "START",    180, "center", True,  120),
+            ("end",     "END",      160, "center", False,  80),
+            ("details", "",          60, "center", False,  40),
         ]
 
         for cid, hdr, width, anchor, stretch, minw in col_cfg:
             self.tbl.heading(cid, text=hdr, anchor="center")
             self.tbl.column(cid, width=width, anchor=anchor, stretch=stretch, minwidth=minw)
 
-        # Tags ONLY change background/foreground — font must be set explicitly so
-        # the ttk theme cannot override it and cause misaligned row heights.
         _row_font = ("Segoe UI", 10)
         _row_fg   = THEME["text"]
-        self.tbl.tag_configure("top_sale",       background="#dff6ef", foreground=_row_fg, font=_row_font)
-        self.tbl.tag_configure("latest_sale",    background="#e9efff", foreground=_row_fg, font=_row_font)
-        self.tbl.tag_configure("top_and_latest", background="#d7f0ff", foreground=_row_fg, font=_row_font)
 
-        self.tbl.bind("<Double-Button-1>", lambda _e: self.open_selected())
-        self.tbl.bind("<Return>",          lambda _e: self.open_selected())
+        # ── Status row tags ───────────────────────────────────────────────────
+        # Subtle tint + distinct foreground — entire row is tinted so the eye
+        # can quickly spot Pending/Cancelled without the status column needing
+        # to do all the work.
+        # Completed → near-white (majority; neutral to avoid fatigue)
+        # Pending   → warm amber tint + amber text  (needs attention)
+        # Cancelled → clear red tint + red text     (voided; NOT pink)
+        self.tbl.tag_configure("row_completed",
+                               background="#FAFFFE", foreground=_row_fg,
+                               font=_row_font)
+        self.tbl.tag_configure("row_pending",
+                               background="#FFFBEB", foreground="#92400E",
+                               font=("Segoe UI", 10, "bold"))
+        self.tbl.tag_configure("row_cancelled",
+                               background="#FEF2F2", foreground="#991B1B",
+                               font=_row_font)
+
+        # ── Highlight tags ────────────────────────────────────────────────────
+        # Subtle — should not conflict with status colors or overpower the table.
+        # Highest Sale → very light gold/yellow
+        # Latest Order → very light blue accent
+        self.tbl.tag_configure("top_sale",       background="#FEFCE8", foreground=_row_fg, font=("Segoe UI", 10, "bold"))
+        self.tbl.tag_configure("latest_sale",    background="#EFF6FF", foreground=_row_fg, font=_row_font)
+        self.tbl.tag_configure("top_and_latest", background="#FEF9C3", foreground=_row_fg, font=("Segoe UI", 10, "bold"))
+
+        self.tbl.bind("<Double-Button-1>",  lambda _e: self.open_selected())
+        self.tbl.bind("<Return>",           lambda _e: self.open_selected())
+        self.tbl.bind("<ButtonRelease-1>",  self._on_tbl_click)
+
+        # ── Bottom action bar ─────────────────────────────────────────────────
+        action_bar = tk.Frame(
+            table_card, bg=THEME["panel2"],
+            highlightthickness=1, highlightbackground=THEME["border"],
+        )
+        action_bar.grid(row=1, column=0, columnspan=2, sticky="ew")
+        action_bar.columnconfigure(0, weight=1)
+
+        self._count_var = tk.StringVar(value="")
+        tk.Label(
+            action_bar, textvariable=self._count_var,
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+        ).grid(row=0, column=0, sticky="w", padx=14, pady=7)
+
+        tk.Button(
+            action_bar, text="View Details  ▶",
+            bg=THEME["brown"], fg="white",
+            activebackground=THEME["brown_dark"], activeforeground="white",
+            bd=0, padx=16, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"),
+            command=self._open_selected_from_btn,
+        ).grid(row=0, column=1, sticky="e", padx=12, pady=6)
 
     # ── data ──────────────────────────────────────────────────────────────────
+
+    # Badge-style display labels for the STATUS column (display only — DB values unchanged)
+    _STATUS_BADGE: dict[str, str] = {
+        "completed": "✔  Completed",
+        "pending":   "◉  Pending",
+        "cancelled": "✕  Cancelled",
+    }
 
     def refresh(self):
         for iid in self.tbl.get_children():
@@ -554,14 +607,42 @@ class TransactionsView(tk.Frame):
         for r in rows:
             oid = int(r["order_id"])
 
-            if top_id == oid and latest_id == oid:
-                tag = ("top_and_latest",)
-            elif top_id == oid:
-                tag = ("top_sale",)
-            elif latest_id == oid:
-                tag = ("latest_sale",)
+            # ── Status-based base color (applied first; lower priority) ────────
+            status_str = str(r["status"] or "").lower()
+            if status_str == "pending":
+                status_tag = "row_pending"
+            elif status_str == "cancelled":
+                status_tag = "row_cancelled"
             else:
-                tag = ()
+                status_tag = "row_completed"
+
+            # ── Highlight modifier (applied last; wins over base color) ────────
+            # Pending/cancelled always keep their status color so the cashier
+            # can instantly spot unpaid/voided orders regardless of rank.
+            if status_tag in ("row_pending", "row_cancelled"):
+                if top_id == oid and latest_id == oid:
+                    tag = ("top_and_latest", status_tag)
+                elif top_id == oid:
+                    tag = ("top_sale", status_tag)
+                elif latest_id == oid:
+                    tag = ("latest_sale", status_tag)
+                else:
+                    tag = (status_tag,)
+            else:
+                # Completed rows: highlight bg wins when applicable
+                if top_id == oid and latest_id == oid:
+                    tag = (status_tag, "top_and_latest")
+                elif top_id == oid:
+                    tag = (status_tag, "top_sale")
+                elif latest_id == oid:
+                    tag = (status_tag, "latest_sale")
+                else:
+                    tag = (status_tag,)
+
+            end_val = str(r["end_dt"] or "")   # Never display literal "None"
+
+            raw_status = str(r["status"] or "")
+            badge_status = self._STATUS_BADGE.get(raw_status.lower(), raw_status)
 
             self.tbl.insert(
                 "", tk.END,
@@ -570,16 +651,36 @@ class TransactionsView(tk.Frame):
                 values=(
                     oid,
                     str(r["payment_method"] or ""),
+                    str(r["cashier_username"] or "Unknown"),
+                    str(r["customer_name"] or ""),
                     money(r["amount_paid"]),
                     money(r["change_due"]),
                     int(r["items_count"]),
-                    str(r["status"] or ""),
+                    badge_status,
                     money(r["total"]),
                     str(r["start_dt"] or ""),
-                    str(r["end_dt"]   or ""),   # None → "" (never show literal "None")
-                    "View",
+                    end_val,
+                    "View ▶",
                 ),
             )
+
+        n = len(rows)
+        if hasattr(self, "_count_var"):
+            self._count_var.set(f"{n} transaction{'s' if n != 1 else ''} shown")
+
+    def _on_tbl_click(self, event: tk.Event) -> None:
+        """Open transaction details when the View column cell is clicked."""
+        region = self.tbl.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        col_id = self.tbl.identify_column(event.x)
+        cols = self.tbl["columns"]
+        try:
+            idx = int(col_id.lstrip("#")) - 1
+            if cols[idx] == "details":
+                self.open_selected()
+        except (ValueError, IndexError):
+            pass
 
     def open_selected(self):
         sel = self.tbl.selection()
@@ -588,12 +689,22 @@ class TransactionsView(tk.Frame):
         oid = int(sel[0])
         TransactionDetailsDialog(self, self.db, oid, on_refresh=self.refresh)
 
+    def _open_selected_from_btn(self):
+        """Called by the View Details button — shows a message if nothing is selected."""
+        if not self.tbl.selection():
+            messagebox.showinfo(
+                "No Selection",
+                "Select a transaction row first, then click View Details.",
+            )
+            return
+        self.open_selected()
+
 
 # ── TRANSACTION DETAILS DIALOG ────────────────────────────────────────────────
 
 class TransactionDetailsDialog(tk.Toplevel):
     MAX_COLLAPSED_ROWS = 5
-    SCROLL_SPEED_UNITS = 10
+    SCROLL_SPEED_UNITS = 3
 
     def __init__(self, parent: tk.Widget, db: Database, order_id: int, on_refresh=None):
         super().__init__(parent)
@@ -741,7 +852,8 @@ class TransactionDetailsDialog(tk.Toplevel):
             ).pack(side="left")
 
         info_line("Order Start:", str(data["start_dt"]))
-        info_line("Order End:",   str(data["end_dt"]))
+        info_line("Order End:",   str(data["end_dt"] or ""))
+        info_line("Cashier:",     str(data["cashier_username"]))
         info_line("Customer:",    str(data["customer_name"]), bold_val=True)
         info_line("Payment:",     str(data["payment_method"]))
 
@@ -1058,9 +1170,24 @@ class ResolveDialog(tk.Toplevel):
         self.destroy()
 
     def _cancel(self):
-        if not messagebox.askyesno("Cancel", "Cancel this transaction?"):
+        confirmed = messagebox.askyesno(
+            "Cancel Transaction",
+            f"Cancel order #{self.order_id}?\n\n"
+            "• The order will be marked as Cancelled.\n"
+            "• Stock for all items will be restored.\n\n"
+            "This action cannot be undone.",
+            icon="warning",
+        )
+        if not confirmed:
             return
-        self.orders.cancel_order(self.order_id)
+        try:
+            self.orders.cancel_order(self.order_id)
+        except Exception as e:
+            messagebox.showerror(
+                "Cancel Failed",
+                f"Could not cancel order #{self.order_id}.\n\n{e}",
+            )
+            return
         if self.on_done:
             self.on_done()
         self.destroy()

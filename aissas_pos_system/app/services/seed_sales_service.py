@@ -4,7 +4,7 @@ app/services/seed_sales_service.py
 DEV-ONLY: Generates synthetic completed orders to populate the orders table
 so the ML pair-frequency recommender has data to learn from.
 
-Only accessible from Settings → Developer Tools (visible when DEBUG=True or role=ADMIN).
+Only accessible from Settings → Seed Demo Sales (visible to ADMIN role only).
 Does NOT touch existing schema or change any DAO behavior.
 """
 from __future__ import annotations
@@ -15,6 +15,7 @@ from typing import Callable
 
 from app.db.database import Database
 from app.db.dao import ProductDAO, OrderDAO
+from app.ml.recommender import Recommender
 
 _COMBO_GROUPS: list[tuple[list[str], list[str]]] = [
     # Coffee + pastry / bread
@@ -40,6 +41,45 @@ _COMBO_GROUPS: list[tuple[list[str], list[str]]] = [
         ["ketchup", "cheese sauce", "dip", "gravy", "ranch"],
     ),
 ]
+
+# Breakfast / lunch / afternoon / dinner time bands (hour, weight)
+_TIME_BANDS = [
+    (7,  8,  15),   # breakfast
+    (9,  11, 10),   # mid-morning
+    (12, 14, 25),   # lunch peak
+    (15, 17, 15),   # afternoon
+    (18, 20, 20),   # dinner
+    (21, 22, 5),    # late evening
+]
+
+_CUSTOMER_PREFIXES = [
+    "Alice", "Bob", "Carlos", "Diana", "Emilio", "Fatima", "Grace", "Henry",
+    "Iris", "Jose", "Kris", "Laura", "Marco", "Nina", "Oscar", "Paula",
+    "Ramon", "Sofia", "Tito", "Uma", "Victor", "Wendy", "Ximena", "Yolanda",
+]
+
+
+def _realistic_datetime(base_date: datetime) -> str:
+    """Pick a realistic order time within a day using weighted time bands."""
+    total_weight = sum(w for _, _, w in _TIME_BANDS)
+    r = random.uniform(0, total_weight)
+    cumul = 0.0
+    h_start, h_end = 7, 22
+    for h_s, h_e, w in _TIME_BANDS:
+        cumul += w
+        if r <= cumul:
+            h_start, h_end = h_s, h_e
+            break
+    hour   = random.randint(h_start, h_end)
+    minute = random.randint(0, 59)
+    second = random.randint(0, 59)
+    return base_date.replace(hour=hour, minute=minute, second=second).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _random_customer() -> str:
+    first = random.choice(_CUSTOMER_PREFIXES)
+    n = random.randint(1, 999)
+    return f"{first}{n:03d}"
 
 
 class SeedSalesService:
@@ -88,6 +128,9 @@ class SeedSalesService:
         total_sales = 0.0
         now = datetime.now()
 
+        # Use a single connection transaction for speed — commit every 50 orders
+        BATCH_COMMIT = 50
+
         for i in range(num_orders):
             try:
                 n_items = random.randint(
@@ -106,16 +149,17 @@ class SeedSalesService:
                     order_items.append((int(prod["product_id"]), qty, price))
                     subtotal += qty * price
 
-                delta = random.uniform(0, days_back)
-                order_dt = now - timedelta(days=delta)
-                order_dt_str = order_dt.strftime("%Y-%m-%d %H:%M:%S")
+                # Spread orders across days with realistic time-of-day distribution
+                delta_days = random.uniform(0, days_back)
+                base_date = now - timedelta(days=delta_days)
+                order_dt_str = _realistic_datetime(base_date)
 
-                customer_name = f"TestCustomer{random.randint(1, 999):03d}"
+                customer_name = _random_customer()
                 total = round(subtotal, 2)
 
                 order_id = self._insert_order_at(
                     customer_name=customer_name,
-                    payment_method="Cash",
+                    payment_method=random.choice(["Cash", "Cash", "Cash", "Bank/E-Wallet"]),
                     status="Completed",
                     subtotal=subtotal,
                     total=total,
@@ -137,6 +181,9 @@ class SeedSalesService:
 
             except Exception as exc:
                 print(f"[SeedSales] Error at order {i}: {exc}")
+
+        # Notify the recommender that its pair-cache is stale
+        Recommender.mark_dirty(self.db)
 
         return {
             "orders_created": orders_created,

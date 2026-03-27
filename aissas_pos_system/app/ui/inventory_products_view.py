@@ -89,8 +89,8 @@ class InventoryProductsView(tk.Frame):
         tk.Button(
             title_row,
             text="＋  Create Product",
-            bg="#3b5bfd", fg="white",
-            activebackground="#2f4de0", activeforeground="white",
+            bg=THEME["brown"], fg="white",
+            activebackground=THEME["brown_dark"], activeforeground="white",
             bd=0,
             padx=ui_scale.s(14), pady=ui_scale.s(8),
             cursor="hand2",

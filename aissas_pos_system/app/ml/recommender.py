@@ -27,9 +27,13 @@ from app.db.dao import OrderDAO, ProductDAO
 
 PAIR_THRESHOLD = 10
 
+_META_DIRTY_KEY = "recommender_dirty"
+
 
 class Recommender:
     CACHE_TTL_SECONDS: float = 300.0
+
+    _ORDER_COUNT_TTL: float = 60.0  # seconds to cache completed order count
 
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -40,14 +44,62 @@ class Recommender:
         self._cache_time: float = 0.0
         self._name_cache: Dict[int, str] = {}
         self._price_cache: Dict[int, float] = {}
+        self._completed_count: int = -1
+        self._completed_count_time: float = 0.0
 
     def invalidate_cache(self) -> None:
         self._pair_cache = None
         self._cache_time = 0.0
         self._name_cache.clear()
         self._price_cache.clear()
+        self._completed_count = -1
+        self._completed_count_time = 0.0
+
+    def _get_completed_order_count(self) -> int:
+        """Return completed order count, re-querying at most once per 60 s."""
+        now = time.monotonic()
+        if (self._completed_count >= 0
+                and now - self._completed_count_time < self._ORDER_COUNT_TTL):
+            return self._completed_count
+        self._completed_count = self.order_dao.count_by_status("Completed")
+        self._completed_count_time = now
+        return self._completed_count
+
+    @staticmethod
+    def mark_dirty(db: Database) -> None:
+        """Write a dirty flag to the DB so any Recommender instance self-invalidates."""
+        try:
+            db.execute(
+                "INSERT INTO app_meta(key, value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
+                (_META_DIRTY_KEY, str(time.monotonic())),
+            )
+        except Exception:
+            pass
+
+    def _check_and_clear_dirty(self) -> bool:
+        """Return True (and clear flag) if the DB dirty flag is newer than our cache."""
+        try:
+            r = self.db.fetchone(
+                "SELECT value FROM app_meta WHERE key=?;", (_META_DIRTY_KEY,)
+            )
+            if r is None:
+                return False
+            flag_val = float(r["value"])
+            if flag_val > self._cache_time:
+                # Clear the flag and force cache rebuild
+                self.db.execute(
+                    "DELETE FROM app_meta WHERE key=?;", (_META_DIRTY_KEY,)
+                )
+                self.invalidate_cache()
+                return True
+        except Exception:
+            pass
+        return False
 
     def _is_cache_fresh(self) -> bool:
+        # Check DB dirty flag first — seed service sets this
+        self._check_and_clear_dirty()
         return (
             self._pair_cache is not None
             and (time.monotonic() - self._cache_time) < self.CACHE_TTL_SECONDS
@@ -150,7 +202,7 @@ class Recommender:
             return []
 
         exclude = set(current_product_ids)
-        completed_orders = self.order_dao.count_by_status("Completed")
+        completed_orders = self._get_completed_order_count()
 
         if completed_orders < PAIR_THRESHOLD:
             result: List[int] = []

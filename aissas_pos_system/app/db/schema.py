@@ -105,15 +105,27 @@ ALL_SCHEMAS: list[str] = [
         timestamp TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     """,
+
+    # ── App-level key-value meta (used for recommender dirty flag, etc.) ──────
+    """
+    CREATE TABLE IF NOT EXISTS app_meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT ''
+    );
+    """,
 ]
 
 INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);",
     "CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);",
+    # Speeds up WHERE active=1 scans (list_all_active, count_active, etc.)
+    "CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);",
     "CREATE INDEX IF NOT EXISTS idx_drafts_created_at ON drafts(created_at);",
     "CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);",
     "CREATE INDEX IF NOT EXISTS idx_orders_datetime ON orders(datetime);",
     "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);",
+    # Speeds up every get_order_items() call and order-item joins
+    "CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);",
     "CREATE INDEX IF NOT EXISTS idx_role_perms ON role_permissions(role, permission);",
     "CREATE INDEX IF NOT EXISTS idx_audit_logs_ts ON audit_logs(timestamp);",
 ]

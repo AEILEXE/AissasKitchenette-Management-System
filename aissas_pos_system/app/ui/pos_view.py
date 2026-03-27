@@ -10,7 +10,8 @@ from app.config import THEME
 from app.db.database import Database
 from app.db.dao import CategoryDAO, ProductDAO, DraftDAO, OrderDAO
 from app.services.auth_service import AuthService
-from app.ui.dialogs import DiscountDialog
+from app.services.pos_service import POSService
+from app.ui.dialogs import DiscountDialog, DraftTitleDialog
 from app.ui import ui_scale
 from app.utils import money
 from app.ml.recommender import Recommender
@@ -30,72 +31,8 @@ def _truncate_text(text: str, max_len: int = 20, suffix: str = "…") -> str:
     return text[:max_len].rstrip() + suffix
 
 
-class SimpleDraftTitleDialog(tk.Toplevel):
-    def __init__(
-        self,
-        parent: tk.Widget,
-        title: str = "Save order as draft",
-        prompt: str = "Draft title (example: Table 3 / Takeout):",
-    ):
-        super().__init__(parent)
-        self.configure(bg=THEME["bg"])
-        self.title(title)
-        self.resizable(False, False)
-        self.transient(parent)
-        self.grab_set()
-
-        self.result: str | None = None
-        self.var = tk.StringVar()
-
-        wrap = tk.Frame(self, bg=THEME["bg"])
-        wrap.pack(fill="both", expand=True, padx=18, pady=16)
-
-        tk.Label(wrap, text=prompt, bg=THEME["bg"], fg=THEME["text"], font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        ent = tk.Entry(wrap, textvariable=self.var, bd=0, bg=THEME["panel2"], fg=THEME["text"])
-        ent.pack(fill="x", pady=(8, 14), ipady=10)
-        ent.focus_set()
-
-        btns = tk.Frame(wrap, bg=THEME["bg"])
-        btns.pack(fill="x")
-
-        tk.Button(
-            btns,
-            text="Confirm",
-            bg=THEME.get("brown", "#6b4a3a"),
-            fg="white",
-            bd=0,
-            padx=18,
-            pady=10,
-            cursor="hand2",
-            command=self._ok,
-        ).pack(side="left")
-
-        tk.Button(
-            btns,
-            text="Close",
-            bg=THEME["panel2"],
-            fg=THEME["text"],
-            bd=0,
-            padx=18,
-            pady=10,
-            cursor="hand2",
-            command=self.destroy,
-        ).pack(side="right")
-
-        self.bind("<Return>", lambda _e: self._ok(), add="+")
-        self.bind("<Escape>", lambda _e: self.destroy(), add="+")
-
-    def _ok(self):
-        val = self.var.get().strip()
-        if not val:
-            messagebox.showerror("Draft title", "Please enter a draft title.")
-            return
-        self.result = val
-        self.destroy()
-
-
 class POSView(tk.Frame):
-    SCROLL_SPEED_UNITS = 10
+    SCROLL_SPEED_UNITS = 3
 
     def __init__(self, parent: tk.Frame, db: Database, auth: AuthService):
         super().__init__(parent, bg=THEME["bg"])
@@ -108,6 +45,7 @@ class POSView(tk.Frame):
         self.order_dao = OrderDAO(db)
 
         self.cart: dict[int, tuple[str, float, int, str]] = {}
+        self._product_stock: dict[int, int] = {}   # pid → known stock level from last card render
         self.discount_mode: str = "amount"
         self.discount_value: float = 0.0
 
@@ -116,6 +54,9 @@ class POSView(tk.Frame):
         self._selected_category: str = "All"
 
         self._products_cache = []
+        self._all_products_cache: list = []      # full DB result for current category
+        self._all_products_cache_cat: str = ""   # which category is cached
+        self._search_after: int | None = None    # debounce timer for search
         self._product_card_widgets: list[tk.Frame] = []
         self._prod_resize_after: int | None = None
 
@@ -129,6 +70,7 @@ class POSView(tk.Frame):
         # Unified after() tracking — all IDs stored here; _destroyed prevents late callbacks
         self._after_ids: set[int] = set()
         self._destroyed: bool = False
+        self._building: bool = True
         self._suggest_after: int | None = None
         self._global_click_id: str | None = None
 
@@ -146,6 +88,7 @@ class POSView(tk.Frame):
         self._suggestions_frame: tk.Frame | None = None
 
         self._build()
+        self._building = False
         self.search_var.set("")
         self._after(50, self._refresh_categories)
         self._after(100, self._refresh_products)
@@ -156,6 +99,7 @@ class POSView(tk.Frame):
     def destroy(self) -> None:
         """Cancel all pending after() jobs and unbind global events before destroy."""
         self._destroyed = True
+        self._building = False
         for aid in list(self._after_ids):
             try:
                 self.after_cancel(aid)
@@ -192,7 +136,7 @@ class POSView(tk.Frame):
 
     def _after(self, ms: int, fn, *a) -> int | None:
         """Schedule fn(*a) in ms milliseconds; auto-tracks ID for safe cleanup."""
-        if self._destroyed or not self.winfo_exists():
+        if self._destroyed or self._building or not self.winfo_exists():
             return None
         def _cb():
             self._after_ids.discard(aid)
@@ -435,7 +379,7 @@ class POSView(tk.Frame):
         search.config(fg=THEME["muted"])
         search.bind("<FocusIn>", lambda _e: self._clear_placeholder(search, "Search…"), add="+")
         search.bind("<FocusOut>", lambda _e: self._restore_placeholder(search, "Search…"), add="+")
-        search.bind("<KeyRelease>", lambda _e: self._refresh_products(), add="+")
+        search.bind("<KeyRelease>", lambda _e: self._debounced_search(), add="+")
 
         prod_panel = tk.Frame(mid, bg=THEME["panel"])
         prod_panel.pack(fill="both", expand=True, padx=8, pady=(0, 10))
@@ -543,21 +487,63 @@ class POSView(tk.Frame):
         # Drafts panel
         self.drafts_section = tk.Frame(right, bg=THEME["panel"])
 
-        tk.Label(self.drafts_section, text="Draft orders", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=14, pady=(6, 6))
-        self.draft_list = tk.Listbox(self.drafts_section, height=6, bd=0, highlightthickness=0, bg=THEME["panel2"], fg=THEME["text"], activestyle="none")
-        self.draft_list.pack(fill="x", padx=14)
+        # Header row with label
+        _dh = tk.Frame(self.drafts_section, bg=THEME["panel"])
+        _dh.pack(fill="x", padx=14, pady=(8, 4))
+        tk.Label(
+            _dh, text="Draft Orders",
+            bg=THEME["panel"], fg=THEME["text"],
+            font=("Segoe UI", 11, "bold"),
+        ).pack(side="left")
+
+        # Thin separator
+        tk.Frame(self.drafts_section, bg=THEME["border"], height=1).pack(fill="x", padx=14)
+
+        # Draft listbox — taller, better styled
+        self.draft_list = tk.Listbox(
+            self.drafts_section,
+            height=5,
+            bd=0, highlightthickness=0,
+            bg=THEME["panel2"], fg=THEME["text"],
+            selectbackground=THEME["select_bg"],
+            selectforeground=THEME["select_fg"],
+            activestyle="none",
+            font=("Segoe UI", 10),
+        )
+        self.draft_list.pack(fill="x", padx=14, pady=(6, 0))
         self.draft_list.bind("<Double-Button-1>", lambda _e: self._load_selected_draft(), add="+")
         self.draft_list.bind("<MouseWheel>", self._draft_mousewheel, add="+")
 
+        # Action buttons — Load is primary, Delete/Delete All are secondary/danger
         draft_btns = tk.Frame(self.drafts_section, bg=THEME["panel"])
         draft_btns.pack(fill="x", padx=14, pady=(8, 12))
-        draft_btns.columnconfigure(0, weight=1, uniform="dbtn")
-        draft_btns.columnconfigure(1, weight=1, uniform="dbtn")
-        draft_btns.columnconfigure(2, weight=1, uniform="dbtn")
 
-        tk.Button(draft_btns, text="Load", command=self._load_selected_draft, bg=THEME["panel2"], fg=THEME["text"], bd=0, padx=6, pady=6, font=("Segoe UI", 9, "bold"), cursor="hand2").grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        tk.Button(draft_btns, text="Delete", command=self._delete_selected_draft, bg=THEME["danger"], fg="white", bd=0, padx=6, pady=6, font=("Segoe UI", 9, "bold"), cursor="hand2").grid(row=0, column=1, sticky="ew", padx=6)
-        tk.Button(draft_btns, text="Delete all", command=self._delete_all_drafts, bg=THEME["danger"], fg="white", bd=0, padx=6, pady=6, font=("Segoe UI", 9, "bold"), cursor="hand2").grid(row=0, column=2, sticky="ew", padx=(6, 0))
+        tk.Button(
+            draft_btns, text="Load Draft",
+            command=self._load_selected_draft,
+            bg=THEME["brown"], fg="white",
+            bd=0, padx=10, pady=7,
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2",
+        ).pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        tk.Button(
+            draft_btns, text="Delete",
+            command=self._delete_selected_draft,
+            bg=THEME["danger"], fg="white",
+            bd=0, padx=10, pady=7,
+            font=("Segoe UI", 9),
+            cursor="hand2",
+        ).pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        tk.Button(
+            draft_btns, text="Delete All",
+            command=self._delete_all_drafts,
+            bg=THEME["panel2"], fg=THEME["danger"],
+            bd=0, padx=10, pady=7,
+            font=("Segoe UI", 9),
+            cursor="hand2",
+        ).pack(side="left", fill="x", expand=True)
 
     def _on_prod_canvas_configure(self, e):
         try:
@@ -616,43 +602,60 @@ class POSView(tk.Frame):
 
     def _on_category_click(self, name: str) -> None:
         self._set_active_category_btn(name)
+        # Invalidate the in-memory product cache so next _refresh_products re-queries DB
+        self._all_products_cache = []
+        self._all_products_cache_cat = ""
         self._refresh_products()
 
     # Products
-    def _filter_products(self, search_text: str = ""):
-        q = (search_text or "").strip().lower()
-        if not q or q in ["search", "search…"]:
-            q = ""
+    _SEARCH_DEBOUNCE_MS = 150  # ms to wait after last keystroke before filtering
+
+    def _debounced_search(self) -> None:
+        """Delay product filtering until the user stops typing."""
+        self._cancel_after(self._search_after)
+        self._search_after = self._after(self._SEARCH_DEBOUNCE_MS, self._refresh_products)
+
+    def _load_products_for_category(self) -> None:
+        """Query DB once for the current category; result stored in _all_products_cache."""
         cat_name = self._selected_category or "All"
         try:
             if cat_name == "All":
-                rows = self.prod_dao.list_all_active()
+                self._all_products_cache = self.prod_dao.list_all_active()
             else:
                 c = self.cat_dao.get_by_name(cat_name)
-                rows = self.prod_dao.list_by_category(int(c["category_id"])) if c else []
+                self._all_products_cache = (
+                    self.prod_dao.list_by_category(int(c["category_id"])) if c else []
+                )
+            self._all_products_cache_cat = cat_name
         except Exception as e:
             print("Product query failed:", e)
             messagebox.showerror("DB Error", str(e))
-            return []
-        out = []
-        for r in rows:
-            name = str(r["name"]).lower()
-            if q and q not in name:
-                continue
-            out.append(r)
-        return out
+            self._all_products_cache = []
+
+    def _filter_products(self, search_text: str = ""):
+        """Filter _all_products_cache in-memory — zero DB calls."""
+        q = (search_text or "").strip().lower()
+        if not q or q in ["search", "search…"]:
+            return list(self._all_products_cache)
+        return [r for r in self._all_products_cache if q in str(r["name"]).lower()]
 
     def _calc_product_cols(self) -> int:
         width = max(1, int(self.prod_canvas.winfo_width()))
         return 3 if width >= 860 else 2
 
     def _debounced_relayout(self) -> None:
+        if self._destroyed or self._building or not self.winfo_exists():
+            return
         self._cancel_after(self._prod_resize_after)
         self._prod_resize_after = self._after(80, self._relayout_products)
 
     def _refresh_products(self):
-        if self._destroyed or not self.winfo_exists():
+        if self._destroyed or self._building or not self.winfo_exists():
             return
+        self._search_after = None
+        # Load from DB only when cache is empty or stale (category changed)
+        if not self._all_products_cache:
+            self._load_products_for_category()
         search_text = self.search_var.get().strip()
         if search_text == "Search…":
             search_text = ""
@@ -664,7 +667,7 @@ class POSView(tk.Frame):
 
     def _start_batch_load(self) -> None:
         """Cancel any in-flight batch, clear the grid, start fresh."""
-        if not self.winfo_exists():
+        if self._destroyed or self._building or not self.winfo_exists():
             return
 
         self._cancel_after(self._batch_after)
@@ -697,7 +700,7 @@ class POSView(tk.Frame):
 
     def _render_product_batch(self) -> None:
         self._batch_after = None
-        if self._destroyed or not self.winfo_exists():
+        if self._destroyed or self._building or not self.winfo_exists():
             return
 
         if self._loading_lbl is not None:
@@ -723,7 +726,7 @@ class POSView(tk.Frame):
 
     def _relayout_products(self, rebuild_cards: bool = False) -> None:
         """Called by debounced resize — just re-grid existing cards."""
-        if not self.winfo_exists():
+        if self._destroyed or self._building or not self.winfo_exists():
             return
         self._do_product_grid_layout()
 
@@ -756,7 +759,6 @@ class POSView(tk.Frame):
         for r in range((len(cards) + cols - 1) // cols):
             self.prod_inner.rowconfigure(r, weight=1)
 
-        self.prod_inner.update_idletasks()
         self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
 
     # ✅ Entire card clickable — _bind_click() applied to frame + all child labels
@@ -775,7 +777,7 @@ class POSView(tk.Frame):
 
         def _bind_click(w: tk.Widget):
             if is_available:
-                w.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price), add="+")
+                w.bind("<Button-1>", lambda _e: self._add_to_cart(pid, name, price, stock), add="+")
 
         _bind_click(card)
 
@@ -828,7 +830,7 @@ class POSView(tk.Frame):
         if is_available:
             tk.Button(
                 card, text="Add",
-                command=lambda: self._add_to_cart(pid, name, price),
+                command=lambda: self._add_to_cart(pid, name, price, stock),
                 bg=THEME.get("brown", "#6b4a3a"), fg="white",
                 bd=0, padx=12, pady=6, cursor="hand2",
             ).grid(row=2, column=1, sticky="w", padx=(10, 12), pady=(8, 12))
@@ -839,9 +841,40 @@ class POSView(tk.Frame):
         return card
 
     # Cart
-    def _add_to_cart(self, pid: int, name: str, price: float):
+    def _get_stock(self, pid: int) -> int:
+        """Return the last-known stock for pid (cache → DAO). 0 = unknown/unavailable."""
+        if pid in self._product_stock:
+            return self._product_stock[pid]
+        # Fallback: scan the already-loaded product cache
+        for r in self._all_products_cache:
+            if int(r["product_id"]) == pid:
+                val = int(_row_get(r, "stock_qty", 0))
+                self._product_stock[pid] = val
+                return val
+        # Last resort: hit the DB
+        try:
+            prod = self.prod_dao.get(pid)
+            if prod is not None:
+                self._product_stock[pid] = prod.stock_qty
+                return prod.stock_qty
+        except Exception:
+            pass
+        return 0
+
+    def _add_to_cart(self, pid: int, name: str, price: float, stock: int = 0):
+        # Store the fresh stock value whenever the product card provides it
+        if stock > 0:
+            self._product_stock[pid] = stock
+        available = self._get_stock(pid)
         if pid in self.cart:
             n, p, qty, note = self.cart[pid]
+            if available > 0 and qty >= available:
+                messagebox.showwarning(
+                    "Stock limit",
+                    f"Only {available} unit(s) of '{n}' available.\n"
+                    "Cannot add more to the cart.",
+                )
+                return
             self.cart[pid] = (n, p, qty + 1, note)
         else:
             self.cart[pid] = (name, price, 1, "")
@@ -856,11 +889,19 @@ class POSView(tk.Frame):
         if pid not in self.cart:
             return
         n, p, qty, note = self.cart[pid]
-        qty = qty + delta
-        if qty <= 0:
+        new_qty = qty + delta
+        if delta > 0:
+            available = self._get_stock(pid)
+            if available > 0 and new_qty > available:
+                messagebox.showwarning(
+                    "Stock limit",
+                    f"Only {available} unit(s) of '{n}' available.",
+                )
+                return
+        if new_qty <= 0:
             del self.cart[pid]
         else:
-            self.cart[pid] = (n, p, qty, note)
+            self.cart[pid] = (n, p, new_qty, note)
         self._refresh_cart()
 
     def _calc_totals(self):
@@ -996,10 +1037,18 @@ class POSView(tk.Frame):
         else:
             self._set_discount_next_to_total(None)
 
-        self.cart_tbl.update_idletasks()
-        bbox = self.cart_canvas.bbox("all")
-        if bbox:
-            self.cart_canvas.configure(scrollregion=bbox)
+        # Defer scrollregion update — avoids a forced synchronous layout pass on
+        # every cart change (add item, qty +/-, remove). after(0) runs at the
+        # next idle tick after Tkinter has already processed the widget geometry.
+        def _update_scroll():
+            try:
+                if self.cart_canvas.winfo_exists():
+                    bbox = self.cart_canvas.bbox("all")
+                    if bbox:
+                        self.cart_canvas.configure(scrollregion=bbox)
+            except Exception:
+                pass
+        self.after(0, _update_scroll)
 
         # Refresh ML suggestions after every cart change (tracked for cancellation)
         self._cancel_after(self._suggest_after)
@@ -1234,7 +1283,7 @@ class POSView(tk.Frame):
             messagebox.showinfo("Draft", "No items to save.")
             return
 
-        dlg = SimpleDraftTitleDialog(self)
+        dlg = DraftTitleDialog(self)
         self.wait_window(dlg)
         if not dlg.result:
             return
@@ -1278,6 +1327,7 @@ class POSView(tk.Frame):
         self.discount_value = float(payload.get("discount_value", 0.0))
 
         self.cart.clear()
+        self._product_stock.clear()
         for it in payload.get("cart", []):
             pid = int(it.get("product_id", 0))
             name = str(it.get("name", ""))
@@ -1287,6 +1337,17 @@ class POSView(tk.Frame):
             if pid:
                 self.cart[pid] = (name, price, qty, note)
 
+        # Check stock for each restored item and warn if any qty exceeds current stock
+        stock_warnings: list[str] = []
+        for pid, (name, price, qty, note) in self.cart.items():
+            available = self._get_stock(pid)
+            if available > 0:
+                self._product_stock[pid] = available
+            if 0 < available < qty:
+                stock_warnings.append(
+                    f"  \u2022 {name}: draft has {qty}, only {available} in stock"
+                )
+
         try:
             self.draft_dao.delete_draft(did)
         except Exception:
@@ -1295,6 +1356,14 @@ class POSView(tk.Frame):
         self._refresh_cart()
         self._refresh_drafts_panel()
         messagebox.showinfo("Draft loaded", f"Loaded: {d['title']}")
+
+        if stock_warnings:
+            messagebox.showwarning(
+                "Stock warning",
+                "Some items in this draft exceed current stock:\n\n"
+                + "\n".join(stock_warnings)
+                + "\n\nAdjust quantities or remove items before checking out.",
+            )
 
     def _delete_selected_draft(self):
         did = self._get_selected_draft_id()
@@ -1313,8 +1382,7 @@ class POSView(tk.Frame):
         if not messagebox.askyesno("Delete all drafts", "Delete ALL draft orders?"):
             return
         try:
-            for r in rows:
-                self.draft_dao.delete_draft(int(r["draft_id"]))
+            self.draft_dao.delete_all_drafts()  # single DELETE, single commit
             self._refresh_drafts_panel()
             messagebox.showinfo("Draft orders", "All drafts deleted.")
         except Exception as e:
@@ -1327,23 +1395,27 @@ class POSView(tk.Frame):
             return
         ConfirmOrderDialog(self, self.db, self.auth, self.cart, self.discount_mode, self.discount_value, on_done=self._checkout_done)
 
-    # ✅ FIX: cache is only invalidated when the order was actually Completed.
-    #         Pending orders do NOT update the ML pair-frequency data.
     def _checkout_done(self, cleared: bool = True, completed: bool = False):
         if cleared:
             self.cart.clear()
+            self._product_stock.clear()
             self.discount_mode = "amount"
             self.discount_value = 0.0
             self._refresh_cart()
             self._refresh_drafts_panel()
 
-            if completed and self.recommender is not None:
-                # Only invalidate when a real sale was recorded
-                self.recommender.invalidate_cache()
+        # Invalidate product cache so updated stock counts show immediately
+        self._all_products_cache = []
+        self._all_products_cache_cat = ""
+        self._after(80, self._refresh_products)
+
+        if completed and self.recommender is not None:
+            # Only invalidate ML cache for real (Completed) sales
+            self.recommender.invalidate_cache()
 
 
 class ConfirmOrderDialog(tk.Toplevel):
-    SCROLL_SPEED_UNITS = 10
+    SCROLL_SPEED_UNITS = 3
 
     def __init__(
         self,
@@ -1359,8 +1431,7 @@ class ConfirmOrderDialog(tk.Toplevel):
         self.parent_view = parent
         self.db = db
         self.auth = auth
-        self.order_dao = OrderDAO(db)
-        self.draft_dao = DraftDAO(db)
+        self.svc = POSService(db)
 
         self.cart = dict(cart)
         self.discount_mode = discount_mode
@@ -1401,155 +1472,219 @@ class ConfirmOrderDialog(tk.Toplevel):
         f  = ui_scale.scale_font
         sp = ui_scale.s
 
-        # ── Scrollable shell ──────────────────────────────────────────────────
-        wrap = tk.Frame(self, bg=THEME["bg"])
-        wrap.pack(fill="both", expand=True)
-        wrap.rowconfigure(0, weight=1)
-        wrap.columnconfigure(0, weight=1)
+        subtotal, discount, tax, total = self._calc_totals()
+        self._discount_amount = discount
+        self._total_amount    = total
 
-        canvas = tk.Canvas(wrap, bg=THEME["bg"], highlightthickness=0)
-        canvas.grid(row=0, column=0, sticky="nsew")
+        # ── Landscape window, centered on screen ──────────────────────────────
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        w  = min(860, sw - 80)
+        h  = min(500, sh - 80)
+        x  = (sw - w) // 2
+        y  = max(30, (sh - h) // 2)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.minsize(680, 440)
+        self.resizable(True, True)
 
-        sb = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview,
-                           style="Thick.Vertical.TScrollbar")
-        sb.grid(row=0, column=1, sticky="ns")
-        canvas.configure(yscrollcommand=sb.set)
+        # Root: row 0 = header (fixed height), row 1 = body (expands)
+        self.rowconfigure(0, weight=0)
+        self.rowconfigure(1, weight=1)
+        self.columnconfigure(0, weight=1)
 
-        inner = tk.Frame(canvas, bg=THEME["bg"])
-        win   = canvas.create_window((0, 0), window=inner, anchor="nw")
-
-        inner.bind(
-            "<Configure>",
-            lambda _e: canvas.configure(scrollregion=canvas.bbox("all")),
-            add="+",
-        )
-        canvas.bind(
-            "<Configure>",
-            lambda e: canvas.itemconfigure(win, width=e.width),
-            add="+",
-        )
-
-        def _mw(e):
-            canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
-            return "break"
-
-        self.bind("<MouseWheel>", _mw, add="+")
-        self.bind("<Button-4>",
-                  lambda _e: (canvas.yview_scroll(-self.SCROLL_SPEED_UNITS, "units"), "break"),
-                  add="+")
-        self.bind("<Button-5>",
-                  lambda _e: (canvas.yview_scroll(self.SCROLL_SPEED_UNITS, "units"), "break"),
-                  add="+")
-
-        # ── Dialog header ─────────────────────────────────────────────────────
-        top = tk.Frame(inner, bg=THEME["brown_dark"])
-        top.pack(fill="x")
-        top.columnconfigure(0, weight=1)
+        # ══ FULL-WIDTH HEADER ═════════════════════════════════════════════════
+        hdr = tk.Frame(self, bg=THEME["brown_dark"])
+        hdr.grid(row=0, column=0, sticky="ew")
 
         tk.Label(
-            top, text="Confirm Order",
+            hdr, text="Confirm Order",
             bg=THEME["brown_dark"], fg="white",
-            font=("Segoe UI", f(14), "bold"),
+            font=("Segoe UI", f(13), "bold"),
             anchor="w",
-        ).pack(side="left", padx=18, pady=(14, 12))
+        ).pack(side="left", padx=18, pady=12)
 
         tk.Button(
-            top, text="✕",
+            hdr, text="✕",
             bg=THEME["brown_dark"], fg="white",
             activebackground=THEME["brown"], activeforeground="white",
-            bd=0, padx=12, pady=8, cursor="hand2",
+            bd=0, padx=14, pady=6, cursor="hand2",
             font=("Segoe UI", f(11)),
             command=self.destroy,
-        ).pack(side="right", padx=8)
+        ).pack(side="right", padx=6)
 
-        # Meta info strip
-        created_str = self.created_at.strftime("%Y-%m-%d  %I:%M %p")
-        meta_bar = tk.Frame(inner, bg=THEME["bg"])
-        meta_bar.pack(fill="x", padx=18, pady=(10, 6))
+        # Meta info in header right side
+        created_str = self.created_at.strftime("%b %d %Y  %I:%M %p")
         tk.Label(
-            meta_bar,
-            text=f"Created: {created_str}   ·   By: {self.created_by_user} ({self.created_by_role})",
-            bg=THEME["bg"], fg=THEME["muted"],
+            hdr,
+            text=f"{self.created_by_user} ({self.created_by_role})  ·  {created_str}",
+            bg=THEME["brown_dark"], fg="#c9b8a8",
             font=("Segoe UI", f(8)),
-        ).pack(side="left")
+        ).pack(side="right", padx=(0, 4))
 
-        # ── Section: Order Summary ─────────────────────────────────────────────
-        self._section_label(inner, "Order Summary")
+        # ══ BODY: left column (items) | divider | right column (form) ═════════
+        body = tk.Frame(self, bg=THEME["bg"])
+        body.grid(row=1, column=0, sticky="nsew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=55, minsize=360)   # left: items
+        body.columnconfigure(1, weight=0)                 # divider
+        body.columnconfigure(2, weight=45, minsize=270)   # right: form
 
-        od_card = tk.Frame(
-            inner, bg="#ffffff",
-            highlightthickness=1, highlightbackground=THEME["border"],
-        )
-        od_card.pack(fill="x", padx=18, pady=(0, 10))
+        # Vertical divider between columns
+        tk.Frame(body, bg=THEME["border"], width=1).grid(row=0, column=1, sticky="ns")
 
-        od_hdr = tk.Frame(od_card, bg=THEME["beige"])
-        od_hdr.pack(fill="x")
+        # ── LEFT COLUMN: order items (internal scroll) ────────────────────────
+        left = tk.Frame(body, bg=THEME["bg"])
+        left.grid(row=0, column=0, sticky="nsew")
+        left.rowconfigure(1, weight=1)
+        left.columnconfigure(0, weight=1)
+
+        # Items header bar (row 0)
+        items_hdr = tk.Frame(left, bg=THEME["beige"])
+        items_hdr.grid(row=0, column=0, sticky="ew")
         tk.Label(
-            od_hdr, text="Items",
+            items_hdr, text="Order Items",
             bg=THEME["beige"], fg=THEME["text"],
             font=("Segoe UI", f(9), "bold"),
-            padx=14, pady=8,
+            padx=16, pady=9,
         ).pack(side="left")
 
         self.btn_toggle = tk.Button(
-            od_hdr, text="▸ Show",
+            items_hdr, text="▾ Hide",
             bg=THEME["beige"], fg=THEME["brown"],
-            bd=0, padx=14, pady=8, cursor="hand2",
+            bd=0, padx=14, pady=9, cursor="hand2",
             font=("Segoe UI", f(9), "bold"),
             command=self._toggle_details,
         )
         self.btn_toggle.pack(side="right")
 
-        self.details_body = tk.Frame(od_card, bg="#ffffff")
-        self.details_body.pack(fill="x", padx=12, pady=10)
+        # Scrollable items canvas (row 1, expands to fill left column)
+        items_outer = tk.Frame(
+            left, bg="#ffffff",
+            highlightthickness=1, highlightbackground=THEME["border"],
+        )
+        items_outer.grid(row=1, column=0, sticky="nsew")
+        items_outer.rowconfigure(0, weight=1)
+        items_outer.columnconfigure(0, weight=1)
 
+        items_canvas = tk.Canvas(items_outer, bg="#ffffff", highlightthickness=0)
+        items_canvas.grid(row=0, column=0, sticky="nsew")
+
+        items_sb = ttk.Scrollbar(
+            items_outer, orient="vertical", command=items_canvas.yview,
+            style="Thick.Vertical.TScrollbar",
+        )
+        items_sb.grid(row=0, column=1, sticky="ns")
+        items_canvas.configure(yscrollcommand=items_sb.set)
+
+        self.details_body = tk.Frame(items_canvas, bg="#ffffff")
+        items_win = items_canvas.create_window((0, 0), window=self.details_body, anchor="nw")
+
+        self.details_body.bind(
+            "<Configure>",
+            lambda _e: items_canvas.configure(scrollregion=items_canvas.bbox("all")),
+            add="+",
+        )
+        items_canvas.bind(
+            "<Configure>",
+            lambda e: items_canvas.itemconfigure(items_win, width=e.width),
+            add="+",
+        )
+
+        def _items_scroll(e):
+            items_canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+            return "break"
+
+        items_canvas.bind("<MouseWheel>", _items_scroll, add="+")
+        items_canvas.bind(
+            "<Button-4>",
+            lambda _e: items_canvas.yview_scroll(-self.SCROLL_SPEED_UNITS, "units"),
+            add="+",
+        )
+        items_canvas.bind(
+            "<Button-5>",
+            lambda _e: items_canvas.yview_scroll(self.SCROLL_SPEED_UNITS, "units"),
+            add="+",
+        )
+
+        # Build item rows then render
         self._details_rows = []
-        subtotal, discount, tax, total = self._calc_totals()
         for _pid, (name, price, qty, _note) in self.cart.items():
             self._details_rows.append((f"{qty}× {name}", money(qty * price)))
 
-        self._discount_amount = discount
-        self._total_amount    = total
-
+        self._details_expanded.set(True)
         self._render_details()
 
-        # ── Section: Customer Info ─────────────────────────────────────────────
-        self._section_label(inner, "Customer")
+        # ── RIGHT COLUMN: checkout form (no scroll needed) ────────────────────
+        right = tk.Frame(body, bg=THEME["panel"])
+        right.grid(row=0, column=2, sticky="nsew")
+        right.columnconfigure(0, weight=1)
 
-        cust_card = tk.Frame(
-            inner, bg=THEME["panel"],
-            highlightthickness=1, highlightbackground=THEME["border"],
-        )
-        cust_card.pack(fill="x", padx=18, pady=(0, 10))
+        pad = 18
+
+        # TOTAL bar — prominent, always at the top of the right column
+        total_bar = tk.Frame(right, bg=THEME["success"])
+        total_bar.pack(fill="x")
+        tk.Label(
+            total_bar, text="TOTAL",
+            bg=THEME["success"], fg="white",
+            font=("Segoe UI", f(9), "bold"),
+            padx=pad, pady=16,
+        ).pack(side="left")
+        tk.Label(
+            total_bar, text=money(total),
+            bg=THEME["success"], fg="white",
+            font=("Segoe UI", f(17), "bold"),
+            padx=pad, pady=16,
+        ).pack(side="right")
+
+        # Discount notice (shown only when a discount is applied)
+        if discount > 0:
+            disc_bar = tk.Frame(right, bg="#FFF3E0")
+            disc_bar.pack(fill="x")
+            tk.Label(
+                disc_bar, text="Discount applied:",
+                bg="#FFF3E0", fg=THEME["brown"],
+                font=("Segoe UI", f(8)), padx=pad, pady=5,
+            ).pack(side="left")
+            tk.Label(
+                disc_bar, text=f"−{money(discount)}",
+                bg="#FFF3E0", fg=THEME["danger"],
+                font=("Segoe UI", f(9), "bold"), padx=pad, pady=5,
+            ).pack(side="right")
+
+        # ── Customer ──────────────────────────────────────────────────────────
+        tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x", pady=(14, 0))
+        tk.Label(
+            right, text="CUSTOMER",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", f(8), "bold"),
+        ).pack(anchor="w", padx=pad, pady=(10, 2))
 
         tk.Label(
-            cust_card, text="Customer Name  (required)",
+            right, text="Customer Name  (required)",
             bg=THEME["panel"], fg=THEME["muted"],
-            font=("Segoe UI", f(9)),
-        ).pack(anchor="w", padx=14, pady=(12, 4))
+            font=("Segoe UI", f(8)),
+        ).pack(anchor="w", padx=pad, pady=(0, 3))
 
         ent_name = tk.Entry(
-            cust_card, textvariable=self.var_customer,
+            right, textvariable=self.var_customer,
             bd=0, bg=THEME["panel2"], fg=THEME["text"],
             insertbackground=THEME["text"],
             font=("Segoe UI", f(10)),
         )
-        ent_name.pack(fill="x", padx=14, ipady=sp(9), pady=(0, 14))
+        ent_name.pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 14))
         ent_name.focus_set()
 
-        # ── Section: Payment ──────────────────────────────────────────────────
-        self._section_label(inner, "Payment")
+        # ── Payment ───────────────────────────────────────────────────────────
+        tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x")
+        tk.Label(
+            right, text="PAYMENT",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", f(8), "bold"),
+        ).pack(anchor="w", padx=pad, pady=(10, 6))
 
-        pay_card = tk.Frame(
-            inner, bg=THEME["panel"],
-            highlightthickness=1, highlightbackground=THEME["border"],
-        )
-        pay_card.pack(fill="x", padx=18, pady=(0, 10))
-
-        # Radio buttons (styled)
-        radio_frame = tk.Frame(pay_card, bg=THEME["panel"])
-        radio_frame.pack(fill="x", padx=14, pady=(12, 8))
-
+        radio_frame = tk.Frame(right, bg=THEME["panel"])
+        radio_frame.pack(fill="x", padx=pad, pady=(0, 6))
         for val, label in [("Cash", "Cash"), ("Bank/E-Wallet", "Bank Transfer / E-Wallet")]:
             tk.Radiobutton(
                 radio_frame, text=label,
@@ -1558,44 +1693,92 @@ class ConfirmOrderDialog(tk.Toplevel):
                 activebackground=THEME["panel"],
                 font=("Segoe UI", f(10)),
                 selectcolor=THEME["beige"],
-            ).pack(anchor="w", pady=sp(3))
+            ).pack(anchor="w", pady=sp(4))
 
-        # Amount Paid entry
         tk.Label(
-            pay_card, text="Amount Paid",
+            right, text="Amount Paid",
             bg=THEME["panel"], fg=THEME["muted"],
-            font=("Segoe UI", f(9)),
-        ).pack(anchor="w", padx=14, pady=(6, 4))
+            font=("Segoe UI", f(8)),
+        ).pack(anchor="w", padx=pad, pady=(8, 3))
 
+        amt_frame = tk.Frame(right, bg=THEME["panel2"])
+        amt_frame.pack(fill="x", padx=pad, pady=(0, 4))
+        amt_frame.columnconfigure(1, weight=1)
+        tk.Label(
+            amt_frame, text="₱",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", f(10)),
+        ).grid(row=0, column=0, padx=(8, 2), sticky="ns")
         tk.Entry(
-            pay_card, textvariable=self.var_amount_paid,
+            amt_frame, textvariable=self.var_amount_paid,
             bd=0, bg=THEME["panel2"], fg=THEME["text"],
             insertbackground=THEME["text"],
-            font=("Segoe UI", f(11)),
-        ).pack(fill="x", padx=14, ipady=sp(9), pady=(0, 14))
+            font=("Segoe UI", f(10)),
+        ).grid(row=0, column=1, sticky="ew", ipady=sp(8), padx=(0, 4))
 
-        # ── Footer buttons ────────────────────────────────────────────────────
-        footer = tk.Frame(inner, bg=THEME["bg"])
-        footer.pack(fill="x", padx=18, pady=(6, 18))
+        # Live change / insufficient feedback — fills width with colored bg when active
+        self._change_lbl = tk.Label(
+            right, text="",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", f(9), "bold"),
+            anchor="w",
+        )
+        self._change_lbl.pack(fill="x", padx=pad, pady=(0, 10), ipady=4)
+
+        def _update_change_lbl(*_):
+            try:
+                paid = float(self.var_amount_paid.get().strip() or "0")
+            except ValueError:
+                self._change_lbl.configure(text="", fg=THEME["muted"], bg=THEME["panel"])
+                return
+            if self.var_payment.get() == "Bank/E-Wallet":
+                self._change_lbl.configure(text="", fg=THEME["muted"], bg=THEME["panel"])
+                return
+            diff = paid - self._total_amount
+            if diff < 0:
+                self._change_lbl.configure(
+                    text=f"  Insufficient  —  need {money(abs(diff))} more",
+                    fg=THEME["danger"],
+                    bg="#FEF2F2",
+                )
+            else:
+                self._change_lbl.configure(
+                    text=f"  Change:  {money(diff)}",
+                    fg=THEME["success"],
+                    bg="#F0FDF4",
+                )
+
+        self.var_amount_paid.trace_add("write", _update_change_lbl)
+        self.var_payment.trace_add("write", _update_change_lbl)
+
+        # Spacer — pushes buttons to the very bottom of the right column
+        tk.Frame(right, bg=THEME["panel"]).pack(fill="both", expand=True)
+
+        # ── Action buttons (pinned to bottom-right) ───────────────────────────
+        tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x")
+        btn_row = tk.Frame(right, bg=THEME["panel"])
+        btn_row.pack(fill="x", padx=pad, pady=14)
+        btn_row.columnconfigure(0, weight=1, uniform="cbtn")
+        btn_row.columnconfigure(1, weight=2, uniform="cbtn")
 
         tk.Button(
-            footer, text="Cancel",
-            bg=THEME["danger"], fg="white",
-            activebackground="#a93226", activeforeground="white",
-            bd=0, padx=sp(14), pady=sp(10), cursor="hand2",
+            btn_row, text="Cancel",
+            bg=THEME["panel2"], fg=THEME["danger"],
+            activebackground=THEME["danger"], activeforeground="white",
+            bd=0, pady=sp(10), cursor="hand2",
             font=("Segoe UI", f(10)),
             command=self.destroy,
-        ).pack(side="left")
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
 
         self.btn_confirm = tk.Button(
-            footer, text="Confirm Checkout",
+            btn_row, text="Confirm Checkout",
             bg=THEME["success"], fg="white",
             activebackground=THEME["brown_dark"], activeforeground="white",
-            bd=0, padx=sp(14), pady=sp(10), cursor="hand2",
+            bd=0, pady=sp(10), cursor="hand2",
             font=("Segoe UI", f(10), "bold"),
             command=self._confirm,
         )
-        self.btn_confirm.pack(side="right")
+        self.btn_confirm.grid(row=0, column=1, sticky="ew")
 
         self.var_payment.trace_add("write", lambda *_: self._update_confirm_text())
         self._update_confirm_text()
@@ -1632,13 +1815,16 @@ class ConfirmOrderDialog(tk.Toplevel):
         self.btn_toggle.configure(text="▾ Hide" if expanded else "▸ Show")
 
         rows = self._details_rows if expanded else self._details_rows[:5]
-        for left_text, right_text in rows:
-            r = tk.Frame(self.details_body, bg="#ffffff")
-            r.pack(fill="x", pady=sp(4))
-            tk.Label(r, text=left_text,  bg="#ffffff", fg=THEME["text"],
-                     font=("Segoe UI", f(9))).pack(side="left")
-            tk.Label(r, text=right_text, bg="#ffffff", fg=THEME["text"],
-                     font=("Segoe UI", f(9))).pack(side="right")
+        for i, (left_text, right_text) in enumerate(rows):
+            row_bg = "#F8F9FA" if i % 2 == 0 else "#ffffff"
+            r = tk.Frame(self.details_body, bg=row_bg)
+            r.pack(fill="x")
+            tk.Label(r, text=left_text, bg=row_bg, fg=THEME["text"],
+                     font=("Segoe UI", f(9)), anchor="w",
+                     ).pack(side="left", padx=(12, 4), pady=sp(6))
+            tk.Label(r, text=right_text, bg=row_bg, fg=THEME["text"],
+                     font=("Segoe UI", f(9), "bold"), anchor="e",
+                     ).pack(side="right", padx=(4, 12), pady=sp(6))
 
         if not expanded and len(self._details_rows) > 5:
             tk.Label(
@@ -1649,14 +1835,24 @@ class ConfirmOrderDialog(tk.Toplevel):
             ).pack(anchor="w", pady=(sp(4), 0))
 
         if self._discount_amount > 0:
+            subtotal_val = self._total_amount + self._discount_amount
+            srow = tk.Frame(self.details_body, bg="#ffffff")
+            srow.pack(fill="x", pady=(sp(6), 0))
+            tk.Label(srow, text="Subtotal",
+                     bg="#ffffff", fg=THEME["muted"],
+                     font=("Segoe UI", f(9))).pack(side="left", padx=(12, 4))
+            tk.Label(srow, text=money(subtotal_val),
+                     bg="#ffffff", fg=THEME["muted"],
+                     font=("Segoe UI", f(9))).pack(side="right", padx=(4, 12))
+
             drow = tk.Frame(self.details_body, bg="#ffffff")
-            drow.pack(fill="x", pady=(sp(8), 0))
+            drow.pack(fill="x", pady=(sp(2), 0))
             tk.Label(drow, text="Discount",
                      bg="#ffffff", fg=THEME["muted"],
-                     font=("Segoe UI", f(9))).pack(side="left")
+                     font=("Segoe UI", f(9))).pack(side="left", padx=(12, 4))
             tk.Label(drow, text=f"−{money(self._discount_amount)}",
                      bg="#ffffff", fg=THEME["danger"],
-                     font=("Segoe UI", f(9), "bold")).pack(side="right")
+                     font=("Segoe UI", f(9), "bold")).pack(side="right", padx=(4, 12))
 
         tk.Frame(self.details_body, bg=THEME["border"], height=1).pack(
             fill="x", pady=(sp(8), 0))
@@ -1711,13 +1907,18 @@ class ConfirmOrderDialog(tk.Toplevel):
         u = self.auth.get_current_user()
         cashier_id = u.user_id if u else 0
 
+        items = [
+            {"product_id": pid, "qty": qty, "unit_price": price, "note": note}
+            for pid, (_name, price, qty, note) in self.cart.items()
+        ]
         try:
-            order_id = self.order_dao.insert_order(
+            order_id = self.svc.create_order(
                 cashier_id=cashier_id,
                 customer_name=customer,
                 payment_method=payment,
                 status=status,
                 reference_no="",
+                items=items,
                 subtotal=subtotal,
                 discount=discount,
                 tax=tax,
@@ -1726,17 +1927,12 @@ class ConfirmOrderDialog(tk.Toplevel):
                 cash_received=cash_received,
                 change_due=change,
             )
-            for pid, (_name, price, qty, note) in self.cart.items():
-                self.order_dao.insert_item(order_id, pid, qty, price, note)
 
             if status == "Pending":
                 messagebox.showinfo("Saved", f"Order saved as Pending.\n\nTransaction ID: {order_id}")
             else:
                 messagebox.showinfo("Completed", f"Order completed.\n\nTransaction ID: {order_id}\nChange: {money(change)}")
 
-            # ✅ FIX: pass completed=True only when status is "Completed"
-            #         so the ML cache is only invalidated for real sales,
-            #         not for Pending (bank/e-wallet) orders.
             if self.on_done:
                 self.on_done(True, status == "Completed")
 
