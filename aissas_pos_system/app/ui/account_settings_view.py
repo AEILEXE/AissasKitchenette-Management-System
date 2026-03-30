@@ -20,6 +20,73 @@ from app.constants import (
 from app.ui import ui_scale
 
 
+# ── ON/OFF Toggle Switch widget ───────────────────────────────────────────────
+
+class ToggleSwitch(tk.Canvas):
+    """
+    A lightweight canvas-based ON/OFF toggle switch.
+    Behaves identically to a Checkbutton: reads/writes a tk.BooleanVar,
+    calls a command on change.  Disabled state is visually dimmed.
+    """
+    _W = 44   # track width
+    _H = 22   # track height
+    _R = 9    # knob radius
+
+    # Colours
+    _ON_BG    = "#6B4B3A"   # brown (matches theme primary)
+    _OFF_BG   = "#C8BDB4"   # muted grey
+    _KNOB     = "#FFFFFF"
+    _DISABLED = "#E0D8D2"
+
+    def __init__(self, parent: tk.Widget, variable: tk.BooleanVar,
+                 command=None, state: str = "normal", **kwargs):
+        super().__init__(
+            parent,
+            width=self._W, height=self._H,
+            bg=kwargs.pop("bg", parent.cget("bg")),
+            bd=0, highlightthickness=0,
+            cursor="hand2" if state == "normal" else "",
+        )
+        self._var     = variable
+        self._command = command
+        self._state   = state
+        self._draw()
+        variable.trace_add("write", lambda *_: self._draw())
+        if state == "normal":
+            self.bind("<Button-1>", self._toggle)
+
+    def _toggle(self, _event=None) -> None:
+        if self._state != "normal":
+            return
+        self._var.set(not self._var.get())
+        if self._command:
+            self._command()
+
+    def _draw(self) -> None:
+        self.delete("all")
+        on  = self._var.get()
+        dim = (self._state != "normal")
+
+        track_color = self._DISABLED if dim else (self._ON_BG if on else self._OFF_BG)
+        r = self._H // 2
+        # Draw rounded rectangle track
+        self.create_oval(0, 0, self._H, self._H, fill=track_color, outline="")
+        self.create_oval(self._W - self._H, 0, self._W, self._H, fill=track_color, outline="")
+        self.create_rectangle(r, 0, self._W - r, self._H, fill=track_color, outline="")
+
+        # Draw knob
+        margin = 3
+        if on:
+            kx = self._W - r
+        else:
+            kx = r
+        self.create_oval(
+            kx - self._R, self._H // 2 - self._R,
+            kx + self._R, self._H // 2 + self._R,
+            fill=self._KNOB, outline="",
+        )
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _bind_mousewheel(canvas: tk.Canvas) -> None:
@@ -981,18 +1048,26 @@ class AccountSettingsDialog(tk.Toplevel):
                     val = is_admin_role  # Admin fallback = True
 
                 var = tk.BooleanVar(value=val)
-                chk = tk.Checkbutton(
-                    perm_frame,
-                    text=label,
+
+                # Container row: toggle switch + label side by side
+                cell = tk.Frame(perm_frame, bg=THEME["panel"])
+                cell.grid(row=idx // 3, column=idx % 3, sticky="w", padx=8, pady=3)
+
+                sw = ToggleSwitch(
+                    cell,
                     variable=var,
-                    bg=THEME["panel"], fg=THEME["text"],
-                    selectcolor=THEME["panel2"],
-                    activebackground=THEME["panel"],
-                    font=("Segoe UI", ui_scale.scale_font(9)),
                     state="disabled" if is_admin_role else "normal",
+                    bg=THEME["panel"],
                     command=lambda r=role, p=perm, v=var: _toggle(r, p, v),
                 )
-                chk.grid(row=idx // 3, column=idx % 3, sticky="w", padx=8, pady=2)
+                sw.pack(side="left")
+
+                tk.Label(
+                    cell, text=label,
+                    bg=THEME["panel"],
+                    fg=THEME["muted"] if is_admin_role else THEME["text"],
+                    font=("Segoe UI", ui_scale.scale_font(9)),
+                ).pack(side="left", padx=(6, 0))
 
             # Thin divider between roles
             tk.Frame(card, bg=THEME["border"], height=1).pack(

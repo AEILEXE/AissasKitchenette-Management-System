@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from app.utils import money
-from app.config import RECEIPTS_DIR as _RECEIPTS_DIR, ASSETS_DIR as _ASSETS_DIR
+from app.config import RECEIPTS_DIR as _RECEIPTS_DIR, ASSETS_DIR as _ASSETS_DIR, LOGO_PATH as _LOGO_PATH
+
+_STORE_PHONE   = "0947 530 4889"
+_STORE_ADDRESS = "1 Esperanza, Quezon City, 1118 Metro Manila"
 
 # _RECEIPTS_DIR is already created by config.py at startup.
 
@@ -120,9 +123,9 @@ class ReceiptService:
         MARGIN = 6 * mm
 
         # Height: base overhead + per-item lines + extra for 5 dividers with 6 mm gap.
-        # Adding ~40 mm buffer so long product names and discounts never get clipped.
-        base_lines = 32 + len(items) * 4
-        PAGE_H     = max(180 * mm, base_lines * 6.5 * mm + 60 * mm)
+        # Adding ~60 mm buffer for logo + address + phone lines at top.
+        base_lines = 36 + len(items) * 4
+        PAGE_H     = max(200 * mm, base_lines * 6.5 * mm + 70 * mm)
 
         c = rl_canvas.Canvas(file_path, pagesize=(PAGE_W, PAGE_H))
         y = PAGE_H - 10 * mm   # cursor starts near top
@@ -172,11 +175,28 @@ class ReceiptService:
 
         # ── Header ────────────────────────────────────────────────────────────
         move(0.5)
+
+        # Try to draw logo centred above the store name
+        _logo_drawn = False
+        try:
+            from reportlab.lib.utils import ImageReader
+            if _LOGO_PATH.exists():
+                logo_reader = ImageReader(str(_LOGO_PATH))
+                logo_size   = 18 * mm   # ~18 mm square on receipt
+                lx          = (PAGE_W - logo_size) / 2
+                c.drawImage(logo_reader, lx, y - logo_size + 2 * mm,
+                            width=logo_size, height=logo_size,
+                            preserveAspectRatio=True, mask="auto")
+                y -= (logo_size + 2 * mm)
+                _logo_drawn = True
+        except Exception:
+            pass  # If logo can't be drawn, skip gracefully
+
         draw_text("AISSA'S KITCHENETTE", font=FONT_BOLD, size=11, align="center")
+        draw_text(_STORE_ADDRESS,         size=7,         align="center")
+        draw_text(_STORE_PHONE,           size=7,         align="center")
         draw_text("Official Receipt",     size=8,         align="center")
         move(3)
-        # gap_after=6 keeps the next text baseline 6 mm below the line;
-        # 8-pt ascenders are ~2 mm, giving 4 mm clearance — clearly separated.
         draw_hr(1.0, 6.0)
 
         # ── Order metadata ────────────────────────────────────────────────────

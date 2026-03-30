@@ -13,7 +13,7 @@ from app.ui.inventory_products_view import InventoryProductsView
 from app.ui.inventory_sales_view import InventorySalesView
 from app.ui.transactions_view import TransactionDetailsDialog
 from app.utils import money
-from app.constants import P_MANAGE_PRODS, P_MANAGE_USERS, P_DATABASE, P_EXPORT
+from app.constants import P_MANAGE_PRODS, P_MANAGE_USERS, P_DATABASE, P_EXPORT, P_REPORTS
 
 
 def _safe(r, key, default=None):
@@ -75,9 +75,10 @@ class InventoryShellView(tk.Frame):
 
         tab_items = [
             ("overview", "Overview",  self.show_overview),
-            ("sales",    "Sales",     self.show_sales),
-            ("products", "Products",  self.show_products),
         ]
+        if self.auth.has_permission(P_REPORTS):
+            tab_items.append(("sales", "Sales", self.show_sales))
+        tab_items.append(("products", "Products", self.show_products))
         for key, text, cmd in tab_items:
             btn = tk.Button(
                 nav, text=text,
@@ -114,6 +115,9 @@ class InventoryShellView(tk.Frame):
         self._build_overview()
 
     def show_sales(self):
+        if not self.auth.has_permission(P_REPORTS):
+            messagebox.showerror("Access Denied", "You do not have permission to view reports.")
+            return
         self._set_active("sales")
         self._clear_content()
         InventorySalesView(self.content, self.db, self.auth).pack(fill="both", expand=True)
@@ -297,7 +301,7 @@ class InventoryShellView(tk.Frame):
             if not sel:
                 return
             try:
-                TransactionDetailsDialog(self, self.db, int(sel[0]))
+                TransactionDetailsDialog(self, self.db, int(sel[0]), auth=self.auth)
             except Exception:
                 pass
 

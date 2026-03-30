@@ -4,11 +4,17 @@ import tkinter as tk
 from tkinter import messagebox, Menu
 from typing import Any, Callable, Optional, Type
 
-from app.config import APP_NAME, THEME
+from app.config import APP_NAME, THEME, LOGO_PATH
 from app.db.database import Database
 from app.services.auth_service import AuthService
 from app.constants import P_POS, P_INV_VIEW, P_INV_MANAGE  # keep perms
 from app.ui import ui_scale
+
+try:
+    from PIL import Image, ImageTk  # type: ignore
+    _HAS_PIL = True
+except Exception:
+    _HAS_PIL = False
 
 from app.ui.login_view import LoginView
 from app.ui.pos_view import POSView
@@ -36,8 +42,9 @@ class AppWindow:
 
         self._nav_btns: dict[str, tk.Button] = {}
         self._active_nav_key: str | None = None
+        self._nav_logo_ref = None  # keeps logo PhotoImage from GC
 
-        self.nav_title: tk.Label | None = None
+        self.nav_title: tk.Button | None = None
         self.user_label: tk.Label | None = None
         self.settings_btn: tk.Button | None = None
         self.settings_menu: Menu | None = None
@@ -118,16 +125,53 @@ class AppWindow:
             if self.nav.winfo_ismapped():
                 self.nav.pack_forget()
 
+    def _load_nav_logo(self, height: int = 36) -> "tk.PhotoImage | None":
+        """Load and cache a resized logo for the nav bar."""
+        try:
+            if _HAS_PIL and LOGO_PATH.exists():
+                img = Image.open(LOGO_PATH).convert("RGBA")
+                ratio = height / img.height
+                new_w = max(1, int(img.width * ratio))
+                img = img.resize((new_w, height), Image.Resampling.LANCZOS)
+                return ImageTk.PhotoImage(img)
+        except Exception:
+            pass
+        return None
+
     def _build_nav(self) -> None:
         self._clear_nav()
 
-        self.nav_title = tk.Label(
-            self.nav,
-            text=APP_NAME,
-            bg=THEME["primary"],
-            fg=THEME["text_on_primary"],
-            font=("Segoe UI", 12, "bold"),
-        )
+        # Clickable logo — navigates to POS (or home) when clicked
+        logo_img = self._load_nav_logo(36)
+        if logo_img:
+            self._nav_logo_ref = logo_img  # keep reference to prevent GC
+            self.nav_title = tk.Button(
+                self.nav,
+                image=logo_img,
+                text=f"  {APP_NAME}",
+                compound=tk.LEFT,
+                bg=THEME["primary"],
+                fg=THEME["text_on_primary"],
+                activebackground=THEME["primary_light"],
+                activeforeground=THEME["text_on_primary"],
+                bd=0,
+                cursor="hand2",
+                font=("Segoe UI", 11, "bold"),
+                command=self._logo_click,
+            )
+        else:
+            self.nav_title = tk.Button(
+                self.nav,
+                text=APP_NAME,
+                bg=THEME["primary"],
+                fg=THEME["text_on_primary"],
+                activebackground=THEME["primary_light"],
+                activeforeground=THEME["text_on_primary"],
+                bd=0,
+                cursor="hand2",
+                font=("Segoe UI", 12, "bold"),
+                command=self._logo_click,
+            )
         self.nav_title.pack(side=tk.LEFT, padx=(14, 10), pady=8)
 
         # Tabs
@@ -188,6 +232,13 @@ class AppWindow:
         self.user_label.pack(side=tk.RIGHT, padx=(10, 14), pady=8)
 
         self._set_user_label()
+
+    def _logo_click(self) -> None:
+        """Navigate to POS if permitted, otherwise go to Transactions."""
+        if self.auth_service.has_permission(P_POS):
+            self.show_pos()
+        else:
+            self.show_transactions()
 
     def _open_settings_menu(self):
         if not self.settings_menu or not self.settings_btn:

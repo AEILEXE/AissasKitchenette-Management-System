@@ -449,8 +449,9 @@ class ProductEditor(tk.Toplevel):
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(9), "bold"),
         ).grid(row=0, column=0, sticky="w", padx=14, pady=(14, 2))
+        req_txt = "(required for new products — auto-filled when you choose a file)" if not self.product_id else "(auto-filled when you choose a file)"
         tk.Label(
-            box, text="(optional — auto-filled when you choose a file)",
+            box, text=req_txt,
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(8)),
         ).grid(row=1, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 4))
@@ -715,6 +716,14 @@ class ProductEditor(tk.Toplevel):
 
         desc       = self._desc_text.get("1.0", "end").strip()
         image_path = self.var_image.get().strip()
+
+        # Image is required when creating a new product
+        if not self.product_id and not image_path:
+            messagebox.showerror(
+                "Image Required",
+                "A product image is required.\n\nPlease click 'Choose File' to select an image.",
+            )
+            return
 
         try:
             price = float(self.var_price.get().strip() or 0)

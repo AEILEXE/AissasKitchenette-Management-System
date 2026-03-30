@@ -12,6 +12,7 @@ from app.services.auth_service import AuthService
 from app.services.receipt_service import ReceiptService
 from app.ui import ui_scale
 from app.utils import money
+from app.constants import P_VOID
 
 
 # ── Pure-Tkinter date picker ──────────────────────────────────────────────────
@@ -687,7 +688,7 @@ class TransactionsView(tk.Frame):
         if not sel:
             return
         oid = int(sel[0])
-        TransactionDetailsDialog(self, self.db, oid, on_refresh=self.refresh)
+        TransactionDetailsDialog(self, self.db, oid, auth=self.auth, on_refresh=self.refresh)
 
     def _open_selected_from_btn(self):
         """Called by the View Details button — shows a message if nothing is selected."""
@@ -706,10 +707,12 @@ class TransactionDetailsDialog(tk.Toplevel):
     MAX_COLLAPSED_ROWS = 5
     SCROLL_SPEED_UNITS = 3
 
-    def __init__(self, parent: tk.Widget, db: Database, order_id: int, on_refresh=None):
+    def __init__(self, parent: tk.Widget, db: Database, order_id: int,
+                 auth: AuthService | None = None, on_refresh=None):
         super().__init__(parent)
         self.db         = db
         self.order_id   = order_id
+        self.auth       = auth
         self.on_refresh = on_refresh
         self.orders     = OrderDAO(db)
 
@@ -948,6 +951,18 @@ class TransactionDetailsDialog(tk.Toplevel):
                 command=self._open_resolve,
             ).pack(side="left")
 
+            # Void/Cancel button — only shown if user has P_VOID permission
+            can_void = self.auth.has_permission(P_VOID) if self.auth else False
+            if can_void:
+                tk.Button(
+                    footer, text="Void / Cancel",
+                    bg=THEME["danger"], fg="white",
+                    activebackground="#7f1d1d", activeforeground="white",
+                    bd=0, padx=sp(14), pady=sp(9), cursor="hand2",
+                    font=("Segoe UI", f(9), "bold"),
+                    command=self._open_void,
+                ).pack(side="left", padx=(sp(8), 0))
+
         tk.Button(
             footer, text="Close",
             bg=THEME["panel2"], fg=THEME["text"],
@@ -1043,6 +1058,34 @@ class TransactionDetailsDialog(tk.Toplevel):
         if self.on_refresh:
             self.on_refresh()
         self.destroy()
+
+    def _open_void(self):
+        """Void/cancel a Pending order after permission + confirmation check."""
+        # Double-check permission at the handler level (not just UI visibility)
+        if not (self.auth and self.auth.has_permission(P_VOID)):
+            messagebox.showerror(
+                "Access Denied",
+                "You do not have permission to void / cancel transactions.",
+            )
+            return
+        if not messagebox.askyesno(
+            "Void / Cancel Transaction",
+            f"Are you sure you want to VOID order #{self.order_id}?\n\n"
+            "This will cancel the order and restore stock. This cannot be undone.",
+            icon="warning",
+        ):
+            return
+        try:
+            self.orders.cancel_order(self.order_id)
+            messagebox.showinfo(
+                "Voided",
+                f"Order #{self.order_id} has been cancelled and stock restored.",
+            )
+            if self.on_refresh:
+                self.on_refresh()
+            self.destroy()
+        except Exception as exc:
+            messagebox.showerror("Void Failed", f"Could not void order:\n{exc}")
 
     def _print_receipt(self):
         try:

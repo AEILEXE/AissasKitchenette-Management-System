@@ -23,6 +23,7 @@ from app.db.dao import OrderDAO
 from app.services.auth_service import AuthService
 from app.ui import ui_scale
 from app.utils import money
+from app.constants import P_EXPORT
 
 
 class InventorySalesView(tk.Frame):
@@ -128,39 +129,40 @@ class InventorySalesView(tk.Frame):
         self.canvas_frame = tk.Frame(chart_card, bg="white")
         self.canvas_frame.grid(row=1, column=0, sticky="nsew", padx=2, pady=(0, 2))
 
-        # ── Export bar ────────────────────────────────────────────────────────
-        export_bar = tk.Frame(
-            self, bg=THEME["panel"],
-            highlightthickness=1, highlightbackground=THEME["border"],
-        )
-        export_bar.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 16))
+        # ── Export bar (only shown if user has export permission) ─────────────
+        if self.auth.has_permission(P_EXPORT):
+            export_bar = tk.Frame(
+                self, bg=THEME["panel"],
+                highlightthickness=1, highlightbackground=THEME["border"],
+            )
+            export_bar.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 16))
 
-        tk.Label(
-            export_bar, text="Export",
-            bg=THEME["panel"], fg=THEME["muted"],
-            font=("Segoe UI", f(9), "bold"),
-        ).pack(side="left", padx=(14, 10), pady=10)
+            tk.Label(
+                export_bar, text="Export",
+                bg=THEME["panel"], fg=THEME["muted"],
+                font=("Segoe UI", f(9), "bold"),
+            ).pack(side="left", padx=(14, 10), pady=10)
 
-        # separator
-        tk.Frame(export_bar, bg=THEME["border"], width=1).pack(side="left", fill="y", pady=6)
+            # separator
+            tk.Frame(export_bar, bg=THEME["border"], width=1).pack(side="left", fill="y", pady=6)
 
-        tk.Button(
-            export_bar, text="⬇  Save as PDF",
-            command=self._export_pdf,
-            bg=THEME["brown"], fg="white",
-            activebackground=THEME["brown_dark"], activeforeground="white",
-            bd=0, padx=sp(14), pady=sp(8), cursor="hand2",
-            font=("Segoe UI", f(9), "bold"),
-        ).pack(side="left", padx=(12, 8), pady=8)
+            tk.Button(
+                export_bar, text="⬇  Save as PDF",
+                command=self._export_pdf,
+                bg=THEME["brown"], fg="white",
+                activebackground=THEME["brown_dark"], activeforeground="white",
+                bd=0, padx=sp(14), pady=sp(8), cursor="hand2",
+                font=("Segoe UI", f(9), "bold"),
+            ).pack(side="left", padx=(12, 8), pady=8)
 
-        tk.Button(
-            export_bar, text="⬇  Save as Excel",
-            command=self._export_excel,
-            bg=THEME["accent"], fg="white",
-            activebackground=THEME["brown"], activeforeground="white",
-            bd=0, padx=sp(14), pady=sp(8), cursor="hand2",
-            font=("Segoe UI", f(9), "bold"),
-        ).pack(side="left", pady=8)
+            tk.Button(
+                export_bar, text="⬇  Save as Excel",
+                command=self._export_excel,
+                bg=THEME["accent"], fg="white",
+                activebackground=THEME["brown"], activeforeground="white",
+                bd=0, padx=sp(14), pady=sp(8), cursor="hand2",
+                font=("Segoe UI", f(9), "bold"),
+            ).pack(side="left", pady=8)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Toggle helpers
@@ -315,6 +317,9 @@ class InventorySalesView(tk.Frame):
     # ──────────────────────────────────────────────────────────────────────────
 
     def _export_pdf(self):
+        if not self.auth.has_permission(P_EXPORT):
+            messagebox.showerror("Access Denied", "You do not have permission to export data.")
+            return
         data, total_sales, order_count = self._get_sales_data()
         file_path = filedialog.asksaveasfilename(
             defaultextension=".pdf",
@@ -402,6 +407,9 @@ class InventorySalesView(tk.Frame):
             messagebox.showerror("PDF Export Error", f"Failed to export PDF.\n\n{e}")
 
     def _export_excel(self):
+        if not self.auth.has_permission(P_EXPORT):
+            messagebox.showerror("Access Denied", "You do not have permission to export data.")
+            return
         data, total_sales, order_count = self._get_sales_data()
         file_path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
