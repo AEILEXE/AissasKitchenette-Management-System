@@ -150,6 +150,13 @@ class InventoryShellView(tk.Frame):
         self._build_dashboard_content(wrap)
 
     def _build_dashboard_content(self, wrap: tk.Frame):
+        """Build the full dashboard page content inside 'wrap'.
+
+        Queries summary stats from the DB once (today + month totals, counts),
+        then renders: KPI summary cards → Top Sellers → Recent Transactions →
+        Quick Actions.  All data is read-only; no DB writes happen here.
+        Clicking 'Refresh' calls show_overview() which rebuilds this entire page.
+        """
         # Header
         hdr = tk.Frame(wrap, bg=THEME["bg"])
         hdr.pack(fill="x", padx=20, pady=(18, 14))
@@ -214,8 +221,9 @@ class InventoryShellView(tk.Frame):
         for col, (title, value, sub, accent, cmd) in enumerate(cards_row2):
             self._make_summary_card(row2, col, title, value, sub, accent, cmd)
 
-        self._build_recent_transactions(wrap)
+        # Top Sellers shown first — higher business priority than transaction history
         self._build_top_sellers(wrap)
+        self._build_recent_transactions(wrap)
         self._build_quick_actions(wrap)
 
     # ── Summary card ──────────────────────────────────────────────────────────
@@ -245,6 +253,12 @@ class InventoryShellView(tk.Frame):
     # ── Recent Transactions ───────────────────────────────────────────────────
 
     def _build_recent_transactions(self, wrap: tk.Frame):
+        """Render the 'Recent Transactions' table using a ttk.Treeview.
+
+        Fetches the latest 10 orders (any status) and displays: ID, date,
+        customer, payment method, status, and total.  Clicking 'View all'
+        navigates to the full Transactions screen via go_transactions_cb.
+        """
         sec = tk.Frame(wrap, bg=THEME["bg"])
         sec.pack(fill="both", expand=True, padx=20, pady=(0, 16))
 
@@ -341,6 +355,13 @@ class InventoryShellView(tk.Frame):
     # ── G: Top Sellers Today ──────────────────────────────────────────────────
 
     def _build_top_sellers(self, wrap: tk.Frame):
+        """Render the 'Top Sellers — Today' summary panel.
+
+        Calls orders.best_sellers_today(5) which aggregates qty_sold and
+        revenue per product from today's Completed orders.  Results are
+        shown as a ranked list with a progress-bar style revenue bar.
+        If no sales exist today, a placeholder message is displayed instead.
+        """
         sec = tk.Frame(wrap, bg=THEME["bg"])
         sec.pack(fill="x", padx=20, pady=(0, 16))
 

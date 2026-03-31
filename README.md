@@ -42,17 +42,27 @@ Aissa's Kitchenette Management System is an offline-first POS desktop applicatio
 
 ### Python dependencies
 
-```
-Pillow>=9.0.0
-matplotlib>=3.5.0
-reportlab>=3.5.0
-openpyxl>=3.0.0
+Install all at once:
+```bash
+pip install -r aissas_pos_system/requirements.txt
 ```
 
-For building the EXE only:
-```
-pyinstaller>=5.0.0
-pyinstaller-hooks-contrib>=2023.0
+| Library | Version | What it does in this project |
+|---------|---------|-------------------------------|
+| **Pillow** | `>=9.0.0` | Image loading and resizing for product card thumbnails, login slideshow images, and logo rendering. Also generates the multi-size `.ico` file via `make_icon.py`. |
+| **matplotlib** | `>=3.5.0` | Renders the bar charts on the Sales Reports tab (Daily / Monthly / Yearly). The chart is embedded directly in the Tkinter window using `FigureCanvasTkAgg`. |
+| **reportlab** | `>=3.5.0` | Generates PDF thermal receipts after each successful checkout. Uses DejaVuSans font (bundled in `assets/fonts/`) for correct ₱ peso sign rendering. |
+| **openpyxl** | `>=3.0.0` | Exports sales report data to `.xlsx` Excel files from the Reports tab. |
+
+**For building the EXE only** (not required to run in dev mode):
+
+| Library | What it does |
+|---------|-------------|
+| **pyinstaller** | Packages the entire Python application — source, interpreter, and dependencies — into a single `AissasKitchenette.exe` that runs on Windows without Python installed. |
+| **pyinstaller-hooks-contrib** | Provides ready-made hook scripts that tell PyInstaller which hidden files Pillow, matplotlib, and reportlab need at runtime (fonts, backends, plugins) so nothing is accidentally excluded from the bundle. |
+
+```bash
+pip install pyinstaller pyinstaller-hooks-contrib
 ```
 
 ---
@@ -327,6 +337,12 @@ The entire checkout — order record, all line items, and all stock deductions �
 - Saved as PDF using `reportlab`. If `reportlab` is unavailable a `.txt` fallback is created.
 - Font: DejaVuSans (bundled in `assets/fonts/`) for proper Philippine Peso sign (₱). Falls back to Helvetica with "PHP" prefix if the font cannot be loaded.
 
+### Dashboard
+
+- Opens at the **Overview** tab inside the Inventory/Dashboard module.
+- Displays KPI summary cards (today + month totals), then **Top Sellers — Today** (ranked by qty sold), then **Recent Transactions** (latest 10 orders), then Quick Actions.
+- Click **Refresh** to reload all data from the DB.
+
 ### Sales reports
 
 - Daily / Monthly / Yearly bar charts built with matplotlib.
@@ -336,7 +352,8 @@ The entire checkout — order record, all line items, and all stock deductions �
 ### ML suggestions
 
 - Offline co-purchase recommender trained on completed orders.
-- Suggests items frequently bought together with the current cart.
+- Suggests up to 5 items frequently bought together with the current cart, displayed in rows of up to 3.
+- Out-of-stock suggestions are automatically hidden.
 - No external libraries; pure Python frequency-pair counting.
 - Requires existing sales history to produce suggestions. Use **Settings → Seed Demo Sales** to generate test data.
 
