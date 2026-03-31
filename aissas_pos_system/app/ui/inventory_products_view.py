@@ -449,7 +449,7 @@ class ProductEditor(tk.Toplevel):
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(9), "bold"),
         ).grid(row=0, column=0, sticky="w", padx=14, pady=(14, 2))
-        req_txt = "(required for new products — auto-filled when you choose a file)" if not self.product_id else "(auto-filled when you choose a file)"
+        req_txt = "(required — choose an image file)" if not self.product_id else "(optional — choose a new file to replace the current image)"
         tk.Label(
             box, text=req_txt,
             bg=THEME["panel"], fg=THEME["muted"],

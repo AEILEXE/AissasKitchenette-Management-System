@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 # ── App Info ───────────────────────────────────────────────────────────────
-APP_NAME = "Aissas Kitchenette"
+APP_NAME = "Aissa's Kitchenette"
 APP_VERSION = "1.0"
 
 # Backwards-compat aliases (some modules import these)
@@ -41,7 +41,7 @@ else:
 # ── Read-only bundled assets (safe in both modes) ─────────────────────────
 ASSETS_DIR = _BUNDLE_DIR / "assets"
 ICONS_DIR  = ASSETS_DIR / "icons"
-LOGO_PATH  = ASSETS_DIR / "logo.jpg"
+LOGO_PATH  = ASSETS_DIR / "logo.png"
 
 # ── Writable directories (persistent; never in the temp bundle dir) ────────
 DATA_DIR         = _WRITABLE_ROOT / "data"

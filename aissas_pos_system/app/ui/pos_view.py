@@ -337,9 +337,11 @@ class POSView(tk.Frame):
         body.pack(fill="both", expand=True, padx=18, pady=(10, 18))
         body.rowconfigure(0, weight=1)
 
-        body.columnconfigure(0, weight=1, minsize=90)
-        body.columnconfigure(1, weight=8, minsize=800)
-        body.columnconfigure(2, weight=2, minsize=320)
+        # Weights  2 : 5 : 2  give a balanced 20 / 43 / 37 % split at 1000 px
+        # and stay proportional at larger monitors.
+        body.columnconfigure(0, weight=2, minsize=150)   # categories
+        body.columnconfigure(1, weight=5, minsize=320)   # products (dominant)
+        body.columnconfigure(2, weight=2, minsize=320)   # cart
 
         try:
             self._global_click_id = self.winfo_toplevel().bind("<Button-1>", self._on_global_click, add="+")
@@ -349,16 +351,18 @@ class POSView(tk.Frame):
         # Left: Categories
         left = tk.Frame(body, bg=THEME["panel"])
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        tk.Label(left, text="Categories", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 12, "bold")).pack(
-            anchor="w", padx=8, pady=(8, 4)
-        )
+        tk.Label(left, text="Categories", bg=THEME["panel"], fg=THEME["text"],
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=8, pady=(8, 4))
 
         cat_panel = tk.Frame(left, bg=THEME["panel"])
-        cat_panel.pack(fill="both", expand=True, padx=10, pady=(0, 12))
+        cat_panel.pack(fill="both", expand=True, padx=6, pady=(0, 10))
         cat_panel.rowconfigure(0, weight=1)
         cat_panel.columnconfigure(0, weight=1)
 
-        self.cat_canvas = tk.Canvas(cat_panel, bg=THEME["panel"], highlightthickness=0)
+        # width=1: override Tkinter's 200 px default — the canvas will still
+        # expand to fill its grid cell via sticky="nsew", but its *natural* width
+        # is now 1 px so it no longer forces the column wider than minsize=110.
+        self.cat_canvas = tk.Canvas(cat_panel, bg=THEME["panel"], highlightthickness=0, width=1)
         self.cat_canvas.grid(row=0, column=0, sticky="nsew")
 
         cat_sb = ttk.Scrollbar(cat_panel, orient="vertical", command=self.cat_canvas.yview, style="Thick.Vertical.TScrollbar")
@@ -374,7 +378,6 @@ class POSView(tk.Frame):
         # Middle: Products
         mid = tk.Frame(body, bg=THEME["panel"])
         mid.grid(row=0, column=1, sticky="nsew", padx=(0, 12))
-        mid.rowconfigure(2, weight=1)
 
         tk.Label(mid, text="All Items", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 14, "bold")).pack(
             anchor="w", padx=14, pady=(12, 6)
@@ -412,7 +415,6 @@ class POSView(tk.Frame):
         # Right: Cart + Drafts
         right = tk.Frame(body, bg=THEME["panel"])
         right.grid(row=0, column=2, sticky="nsew")
-        right.rowconfigure(99, weight=1)
 
         tk.Label(right, text="Current order", bg=THEME["panel"], fg=THEME["text"], font=("Segoe UI", 12, "bold")).pack(
             anchor="w", padx=14, pady=(8, 6)
@@ -453,11 +455,14 @@ class POSView(tk.Frame):
 
         self.discount_lbl = tk.Label(footer_top, text="", bg=THEME["panel"], fg=THEME["muted"], font=("Segoe UI", 10, "bold"))
 
-        # Action buttons
+        # Action buttons — grid with uniform weight so all three always share
+        # available width equally and none can overflow off-screen.
         footer_btns = tk.Frame(right, bg=THEME["panel"])
         footer_btns.pack(fill="x", padx=14, pady=(0, 10))
+        footer_btns.columnconfigure(0, weight=1, uniform="fbtn")
+        footer_btns.columnconfigure(1, weight=1, uniform="fbtn")
+        footer_btns.columnconfigure(2, weight=1, uniform="fbtn")
 
-        # Brown background makes "Add Discount" visible against the light panel
         tk.Button(
             footer_btns,
             text="Add Discount",
@@ -465,10 +470,10 @@ class POSView(tk.Frame):
             bg=THEME["brown"],
             fg="white",
             bd=0,
-            padx=10,
+            padx=6,
             pady=8,
             cursor="hand2",
-        ).pack(side="left", padx=(0, 5))
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
 
         tk.Button(
             footer_btns,
@@ -477,10 +482,10 @@ class POSView(tk.Frame):
             bg=THEME.get("brown_dark", "#3E2A22"),
             fg="white",
             bd=0,
-            padx=10,
+            padx=6,
             pady=8,
             cursor="hand2",
-        ).pack(side="left", padx=5)
+        ).grid(row=0, column=1, sticky="ew", padx=3)
 
         tk.Button(
             footer_btns,
@@ -489,10 +494,10 @@ class POSView(tk.Frame):
             bg=THEME["success"],
             fg="white",
             bd=0,
-            padx=10,
+            padx=6,
             pady=8,
             cursor="hand2",
-        ).pack(side="left", padx=(5, 0))
+        ).grid(row=0, column=2, sticky="ew", padx=(3, 0))
 
         # Drafts panel
         self.drafts_section = tk.Frame(right, bg=THEME["panel"])
@@ -651,7 +656,9 @@ class POSView(tk.Frame):
 
     def _calc_product_cols(self) -> int:
         width = max(1, int(self.prod_canvas.winfo_width()))
-        return 3 if width >= 860 else 2
+        # 3 cols once the product canvas is wide enough for comfortable cards
+        # (≥580 px → each card gets ≈193 px; ≥380 px → 2 cols at ≈190 px each)
+        return 3 if width >= 580 else 2
 
     def _debounced_relayout(self) -> None:
         if self._destroyed or self._building or not self.winfo_exists():
@@ -1098,7 +1105,7 @@ class POSView(tk.Frame):
         cart_ids = list(self.cart.keys())
 
         try:
-            suggested_ids = self.recommender.suggest(cart_ids, top_n=3)
+            suggested_ids = self.recommender.suggest(cart_ids, top_n=5)
         except Exception:
             suggested_ids = []
 
@@ -1455,7 +1462,6 @@ class ConfirmOrderDialog(tk.Toplevel):
 
         self.title("Confirm Order")
         self.configure(bg=THEME["bg"])
-        self.geometry("420x620")
         self.transient(parent)
         self.grab_set()
 
@@ -1490,11 +1496,11 @@ class ConfirmOrderDialog(tk.Toplevel):
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
         w  = min(860, sw - 80)
-        h  = min(500, sh - 80)
+        h  = min(560, sh - 80)
         x  = (sw - w) // 2
         y  = max(30, (sh - h) // 2)
         self.geometry(f"{w}x{h}+{x}+{y}")
-        self.minsize(680, 440)
+        self.minsize(680, 460)
         self.resizable(True, True)
 
         # Root: row 0 = header (fixed height), row 1 = body (expands)
@@ -1638,13 +1644,13 @@ class ConfirmOrderDialog(tk.Toplevel):
             total_bar, text="TOTAL",
             bg=THEME["success"], fg="white",
             font=("Segoe UI", f(9), "bold"),
-            padx=pad, pady=16,
+            padx=pad, pady=12,
         ).pack(side="left")
         tk.Label(
             total_bar, text=money(total),
             bg=THEME["success"], fg="white",
             font=("Segoe UI", f(17), "bold"),
-            padx=pad, pady=16,
+            padx=pad, pady=12,
         ).pack(side="right")
 
         # Discount notice (shown only when a discount is applied)
@@ -1663,12 +1669,12 @@ class ConfirmOrderDialog(tk.Toplevel):
             ).pack(side="right")
 
         # ── Customer ──────────────────────────────────────────────────────────
-        tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x", pady=(14, 0))
+        tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x", pady=(10, 0))
         tk.Label(
             right, text="CUSTOMER",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(8), "bold"),
-        ).pack(anchor="w", padx=pad, pady=(10, 2))
+        ).pack(anchor="w", padx=pad, pady=(8, 2))
 
         tk.Label(
             right, text="Customer Name  (required)",
@@ -1682,7 +1688,7 @@ class ConfirmOrderDialog(tk.Toplevel):
             insertbackground=THEME["text"],
             font=("Segoe UI", f(10)),
         )
-        ent_name.pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 14))
+        ent_name.pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 10))
         ent_name.focus_set()
 
         # ── Payment ───────────────────────────────────────────────────────────
@@ -1691,10 +1697,10 @@ class ConfirmOrderDialog(tk.Toplevel):
             right, text="PAYMENT",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(8), "bold"),
-        ).pack(anchor="w", padx=pad, pady=(10, 6))
+        ).pack(anchor="w", padx=pad, pady=(8, 4))
 
         radio_frame = tk.Frame(right, bg=THEME["panel"])
-        radio_frame.pack(fill="x", padx=pad, pady=(0, 6))
+        radio_frame.pack(fill="x", padx=pad, pady=(0, 4))
         for val, label in [("Cash", "Cash"), ("Bank/E-Wallet", "Bank Transfer / E-Wallet")]:
             tk.Radiobutton(
                 radio_frame, text=label,
@@ -1709,10 +1715,10 @@ class ConfirmOrderDialog(tk.Toplevel):
             right, text="Amount Paid",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(8)),
-        ).pack(anchor="w", padx=pad, pady=(8, 3))
+        ).pack(anchor="w", padx=pad, pady=(6, 3))
 
         amt_frame = tk.Frame(right, bg=THEME["panel2"])
-        amt_frame.pack(fill="x", padx=pad, pady=(0, 4))
+        amt_frame.pack(fill="x", padx=pad, pady=(0, 3))
         amt_frame.columnconfigure(1, weight=1)
         tk.Label(
             amt_frame, text="₱",
@@ -1733,7 +1739,7 @@ class ConfirmOrderDialog(tk.Toplevel):
             font=("Segoe UI", f(9), "bold"),
             anchor="w",
         )
-        self._change_lbl.pack(fill="x", padx=pad, pady=(0, 10), ipady=4)
+        self._change_lbl.pack(fill="x", padx=pad, pady=(0, 6), ipady=4)
 
         def _update_change_lbl(*_):
             try:
@@ -1767,7 +1773,7 @@ class ConfirmOrderDialog(tk.Toplevel):
         # ── Action buttons (pinned to bottom-right) ───────────────────────────
         tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x")
         btn_row = tk.Frame(right, bg=THEME["panel"])
-        btn_row.pack(fill="x", padx=pad, pady=14)
+        btn_row.pack(fill="x", padx=pad, pady=10)
         btn_row.columnconfigure(0, weight=1, uniform="cbtn")
         btn_row.columnconfigure(1, weight=2, uniform="cbtn")
 

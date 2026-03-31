@@ -47,7 +47,7 @@ def _set_window_icon(root: tk.Tk) -> None:
     """
     Set the window/taskbar icon.
     - Prefers logo.ico (multi-size, best Windows support).
-    - Falls back to iconphoto() via Pillow if only logo.jpg is present.
+    - Falls back to iconphoto() via Pillow if only logo.png is present.
     - Silently skips if neither is found or Pillow is missing.
     """
     ico_path = ASSETS_DIR / "logo.ico"

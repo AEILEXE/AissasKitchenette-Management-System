@@ -148,8 +148,18 @@ class AppWindow:
             self.nav_title = tk.Button(
                 self.nav,
                 image=logo_img,
-                text=f"  {APP_NAME}",
-                compound=tk.LEFT,
+                text="",
+                bg=THEME["primary"],
+                activebackground=THEME["primary_light"],
+                bd=0,
+                cursor="hand2",
+                command=self._logo_click,
+            )
+        else:
+            # No logo available — show a minimal placeholder text so nav isn't empty
+            self.nav_title = tk.Button(
+                self.nav,
+                text="AK",
                 bg=THEME["primary"],
                 fg=THEME["text_on_primary"],
                 activebackground=THEME["primary_light"],
@@ -159,20 +169,7 @@ class AppWindow:
                 font=("Segoe UI", 11, "bold"),
                 command=self._logo_click,
             )
-        else:
-            self.nav_title = tk.Button(
-                self.nav,
-                text=APP_NAME,
-                bg=THEME["primary"],
-                fg=THEME["text_on_primary"],
-                activebackground=THEME["primary_light"],
-                activeforeground=THEME["text_on_primary"],
-                bd=0,
-                cursor="hand2",
-                font=("Segoe UI", 12, "bold"),
-                command=self._logo_click,
-            )
-        self.nav_title.pack(side=tk.LEFT, padx=(14, 10), pady=8)
+        self.nav_title.pack(side=tk.LEFT, padx=(10, 6), pady=8)
 
         # Tabs
         if self.auth_service.has_permission(P_POS):
@@ -186,7 +183,7 @@ class AppWindow:
         # Settings dropdown
         self.settings_btn = tk.Button(
             self.nav,
-            text="\u2699  Settings  \u25be",
+            text="Settings  \u25be",
             bg=THEME["primary"],
             fg=THEME["text_on_primary"],
             activebackground=THEME["primary_light"],

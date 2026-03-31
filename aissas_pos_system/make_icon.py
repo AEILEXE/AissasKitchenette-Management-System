@@ -1,5 +1,5 @@
 """
-make_icon.py — Convert assets/logo.jpg to assets/logo.ico
+make_icon.py — Convert assets/logo.png to assets/logo.ico
 
 Run once before building the EXE:
     python make_icon.py
@@ -21,13 +21,13 @@ def main() -> None:
         sys.exit(1)
 
     assets = Path(__file__).parent / "assets"
-    src = assets / "logo.jpg"
+    src = assets / "logo.png"
 
     if not src.exists():
-        # Also try .png
-        src = assets / "logo.png"
+        # Also try .jpg
+        src = assets / "logo.jpg"
     if not src.exists():
-        print(f"ERROR: Logo not found.  Expected:  {assets / 'logo.jpg'}  or  {assets / 'logo.png'}")
+        print(f"ERROR: Logo not found.  Expected:  {assets / 'logo.png'}  or  {assets / 'logo.jpg'}")
         sys.exit(1)
 
     out = assets / "logo.ico"
