@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -59,7 +60,8 @@ class POSView(tk.Frame):
         self._search_after: int | None = None    # debounce timer for search
         self._product_card_widgets: list[tk.Frame] = []
         self._prod_resize_after: int | None = None
-        self._cart_resize_after: str | None = None  # raw self.after() → str in tk stubs
+        self._prod_canvas_w: int = 0  # last confirmed width from <Configure>; 0 = not yet committed
+        self._cart_resize_after: int | None = None
 
         self._img_cache: dict[str, tk.PhotoImage] = {}
 
@@ -95,6 +97,7 @@ class POSView(tk.Frame):
         self._after(100, self._refresh_products)
         self._refresh_drafts_panel()
         self._refresh_cart()
+        self.after_idle(self._debounced_relayout)  # reflow once geometry settles
 
     # ── Lifecycle: cancel all pending callbacks on destroy ─────────────────────
     def destroy(self) -> None:
@@ -135,7 +138,7 @@ class POSView(tk.Frame):
 
         super().destroy()
 
-    def _after(self, ms: int, fn, *a) -> int | None:
+    def _after(self, ms: int, fn: Callable[..., object], *a: object) -> int | None:
         """Schedule fn(*a) in ms milliseconds; auto-tracks ID for safe cleanup."""
         if self._destroyed or self._building or not self.winfo_exists():
             return None
@@ -566,11 +569,16 @@ class POSView(tk.Frame):
             cursor="hand2",
         ).pack(side="left", fill="x", expand=True)
 
-    def _on_prod_canvas_configure(self, e):
+    def _on_prod_canvas_configure(self, e: object) -> None:
+        # Use e.width directly — on Windows, winfo_width() can lag behind the
+        # Configure event and return the pre-resize value, which would leave
+        # _prod_canvas_w stale and persist the wrong column count indefinitely.
+        ew: int = int(getattr(e, "width", 0))
         try:
-            self.prod_canvas.itemconfigure(self._prod_window_id, width=e.width)
+            self.prod_canvas.itemconfigure(self._prod_window_id, width=ew)
         except Exception:
             pass
+        self._prod_canvas_w = ew
         self._debounced_relayout()
 
     def _draft_mousewheel(self, e):
@@ -661,16 +669,16 @@ class POSView(tk.Frame):
         return [r for r in self._all_products_cache if q in str(r["name"]).lower()]
 
     def _calc_product_cols(self) -> int:
-        width = max(1, int(self.prod_canvas.winfo_width()))
-        # 3 cols once the product canvas is wide enough for comfortable cards
-        # (≥580 px → each card gets ≈193 px; ≥380 px → 2 cols at ≈190 px each)
-        return 3 if width >= 580 else 2
+        w = getattr(self, "_prod_canvas_w", 0)
+        if w < 300:
+            return 2  # skip invalid width
+        return 3 if w >= 580 else 2
 
     def _debounced_relayout(self) -> None:
         if self._destroyed or self._building or not self.winfo_exists():
             return
         self._cancel_after(self._prod_resize_after)
-        self._prod_resize_after = self._after(80, self._relayout_products)
+        self._prod_resize_after = self._after(160, self._relayout_products)
 
     def _refresh_products(self):
         if self._destroyed or self._building or not self.winfo_exists():
@@ -751,6 +759,13 @@ class POSView(tk.Frame):
         """Called by debounced resize — just re-grid existing cards."""
         if self._destroyed or self._building or not self.winfo_exists():
             return
+        try:
+            actual_w = self.prod_canvas.winfo_width()
+            if actual_w > 1:
+                self._prod_canvas_w = actual_w
+                self.prod_canvas.itemconfigure(self._prod_window_id, width=actual_w)
+        except Exception:
+            pass
         self._do_product_grid_layout()
 
     def _do_product_grid_layout(self) -> None:
@@ -761,6 +776,8 @@ class POSView(tk.Frame):
             if not self.prod_inner.winfo_exists() or not self.prod_canvas.winfo_exists():
                 return
         except Exception:
+            return
+        if getattr(self, "_prod_canvas_w", 0) < 300:
             return
         cards = self._product_card_widgets
         cols = self._calc_product_cols()
@@ -903,7 +920,7 @@ class POSView(tk.Frame):
             elif item_count <= 3:
                 new_h = max(190, min(content_h, 320))
             else:
-                new_h = min(content_h, self._CART_MAX_H)
+                new_h = max(190, min(content_h, self._CART_MAX_H))
             self.cart_canvas.configure(height=new_h)
         except Exception:
             pass

@@ -6,7 +6,7 @@
 ;   - Writable by the app  (database, receipts, exports go here)
 
 #define MyAppName      "Aissa's Kitchenette"
-#define MyAppVersion   "1.0"
+#define MyAppVersion   "1.0.0-beta.2"
 #define MyAppPublisher "Aissa's Kitchenette"
 #define MyAppExeName   "AissasKitchenette.exe"
 #define MyAppIcon      "assets\logo.ico"
@@ -33,7 +33,7 @@ MinVersion=10.0
 CloseApplications=yes
 RestartIfNeededByRun=no
 ; Version info embedded in setup EXE
-VersionInfoVersion=1.0.0.0
+VersionInfoVersion=1.0.0.2
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}

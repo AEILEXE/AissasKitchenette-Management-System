@@ -2,6 +2,27 @@
 
 A standalone desktop **Point-of-Sale and Inventory Management System** for a small food service business. Built entirely with **Python 3 + Tkinter**. No internet connection required. All data is stored locally with SQLite.
 
+> **Current release: v1.0.0-beta.2**
+
+---
+
+## What's Updated — v1.0.0-beta.2
+
+### POS UI — Resize & Layout
+- Fixed product grid breaking when the window is maximized or restored (wrong width was used for column calculation).
+- Layout now recomputes only after the window has fully settled, preventing unstable intermediate states.
+- Debounce delay increased to prevent re-layout on every intermediate `<Configure>` event during maximize/restore.
+- `_prod_canvas_w` is now set unconditionally from the real event width — no longer skips updates on small values.
+
+### POS UI — Flicker on Screen Open
+- Removed forced `update_idletasks()` calls inside the per-batch card render path.
+- Product cards now render in one clean pass instead of repainting after every 6 items.
+- `update_idletasks()` retained only in the resize path (`_relayout_products`) where a single forced commit is correct.
+
+### POS UI — Resize Width Measurement
+- Replaced `winfo_width()` with `_prod_canvas_w` (event-sourced) inside `_calc_product_cols()` to prevent reading stale pre-resize geometry.
+- Added `< 300` guard to skip layout when canvas width is not yet valid.
+
 ---
 
 ## 1. Project Overview
@@ -495,4 +516,4 @@ When changing a password or creating a new user:
 
 ---
 
-*Aissa's Kitchenette Management System — Python 3 + Tkinter, offline-first, Windows-ready.*
+*Aissa's Kitchenette Management System — v1.0.0-beta.2 — Python 3 + Tkinter, offline-first, Windows-ready.*
