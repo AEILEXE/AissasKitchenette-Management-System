@@ -37,7 +37,7 @@ VersionInfoVersion=1.0.0.2
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductVersion=1.0.0.2
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
