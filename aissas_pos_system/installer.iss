@@ -45,6 +45,15 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"
 
+[Dirs]
+; Pre-create writable runtime directories so ZIP import works even before first launch.
+; The app also creates these on startup (config.py), but having them ready at install
+; time means a ZIP import immediately after install will find the data\ folder.
+Name: "{app}\data"
+Name: "{app}\product_images"
+Name: "{app}\receipts"
+Name: "{app}\exports"
+
 [Files]
 ; Main executable (one-file EXE — everything bundled inside)
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion

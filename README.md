@@ -414,7 +414,59 @@ The bundled read-only assets (fonts, icons, logo) are extracted to a temporary d
 ### Database backup and restore
 
 - **Export:** Settings → Database → Export Database — saves a copy of `pos.db` anywhere you choose.
-- **Import:** Settings → Database → Import Database — replaces the live DB with a backup file. Requires password confirmation. The app keeps working after import without requiring a restart.
+- **Import:** Settings → Database → Import Database — replaces the live DB with a backup `.db` file. Requires password confirmation. The app reconnects immediately after import.
+
+### ZIP data import (database + product images)
+
+Use **Settings → Database → Import Data (ZIP)** to restore both the database and product images in one step.
+
+#### Expected ZIP structure
+
+```
+data/
+data/pos.db
+product_images/
+product_images/beefbolognese.webp
+product_images/burgersteak.png
+... (all product image files)
+```
+
+The ZIP **must** contain:
+- `data/pos.db` — the SQLite database file
+- At least one file under `product_images/` — the product image files
+
+Subdirectories inside `product_images/` are supported and extracted as-is.
+
+#### How to create the ZIP
+
+From the install directory (or project root in dev mode), zip up the two folders:
+
+```
+# Windows — using File Explorer:
+Select data\ and product_images\ → right-click → Send to → Compressed (zipped) folder
+
+# PowerShell:
+Compress-Archive -Path data, product_images -DestinationPath app_data_backup.zip
+```
+
+The resulting ZIP must have `data/` and `product_images/` at the root level (not nested inside another folder).
+
+#### How to import
+
+1. Go to **Settings → Database** (admin login required).
+2. Click **Import Data (ZIP)**.
+3. Enter your admin password when prompted.
+4. Select the `.zip` file.
+5. Confirm the warning — the current database and all product images will be replaced.
+6. The app automatically backs up the current `pos.db` as `pos_backup_<timestamp>.db` inside `data/` before replacing anything.
+7. The current view (POS, Inventory, Transactions) reloads automatically with the imported data. No restart required.
+
+#### Safety notes
+
+- A timestamped `.db` backup is always created before any file is replaced.
+- ZIP paths containing `..` (path traversal) are rejected.
+- Only `data/` and `product_images/` entries are extracted — all other ZIP entries are ignored.
+- If extraction fails partway through, the app reconnects to whatever DB state remains and shows an error. Restore from the backup file if needed.
 
 ---
 

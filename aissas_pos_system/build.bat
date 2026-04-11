@@ -8,6 +8,13 @@ echo  Aissa's Kitchenette -- Build Script
 echo ========================================
 echo.
 
+REM ── Pre-clean: delete old EXE and installer so stale files can never be
+REM    accidentally packaged.  If PyInstaller fails the missing EXE will
+REM    abort the installer step below -- no silent reuse of old artifacts.
+if exist "dist\AissasKitchenette.exe"       del /f /q "dist\AissasKitchenette.exe"
+if exist "dist\AissasKitchenette_Setup.exe" del /f /q "dist\AissasKitchenette_Setup.exe"
+if exist "dist\main.exe"                    del /f /q "dist\main.exe"
+
 REM ── Step 1: Generate logo.ico from logo.jpg ─────────────────────────────
 echo [1/3] Generating icon (assets\logo.ico)...
 python make_icon.py
@@ -25,6 +32,13 @@ pyinstaller --clean main.spec
 if errorlevel 1 (
     echo ERROR: PyInstaller build failed.
     echo        Make sure PyInstaller is installed:  pip install pyinstaller
+    exit /b 1
+)
+
+REM Abort if the expected EXE was not produced (catches silent spec mismatches)
+if not exist "dist\AissasKitchenette.exe" (
+    echo ERROR: dist\AissasKitchenette.exe not found after build.
+    echo        Check that main.spec has name='AissasKitchenette'.
     exit /b 1
 )
 echo       Done.  EXE:  dist\AissasKitchenette.exe

@@ -247,7 +247,8 @@ class AppWindow:
 
     def show_account_settings(self) -> None:
         """Open account settings dialog."""
-        AccountSettingsDialog(self.root, self.db, self.auth_service)
+        AccountSettingsDialog(self.root, self.db, self.auth_service,
+                              on_data_import=self._refresh_current_view)
 
     # ---------- Navigation ----------
     def show_login(self) -> None:

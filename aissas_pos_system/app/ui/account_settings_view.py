@@ -5,11 +5,13 @@ Settings: Profile, Security (policy-enforced password change), Database Backup,
 """
 from __future__ import annotations
 
+import datetime
 import shutil
+import zipfile
 import tkinter as tk
 from tkinter import messagebox, ttk, filedialog
 
-from app.config import THEME, DB_PATH
+from app.config import THEME, DB_PATH, DATA_DIR, PRODUCT_IMAGES_DIR
 from app.db.database import Database
 from app.db.dao import UserDAO, RolePermissionDAO
 from app.services.auth_service import AuthService
@@ -161,12 +163,14 @@ class AccountSettingsDialog(tk.Toplevel):
       - Role Permissions  (per-role toggle grid)        [admin]
     """
 
-    def __init__(self, parent: tk.Widget, db: Database, auth: AuthService):
+    def __init__(self, parent: tk.Widget, db: Database, auth: AuthService,
+                 on_data_import=None):
         super().__init__(parent)
-        self.db       = db
-        self.auth     = auth
-        self.user_dao = UserDAO(db)
-        self.rbac_dao = RolePermissionDAO(db)
+        self.db              = db
+        self.auth            = auth
+        self.user_dao        = UserDAO(db)
+        self.rbac_dao        = RolePermissionDAO(db)
+        self._on_data_import = on_data_import
 
         self.title("Settings")
         self.configure(bg=THEME["bg"])
@@ -577,7 +581,8 @@ class AccountSettingsDialog(tk.Toplevel):
         tk.Label(
             db_card,
             text="Export a full .db backup or restore from a previous backup file.\n"
-                 "Admin password confirmation is required before importing.",
+                 "Admin password confirmation is required before importing.\n"
+                 "Use \"Import Data (ZIP)\" to restore both the database and product images at once.",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", ui_scale.scale_font(9)), justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 12))
@@ -599,6 +604,13 @@ class AccountSettingsDialog(tk.Toplevel):
             font=("Segoe UI", ui_scale.scale_font(9), "bold"),
             command=self._import_db,
         ).grid(row=0, column=1, sticky="ew", ipady=2)
+        tk.Button(
+            btn_grid, text="Import Data (ZIP)  \u2014  database + product images",
+            bg=THEME["brown_dark"], fg="white",
+            bd=0, pady=ui_scale.s(9), cursor="hand2",
+            font=("Segoe UI", ui_scale.scale_font(9), "bold"),
+            command=self._import_zip,
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0), ipady=2)
 
     def _export_db(self):
         dest = filedialog.asksaveasfilename(
@@ -668,6 +680,176 @@ class AccountSettingsDialog(tk.Toplevel):
             except Exception:
                 pass
             messagebox.showerror("Import Failed", f"Could not import database:\n{e}")
+
+    def _import_zip(self):
+        """
+        Import a ZIP containing data/pos.db and product_images/.
+        Steps:
+          1. Verify admin password.
+          2. Validate ZIP structure and paths.
+          3. Backup current DB to data/pos_backup_<timestamp>.db.
+          4. Close DB connection; remove stale WAL/SHM files.
+          5. Safely extract data/ and product_images/ entries only.
+          6. Reconnect DB.
+        """
+        u = self.auth.get_current_user()
+        if not u:
+            messagebox.showerror("Error", "Not logged in.")
+            return
+
+        pwd = _ask_password(self, "Confirm ZIP Import", "Enter admin password to confirm ZIP import:")
+        if pwd is None:
+            return
+
+        ok, _msg = self.auth.verify_password(u.username, pwd)
+        if not ok:
+            messagebox.showerror("Authentication Failed", "Incorrect password. Import cancelled.")
+            return
+
+        src = filedialog.askopenfilename(
+            title="Select Data ZIP File",
+            filetypes=[("ZIP Archive", "*.zip"), ("All files", "*.*")],
+        )
+        if not src:
+            return
+
+        # ── Validate ZIP ──────────────────────────────────────────────────
+        try:
+            with zipfile.ZipFile(src, "r") as zf:
+                names = zf.namelist()
+        except zipfile.BadZipFile:
+            messagebox.showerror("Invalid ZIP", "The selected file is not a valid ZIP archive.")
+            return
+        except Exception as e:
+            messagebox.showerror("Invalid ZIP", f"Could not open ZIP file:\n{e}")
+            return
+
+        if "data/pos.db" not in names:
+            messagebox.showerror(
+                "Invalid ZIP",
+                "ZIP does not contain the required file:\n\n"
+                "  data/pos.db\n\n"
+                "Expected ZIP structure:\n"
+                "  data/pos.db\n"
+                "  product_images/<image files>",
+            )
+            return
+
+        has_images = any(
+            n.startswith("product_images/") and not n.endswith("/")
+            for n in names
+        )
+        if not has_images:
+            messagebox.showerror(
+                "Invalid ZIP",
+                "ZIP does not contain any files under:\n\n"
+                "  product_images/\n\n"
+                "Expected ZIP structure:\n"
+                "  data/pos.db\n"
+                "  product_images/<image files>",
+            )
+            return
+
+        # Path-traversal safety check
+        for name in names:
+            parts = name.replace("\\", "/").split("/")
+            if ".." in parts:
+                messagebox.showerror(
+                    "Invalid ZIP",
+                    f"ZIP contains an unsafe path:\n  {name}\n\nImport cancelled.",
+                )
+                return
+
+        confirm = messagebox.askyesno(
+            "Confirm ZIP Import",
+            "WARNING: This will REPLACE the current database AND all product images.\n\n"
+            "A timestamped backup of the current database will be saved automatically "
+            "in the data/ folder before replacing.\n\n"
+            "All current data will be overwritten. Proceed?",
+            icon="warning",
+        )
+        if not confirm:
+            return
+
+        # ── Backup current DB ─────────────────────────────────────────────
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = DB_PATH.parent / f"pos_backup_{ts}.db"
+        try:
+            if DB_PATH.exists():
+                shutil.copy2(str(DB_PATH), str(backup_path))
+        except Exception as e:
+            messagebox.showerror(
+                "Backup Failed",
+                f"Could not back up the current database:\n{e}\n\nImport cancelled.",
+            )
+            return
+
+        # ── Close DB, clean WAL/SHM, extract ZIP ─────────────────────────
+        try:
+            self.db.close()
+
+            # Remove stale WAL/SHM so the new DB opens cleanly
+            for suffix in (".db-wal", ".db-shm"):
+                stale = DB_PATH.parent / (DB_PATH.name + suffix)
+                if stale.exists():
+                    try:
+                        stale.unlink()
+                    except Exception:
+                        pass
+
+            with zipfile.ZipFile(src, "r") as zf:
+                for member in zf.infolist():
+                    name = member.filename.replace("\\", "/")
+                    parts = name.split("/")
+
+                    # Skip directory entries and any unsafe paths
+                    if member.is_dir() or ".." in parts:
+                        continue
+
+                    # Only extract recognised top-level folders
+                    if name.startswith("data/"):
+                        rel = name[len("data/"):]
+                        dest = DATA_DIR / rel
+                    elif name.startswith("product_images/"):
+                        rel = name[len("product_images/"):]
+                        dest = PRODUCT_IMAGES_DIR / rel
+                    else:
+                        continue  # ignore __MACOSX, .DS_Store, etc.
+
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    with zf.open(member) as src_fh, open(dest, "wb") as dst_fh:
+                        shutil.copyfileobj(src_fh, dst_fh)
+
+            # Reconnect with the freshly imported DB and run schema migrations
+            try:
+                self.db.connect()
+            except Exception:
+                pass
+            try:
+                self.db.initialize_schema()
+            except Exception:
+                pass
+
+            # Save callback before destroying this dialog
+            cb = self._on_data_import
+
+            messagebox.showinfo(
+                "Import Complete",
+                f"Data imported successfully.\n\n"
+                f"Database backup saved as:\n  {backup_path.name}\n\n"
+                "The current view will reload with the imported data.",
+            )
+            self.destroy()
+            if cb:
+                cb()
+
+        except Exception as e:
+            # Always try to reconnect so the app keeps working
+            try:
+                self.db.connect()
+            except Exception:
+                pass
+            messagebox.showerror("Import Failed", f"Could not import ZIP:\n{e}")
 
     # ── User Management ───────────────────────────────────────────────────────
 
