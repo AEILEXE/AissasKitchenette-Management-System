@@ -61,7 +61,7 @@ class Database:
         """Execute SQL without committing. Returns lastrowid. Use with commit()."""
         assert self.conn is not None, "Database not connected"
         cur = self.conn.execute(sql, tuple(params))
-        return int(cur.lastrowid) if cur.lastrowid else 0
+        return int(cur.lastrowid) if cur.lastrowid is not None else 0
 
     def commit(self) -> None:
         """Explicitly commit the current transaction."""
@@ -143,8 +143,7 @@ class Database:
         # USERS TABLE MIGRATIONS
         # =====================================================================
         if self._table_exists("users"):
-            # No new columns needed for users - schema is stable
-            pass
+            self._add_column_if_missing("users", "full_name", "TEXT NOT NULL DEFAULT ''")
 
         # =====================================================================
         # PRODUCTS TABLE MIGRATIONS
@@ -213,12 +212,21 @@ class Database:
                 "TEXT NOT NULL DEFAULT (datetime('now','localtime'))",
             )
 
+            # New fields from Modern Bistro upgrade
+            self._add_column_if_missing("orders", "receipt_id", "TEXT")
+            self._add_column_if_missing("orders", "order_type", "TEXT NOT NULL DEFAULT 'DINE_IN'")
+            self._add_column_if_missing("orders", "table_number", "TEXT")
+            self._add_column_if_missing("orders", "discount_type", "TEXT NOT NULL DEFAULT 'NONE'")
+            self._add_column_if_missing("orders", "vat_amount", "REAL NOT NULL DEFAULT 0")
+
         # =====================================================================
         # ORDER_ITEMS TABLE MIGRATIONS
         # =====================================================================
         if self._table_exists("order_items"):
             self._add_column_if_missing("order_items", "unit_price", "REAL NOT NULL DEFAULT 0")
             self._add_column_if_missing("order_items", "note", "TEXT NOT NULL DEFAULT ''")
+            self._add_column_if_missing("order_items", "voided", "INTEGER NOT NULL DEFAULT 0")
+            self._add_column_if_missing("order_items", "subtotal", "REAL NOT NULL DEFAULT 0")
 
         # =====================================================================
         # ROLE_PERMISSIONS TABLE — seeded from constants if empty

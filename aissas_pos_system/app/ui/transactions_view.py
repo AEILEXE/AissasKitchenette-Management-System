@@ -7,7 +7,7 @@ from datetime import datetime
 
 from app.config import THEME
 from app.db.database import Database
-from app.db.dao import OrderDAO, DraftDAO
+from app.db.dao import OrderDAO, DraftDAO  # VoidDialog also uses void_completed_order / void_order_item
 from app.services.auth_service import AuthService
 from app.services.receipt_service import ReceiptService
 from app.ui import ui_scale
@@ -481,6 +481,12 @@ class TransactionsView(tk.Frame):
         ysb.grid(row=0, column=1, sticky="ns")
         self.tbl.configure(yscrollcommand=ysb.set)
 
+        self._empty_lbl = tk.Label(
+            table_card, text="No transactions yet",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", 13),
+        )
+
         # (id, heading, width, anchor, stretch, minwidth)
         col_cfg = [
             ("id",      "ID",        65, "center", False,  45),
@@ -668,6 +674,12 @@ class TransactionsView(tk.Frame):
         n = len(rows)
         if hasattr(self, "_count_var"):
             self._count_var.set(f"{n} transaction{'s' if n != 1 else ''} shown")
+
+        if hasattr(self, "_empty_lbl"):
+            if n == 0:
+                self._empty_lbl.place(relx=0.5, rely=0.5, anchor="center")
+            else:
+                self._empty_lbl.place_forget()
 
     def _on_tbl_click(self, event: tk.Event) -> None:
         """Open transaction details when the View column cell is clicked."""
@@ -865,8 +877,8 @@ class TransactionDetailsDialog(tk.Toplevel):
             ref = str(data["reference_no"] or "").strip()
         except Exception:
             ref = ""
-        if ref:
-            info_line("Reference No.:", ref)
+        # Always show reference number; show "—" when not yet generated
+        info_line("Reference No.:", ref if ref else "—")
 
         tk.Frame(info_card, bg=THEME["border"], height=1).pack(fill="x", padx=14, pady=4)
 
@@ -941,6 +953,8 @@ class TransactionDetailsDialog(tk.Toplevel):
         footer = tk.Frame(self.inner, bg=THEME["bg"])
         footer.pack(fill="x", padx=18, pady=(4, 16))
 
+        can_void = self.auth.has_permission(P_VOID) if self.auth else False
+
         if status == "Pending":
             tk.Button(
                 footer, text="Resolve",
@@ -951,8 +965,6 @@ class TransactionDetailsDialog(tk.Toplevel):
                 command=self._open_resolve,
             ).pack(side="left")
 
-            # Void/Cancel button — only shown if user has P_VOID permission
-            can_void = self.auth.has_permission(P_VOID) if self.auth else False
             if can_void:
                 tk.Button(
                     footer, text="Void / Cancel",
@@ -962,6 +974,16 @@ class TransactionDetailsDialog(tk.Toplevel):
                     font=("Segoe UI", f(9), "bold"),
                     command=self._open_void,
                 ).pack(side="left", padx=(sp(8), 0))
+
+        elif status == "Completed" and can_void:
+            tk.Button(
+                footer, text="Void Order",
+                bg=THEME["danger"], fg="white",
+                activebackground="#7f1d1d", activeforeground="white",
+                bd=0, padx=sp(14), pady=sp(9), cursor="hand2",
+                font=("Segoe UI", f(9), "bold"),
+                command=self._open_void_completed,
+            ).pack(side="left")
 
         tk.Button(
             footer, text="Close",
@@ -1061,12 +1083,9 @@ class TransactionDetailsDialog(tk.Toplevel):
 
     def _open_void(self):
         """Void/cancel a Pending order after permission + confirmation check."""
-        # Double-check permission at the handler level (not just UI visibility)
         if not (self.auth and self.auth.has_permission(P_VOID)):
-            messagebox.showerror(
-                "Access Denied",
-                "You do not have permission to void / cancel transactions.",
-            )
+            messagebox.showerror("Access Denied",
+                                 "You do not have permission to void / cancel transactions.")
             return
         if not messagebox.askyesno(
             "Void / Cancel Transaction",
@@ -1077,15 +1096,29 @@ class TransactionDetailsDialog(tk.Toplevel):
             return
         try:
             self.orders.cancel_order(self.order_id)
-            messagebox.showinfo(
-                "Voided",
-                f"Order #{self.order_id} has been cancelled and stock restored.",
-            )
+            messagebox.showinfo("Voided",
+                                f"Order #{self.order_id} has been cancelled and stock restored.")
             if self.on_refresh:
                 self.on_refresh()
             self.destroy()
         except Exception as exc:
             messagebox.showerror("Void Failed", f"Could not void order:\n{exc}")
+
+    def _open_void_completed(self):
+        """Open the VoidDialog to void a Completed order (full or per-item)."""
+        if not (self.auth and self.auth.has_permission(P_VOID)):
+            messagebox.showerror("Access Denied",
+                                 "You do not have permission to void transactions.")
+            return
+        VoidDialog(
+            self, self.db, self.order_id, self.auth,
+            on_done=self._void_done,
+        )
+
+    def _void_done(self):
+        if self.on_refresh:
+            self.on_refresh()
+        self.destroy()
 
     def _print_receipt(self):
         try:
@@ -1231,6 +1264,280 @@ class ResolveDialog(tk.Toplevel):
                 f"Could not cancel order #{self.order_id}.\n\n{e}",
             )
             return
+        if self.on_done:
+            self.on_done()
+        self.destroy()
+
+
+# ── VOID DIALOG ───────────────────────────────────────────────────────────────
+
+class VoidDialog(tk.Toplevel):
+    """Allow voiding individual items or the entire completed order."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        db: Database,
+        order_id: int,
+        auth: AuthService | None,
+        on_done=None,
+    ):
+        super().__init__(parent)
+        self.db       = db
+        self.order_id = order_id
+        self.auth     = auth
+        self.on_done  = on_done
+        self.orders   = OrderDAO(db)
+
+        self.title(f"Void Transaction — Order #{order_id}")
+        self.configure(bg=THEME["bg"])
+        self.geometry("560x500")
+        self.resizable(False, True)
+        self.transient(parent)
+        self.grab_set()
+
+        self._item_vars: dict[int, tk.BooleanVar] = {}
+        self._items: list = []
+        self._build()
+
+    def _build(self):
+        f  = ui_scale.scale_font
+        sp = ui_scale.s
+
+        # Header
+        hdr = tk.Frame(self, bg=THEME["danger"], padx=sp(16), pady=sp(10))
+        hdr.pack(fill="x")
+        tk.Label(
+            hdr, text=f"Void Order #{self.order_id}",
+            bg=THEME["danger"], fg="white",
+            font=("Segoe UI", f(12), "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            hdr, text="Select items to void, or void the entire order.",
+            bg=THEME["danger"], fg="#fecaca",
+            font=("Segoe UI", f(9)),
+        ).pack(anchor="w")
+
+        # Items list
+        list_frame = tk.Frame(self, bg=THEME["panel"],
+                              highlightthickness=1,
+                              highlightbackground=THEME["border"])
+        list_frame.pack(fill="both", expand=True, padx=sp(16), pady=(sp(12), sp(6)))
+
+        canvas = tk.Canvas(list_frame, bg=THEME["panel"], bd=0, highlightthickness=0)
+        sb     = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = tk.Frame(canvas, bg=THEME["panel"])
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(win_id, width=canvas.winfo_width())
+        inner.bind("<Configure>", _on_configure)
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win_id, width=e.width))
+
+        # Column headers
+        hrow = tk.Frame(inner, bg=THEME["beige"])
+        hrow.pack(fill="x", padx=sp(4), pady=(sp(4), 0))
+        tk.Label(hrow, text="", bg=THEME["beige"], width=3).pack(side="left")
+        tk.Label(hrow, text="Item", bg=THEME["beige"], fg=THEME["muted"],
+                 font=("Segoe UI", f(8), "bold")).pack(side="left", padx=(sp(4), 0))
+        tk.Label(hrow, text="Price", bg=THEME["beige"], fg=THEME["muted"],
+                 font=("Segoe UI", f(8), "bold")).pack(side="right", padx=sp(8))
+        tk.Label(hrow, text="Qty", bg=THEME["beige"], fg=THEME["muted"],
+                 font=("Segoe UI", f(8), "bold")).pack(side="right", padx=(0, sp(8)))
+
+        try:
+            raw_items = self.orders.get_order_items_with_void(self.order_id) or []
+            self._items = [dict(row) for row in raw_items]
+        except Exception:
+            self._items = []
+
+        for item in self._items:
+            item_id  = int(item["item_id"])
+            voided   = bool(item.get("voided", 0))
+            name     = str(item.get("name") or f"Item #{item_id}")
+            qty      = int(item.get("qty") or 0)
+            price    = float(item.get("unit_price") or 0)
+            subtotal = qty * price
+
+            row_bg = "#fef2f2" if voided else THEME["panel"]
+            row = tk.Frame(inner, bg=row_bg)
+            row.pack(fill="x", padx=sp(4), pady=sp(1))
+
+            var = tk.BooleanVar(value=False)
+            self._item_vars[item_id] = var
+
+            cb = tk.Checkbutton(
+                row, variable=var,
+                bg=row_bg, activebackground=row_bg,
+                state="disabled" if voided else "normal",
+            )
+            cb.pack(side="left", padx=(sp(4), 0))
+
+            name_text = f"{name}" + ("  [Voided]" if voided else "")
+            tk.Label(
+                row, text=name_text,
+                bg=row_bg,
+                fg=THEME["muted"] if voided else THEME["text"],
+                font=("Segoe UI", f(9), "overstrike" if voided else "normal"),
+            ).pack(side="left", padx=(sp(4), 0))
+
+            tk.Label(
+                row, text=money(subtotal),
+                bg=row_bg,
+                fg=THEME["muted"] if voided else THEME["text"],
+                font=("Segoe UI", f(9)),
+            ).pack(side="right", padx=sp(8))
+            tk.Label(
+                row, text=f"×{qty}",
+                bg=row_bg,
+                fg=THEME["muted"],
+                font=("Segoe UI", f(9)),
+            ).pack(side="right", padx=(0, sp(8)))
+
+        # Reason
+        reason_frame = tk.Frame(self, bg=THEME["bg"])
+        reason_frame.pack(fill="x", padx=sp(16), pady=(sp(4), sp(8)))
+        tk.Label(
+            reason_frame, text="Reason (optional):",
+            bg=THEME["bg"], fg=THEME["text"],
+            font=("Segoe UI", f(9)),
+        ).pack(anchor="w")
+        self.var_reason = tk.StringVar()
+        tk.Entry(
+            reason_frame, textvariable=self.var_reason,
+            bg="white", fg=THEME["text"],
+            bd=1, relief="solid",
+            font=("Segoe UI", f(9)),
+        ).pack(fill="x", ipady=sp(5), pady=(sp(4), 0))
+
+        # Footer buttons
+        footer = tk.Frame(self, bg=THEME["bg"])
+        footer.pack(fill="x", padx=sp(16), pady=(0, sp(14)))
+
+        tk.Button(
+            footer, text="Void Entire Order",
+            bg=THEME["danger"], fg="white",
+            activebackground="#7f1d1d", activeforeground="white",
+            bd=0, padx=sp(14), pady=sp(9), cursor="hand2",
+            font=("Segoe UI", f(9), "bold"),
+            command=self._void_full,
+        ).pack(side="left")
+
+        tk.Button(
+            footer, text="Void Selected Items",
+            bg="#b45309", fg="white",
+            activebackground="#92400e", activeforeground="white",
+            bd=0, padx=sp(14), pady=sp(9), cursor="hand2",
+            font=("Segoe UI", f(9), "bold"),
+            command=self._void_items,
+        ).pack(side="left", padx=(sp(8), 0))
+
+        tk.Button(
+            footer, text="Close",
+            bg=THEME["panel"], fg=THEME["text"],
+            bd=1, padx=sp(14), pady=sp(9), cursor="hand2",
+            font=("Segoe UI", f(9)),
+            command=self.destroy,
+        ).pack(side="right")
+
+        self.bind("<Escape>", lambda _e: self.destroy(), add="+")
+
+    def _get_actor(self) -> tuple[int, str]:
+        if self.auth:
+            u = getattr(self.auth, "get_current_user", lambda: None)()
+            if u:
+                return int(u.user_id or 0), str(u.username or "")
+        return 0, ""
+
+    def _void_full(self):
+        actor_id, actor_name = self._get_actor()
+        if not actor_id:
+            messagebox.showerror("Error", "Cannot verify current user.")
+            return
+        if not messagebox.askyesno(
+            "Void Entire Order",
+            f"Void ALL items in order #{self.order_id}?\n\n"
+            "This will cancel the order and restore all stock.\n"
+            "This cannot be undone.",
+            icon="warning",
+        ):
+            return
+        reason = self.var_reason.get().strip()
+        try:
+            self.orders.void_completed_order(
+                self.order_id, actor_id, actor_name, reason
+            )
+            messagebox.showinfo(
+                "Order Voided",
+                f"Order #{self.order_id} has been voided and stock restored.",
+            )
+            if self.on_done:
+                self.on_done()
+            self.destroy()
+        except Exception as exc:
+            messagebox.showerror("Void Failed", f"Could not void order:\n{exc}")
+
+    def _void_items(self):
+        actor_id, actor_name = self._get_actor()
+        if not actor_id:
+            messagebox.showerror("Error", "Cannot verify current user.")
+            return
+
+        selected = [iid for iid, var in self._item_vars.items() if var.get()]
+        if not selected:
+            messagebox.showwarning("No Items Selected", "Please check at least one item to void.")
+            return
+
+        names = []
+        for item in self._items:
+            if int(item["item_id"]) in selected:
+                names.append(str(item.get("name") or f"#{item['item_id']}"))
+
+        if not messagebox.askyesno(
+            "Void Selected Items",
+            f"Void {len(selected)} item(s) from order #{self.order_id}?\n\n"
+            + "\n".join(f"  • {n}" for n in names)
+            + "\n\nStock will be restored for voided items.",
+            icon="warning",
+        ):
+            return
+
+        reason = self.var_reason.get().strip()
+        errors = []
+        for item in self._items:
+            iid = int(item["item_id"])
+            if iid not in selected:
+                continue
+            try:
+                raw_pid = item.get("product_id")
+                self.orders.void_order_item(
+                    order_id=self.order_id,
+                    item_id=iid,
+                    product_id=int(raw_pid) if raw_pid is not None else None,
+                    qty=int(item.get("qty") or 0),
+                    unit_price=float(item.get("unit_price") or 0),
+                    voided_by_user_id=actor_id,
+                    voided_by_username=actor_name,
+                    reason=reason,
+                )
+            except Exception as exc:
+                errors.append(str(exc))
+
+        if errors:
+            messagebox.showerror(
+                "Partial Void",
+                f"Some items could not be voided:\n\n" + "\n".join(errors),
+            )
+        else:
+            messagebox.showinfo(
+                "Items Voided",
+                f"{len(selected)} item(s) voided successfully.",
+            )
         if self.on_done:
             self.on_done()
         self.destroy()

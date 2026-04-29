@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tkinter as tk
 from tkinter import messagebox, Menu
 from typing import Any, Callable, Optional, Type
@@ -7,8 +8,9 @@ from typing import Any, Callable, Optional, Type
 from app.config import APP_NAME, THEME, LOGO_PATH
 from app.db.database import Database
 from app.services.auth_service import AuthService
-from app.constants import P_POS, P_INV_VIEW, P_INV_MANAGE  # keep perms
+from app.constants import P_POS, P_INV_VIEW, P_INV_MANAGE, P_REPORTS, P_DATABASE
 from app.ui import ui_scale
+from app.ui import ui_styles
 
 try:
     from PIL import Image, ImageTk  # type: ignore
@@ -20,7 +22,33 @@ from app.ui.login_view import LoginView
 from app.ui.pos_view import POSView
 from app.ui.transactions_view import TransactionsView
 from app.ui.inventory_shell_view import InventoryShellView
+from app.ui.dashboard_view import DashboardView
+from app.ui.reports_view import ReportsView
+from app.ui.backup_view import BackupView
 from app.ui.account_settings_view import AccountSettingsDialog
+
+# ── Nav colours (warm café palette) ─────────────────────────────────────────
+_SB        = THEME["sidebar"]         # #5C3D2E  warm coffee brown
+_SB_ACTIVE = THEME["sidebar_active"]  # #D4956A  terra cotta
+_SB_HOVER  = THEME["sidebar_hover"]   # #7A5244  deeper warm brown
+_SB_TEXT   = "#FFFFFF"
+_TOPBAR_H  = 48
+
+
+def _format_display_name(user) -> str:
+    """Return 'Full Name (Role)' or fall back to formatted username."""
+    full_name = getattr(user, "full_name", "").strip() if user else ""
+    username  = getattr(user, "username", "").strip() if user else ""
+    role      = (getattr(user, "role", "") or "").capitalize()
+
+    if full_name:
+        return f"{full_name}  ({role})"
+
+    if not username:
+        return "User"
+    parts = [p for p in re.split(r"[\s._-]+", username) if p]
+    display = " ".join(p[:1].upper() + p[1:].lower() for p in parts) if parts else username.title()
+    return f"{display}  ({role})"
 
 
 class AppWindow:
@@ -31,18 +59,21 @@ class AppWindow:
         self._current_view: Optional[tk.Widget] = None
 
         self.root.configure(bg=THEME["bg"])
+        ui_styles.apply_global_styles()
 
         self.root_frame = tk.Frame(root, bg=THEME["bg"])
         self.root_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.nav = tk.Frame(self.root_frame, bg=THEME["primary"], height=52)
+        # Topbar — warm coffee brown
+        self.nav = tk.Frame(self.root_frame, bg=_SB, height=_TOPBAR_H)
+        self.nav.pack_propagate(False)
 
         self.content = tk.Frame(self.root_frame, bg=THEME["bg"])
         self.content.pack(fill=tk.BOTH, expand=True)
 
         self._nav_btns: dict[str, tk.Button] = {}
         self._active_nav_key: str | None = None
-        self._nav_logo_ref = None  # keeps logo PhotoImage from GC
+        self._nav_logo_ref = None
 
         self.nav_title: tk.Button | None = None
         self.user_label: tk.Label | None = None
@@ -51,12 +82,16 @@ class AppWindow:
 
         self.show_login()
 
-    # ---------- helpers ----------
+    # ── helpers ──────────────────────────────────────────────────────────
+
     def _set_user_label(self) -> None:
         if not self.user_label:
             return
         u = self.auth_service.get_current_user()
-        self.user_label.config(text=f"{u.username} ({u.role})" if u else "")
+        if not u:
+            self.user_label.config(text="")
+            return
+        self.user_label.config(text=_format_display_name(u))
 
     def _clear_content(self) -> None:
         if self._current_view is not None:
@@ -87,35 +122,39 @@ class AppWindow:
         side: str = tk.LEFT,
         color: Optional[str] = None,
     ) -> tk.Button:
-        bg = color if color is not None else THEME["primary"]
+        bg = color if color is not None else _SB
         btn = tk.Button(
             self.nav,
             text=text,
             command=cmd,
             bg=bg,
-            fg=THEME["text_on_primary"],
-            activebackground=THEME["primary_light"],
-            activeforeground=THEME["text_on_primary"],
+            fg=_SB_TEXT,
+            activebackground=_SB_HOVER,
+            activeforeground=_SB_TEXT,
             padx=16,
-            pady=10,
+            pady=0,
             relief=tk.FLAT,
+            bd=0,
             cursor="hand2",
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", 9, "bold"),
+            height=2,
         )
-        btn.pack(side=side, padx=6, pady=6)
+        btn.pack(side=side, padx=2, pady=0)
         self._nav_btns[key] = btn
         return btn
 
     def _set_active_nav(self, key: str) -> None:
         self._active_nav_key = key
         for k, btn in self._nav_btns.items():
-            if k in ("logout",):
-                continue
-            btn.configure(bg=THEME["primary_dark"] if k == key else THEME["primary"])
-
-        # Settings button highlight too
+            active = (k == key)
+            btn.configure(
+                bg=_SB_ACTIVE if active else _SB,
+                relief=tk.FLAT,
+            )
         if self.settings_btn:
-            self.settings_btn.configure(bg=THEME["primary_dark"] if key == "settings" else THEME["primary"])
+            self.settings_btn.configure(
+                bg=_SB_ACTIVE if key == "settings" else _SB,
+            )
 
     def _show_shell(self, visible: bool) -> None:
         if visible:
@@ -125,8 +164,7 @@ class AppWindow:
             if self.nav.winfo_ismapped():
                 self.nav.pack_forget()
 
-    def _load_nav_logo(self, height: int = 36) -> "tk.PhotoImage | None":
-        """Load and cache a resized logo for the nav bar."""
+    def _load_nav_logo(self, height: int = 34) -> "tk.PhotoImage | None":
         try:
             if _HAS_PIL and LOGO_PATH.exists():
                 img = Image.open(LOGO_PATH).convert("RGBA")
@@ -141,97 +179,121 @@ class AppWindow:
     def _build_nav(self) -> None:
         self._clear_nav()
 
-        # Clickable logo — navigates to POS (or home) when clicked
-        logo_img = self._load_nav_logo(36)
+        # Left warm accent stripe
+        tk.Frame(self.nav, bg=THEME["accent"], width=4).pack(side=tk.LEFT, fill=tk.Y)
+
+        # Logo / brand
+        logo_img = self._load_nav_logo(32)
         if logo_img:
-            self._nav_logo_ref = logo_img  # keep reference to prevent GC
+            self._nav_logo_ref = logo_img
             self.nav_title = tk.Button(
                 self.nav,
                 image=logo_img,
                 text="",
-                bg=THEME["primary"],
-                activebackground=THEME["primary_light"],
+                bg=_SB,
+                activebackground=_SB_HOVER,
                 bd=0,
                 cursor="hand2",
                 command=self._logo_click,
+                padx=10,
             )
         else:
-            # No logo available — show a minimal placeholder text so nav isn't empty
             self.nav_title = tk.Button(
                 self.nav,
-                text="AK",
-                bg=THEME["primary"],
-                fg=THEME["text_on_primary"],
-                activebackground=THEME["primary_light"],
-                activeforeground=THEME["text_on_primary"],
+                text="Aissa's Kitchenette",
+                bg=_SB,
+                fg="#FFFFFF",
+                activebackground=_SB_HOVER,
+                activeforeground="#FAF7F2",
                 bd=0,
                 cursor="hand2",
                 font=("Segoe UI", 11, "bold"),
                 command=self._logo_click,
+                padx=14,
+                pady=0,
+                height=2,
             )
-        self.nav_title.pack(side=tk.LEFT, padx=(10, 6), pady=8)
+        self.nav_title.pack(side=tk.LEFT, padx=(4, 8))
 
-        # Tabs
+        # Thin vertical divider after logo
+        tk.Frame(self.nav, bg="#7A6050", width=1).pack(side=tk.LEFT, fill=tk.Y, pady=8)
+
+        # Nav tabs
         if self.auth_service.has_permission(P_POS):
-            self._btn("pos", "POS", self.show_pos)
+            self._btn("pos", "  POS  ", self.show_pos)
 
-        self._btn("tx", "Transactions", self.show_transactions)
+        self._btn("tx", "  Transactions  ", self.show_transactions)
+        self._btn("dash", "  Dashboard  ", self.show_dashboard)
 
         if self.auth_service.has_permission(P_INV_VIEW) or self.auth_service.has_permission(P_INV_MANAGE):
-            self._btn("inv", "Inventory", self.show_inventory)
+            self._btn("inv", "  Inventory  ", self.show_inventory)
 
-        # Settings dropdown
+        if self.auth_service.has_permission(P_REPORTS):
+            self._btn("reports", "  Reports  ", self.show_reports)
+
+        # ── Right side ────────────────────────────────────────────────────────
+        # Settings dropdown (right-aligned)
         self.settings_btn = tk.Button(
             self.nav,
-            text="Settings  \u25be",
-            bg=THEME["primary"],
-            fg=THEME["text_on_primary"],
-            activebackground=THEME["primary_light"],
-            activeforeground=THEME["text_on_primary"],
+            text="Settings  ▾",
+            bg=_SB,
+            fg=_SB_TEXT,
+            activebackground=_SB_HOVER,
+            activeforeground=_SB_TEXT,
             padx=16,
-            pady=10,
+            pady=0,
             relief=tk.FLAT,
+            bd=0,
             cursor="hand2",
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", 9, "bold"),
+            height=2,
             command=self._open_settings_menu,
         )
-        self.settings_btn.pack(side=tk.LEFT, padx=6, pady=6)
+        self.settings_btn.pack(side=tk.RIGHT, padx=2)
+
+        # User label
+        self.user_label = tk.Label(
+            self.nav,
+            text="",
+            bg=_SB,
+            fg="#F5DFB8",
+            font=("Segoe UI", 9),
+            padx=14,
+        )
+        self.user_label.pack(side=tk.RIGHT)
+
+        # Divider before user label
+        tk.Frame(self.nav, bg="#7A6050", width=1).pack(side=tk.RIGHT, fill=tk.Y, pady=8)
 
         self.settings_menu = Menu(
             self.root,
             tearoff=0,
             bg=THEME["panel"],
             fg=THEME["text"],
-            activebackground=THEME["brown"],
+            activebackground=THEME["primary"],
             activeforeground="white",
             font=("Segoe UI", 10),
-            bd=1,
-            relief="solid",
+            bd=0,
+            relief="flat",
         )
         self.settings_menu.add_command(
-            label="  Account  ",
+            label="  Account Settings  ",
             command=self.show_account_settings,
         )
+        if self.auth_service.has_permission(P_DATABASE):
+            self.settings_menu.add_command(
+                label="  Backup & Restore  ",
+                command=self.show_backup_settings,
+            )
         self.settings_menu.add_separator()
         self.settings_menu.add_command(
             label="  Logout  ",
             command=self.logout,
         )
 
-        # Right area
-        self.user_label = tk.Label(
-            self.nav,
-            text="",
-            bg=THEME["primary"],
-            fg=THEME["text_on_primary"],
-            font=("Segoe UI", 10, "bold"),
-        )
-        self.user_label.pack(side=tk.RIGHT, padx=(10, 14), pady=8)
-
         self._set_user_label()
 
     def _logo_click(self) -> None:
-        """Navigate to POS if permitted, otherwise go to Transactions."""
         if self.auth_service.has_permission(P_POS):
             self.show_pos()
         else:
@@ -246,11 +308,20 @@ class AppWindow:
         self.settings_menu.tk_popup(x, y)
 
     def show_account_settings(self) -> None:
-        """Open account settings dialog."""
         AccountSettingsDialog(self.root, self.db, self.auth_service,
-                              on_data_import=self._refresh_current_view)
+                              on_data_import=self._refresh_current_view,
+                              initial_section="profile")
 
-    # ---------- Navigation ----------
+    def show_backup_settings(self) -> None:
+        if not self.auth_service.has_permission(P_DATABASE):
+            messagebox.showerror("Access Denied", "No permission to manage database backup.")
+            return
+        AccountSettingsDialog(self.root, self.db, self.auth_service,
+                              on_data_import=self._refresh_current_view,
+                              initial_section="backup")
+
+    # ── Navigation ────────────────────────────────────────────────────────────
+
     def show_login(self) -> None:
         self.auth_service.logout()
         self._show_shell(False)
@@ -259,7 +330,19 @@ class AppWindow:
     def on_login_success(self) -> None:
         self._show_shell(True)
         self._build_nav()
+        self._show_welcome()
         self.show_pos()
+
+    def _show_welcome(self) -> None:
+        u = self.auth_service.get_current_user()
+        if not u:
+            return
+        full_name = getattr(u, "full_name", "").strip()
+        display = full_name if full_name else u.username.upper()
+        try:
+            _WelcomeToast(self.root, display)
+        except Exception:
+            pass
 
     def show_pos(self) -> None:
         if not self.auth_service.has_permission(P_POS):
@@ -273,23 +356,48 @@ class AppWindow:
         self._set_active_nav("tx")
         self._set_view(TransactionsView, self.db, self.auth_service)
 
+    def show_dashboard(self) -> None:
+        self._set_active_nav("dash")
+        self._clear_content()
+        view = DashboardView(
+            self.content,
+            self.db,
+            self.auth_service,
+            go_transactions_cb=self.show_transactions,
+            go_pos_cb=self.show_pos,
+        )
+        view.pack(fill=tk.BOTH, expand=True)
+        self._current_view = view
+
     def show_inventory(self) -> None:
-        if not (self.auth_service.has_permission(P_INV_VIEW) or self.auth_service.has_permission(P_INV_MANAGE)):
+        if not (self.auth_service.has_permission(P_INV_VIEW) or
+                self.auth_service.has_permission(P_INV_MANAGE)):
             messagebox.showerror("Access denied", "No permission for Inventory")
             return
         self._set_active_nav("inv")
-        self._set_view(InventoryShellView, self.db, self.auth_service, self.show_transactions, self.show_pos)
+        self._set_view(InventoryShellView, self.db, self.auth_service,
+                       self.show_transactions, self.show_pos)
+
+    def show_reports(self) -> None:
+        if not self.auth_service.has_permission(P_REPORTS):
+            messagebox.showerror("Access denied", "No permission to view reports.")
+            return
+        self._set_active_nav("reports")
+        self._set_view(ReportsView, self.db, self.auth_service)
+
+    def show_backup(self) -> None:
+        if not self.auth_service.has_permission(P_DATABASE):
+            messagebox.showerror("Access denied", "No permission to manage database backup.")
+            return
+        self._set_active_nav("backup")
+        self._set_view(BackupView, self.db, self.auth_service)
 
     def logout(self) -> None:
         self.show_login()
 
-    # ── Zoom (Part 1) ─────────────────────────────────────────────────────────
+    # ── Zoom ──────────────────────────────────────────────────────────────────
 
     def _on_zoom(self, direction: int) -> None:
-        """
-        direction:  1 = zoom in,  -1 = zoom out,  0 = reset
-        Rebuilds nav and re-renders the active view so fonts/padding update.
-        """
         if direction == 1:
             ui_scale.zoom_in()
         elif direction == -1:
@@ -297,16 +405,13 @@ class AppWindow:
         else:
             ui_scale.zoom_reset()
 
-        # Update nav bar fonts
         if self.nav.winfo_ismapped():
             self._build_nav()
             if self._active_nav_key:
                 self._set_active_nav(self._active_nav_key)
 
-        # Re-render current view with new scale
         self._refresh_current_view()
 
-        # Update title to show zoom level
         pct = int(round(ui_scale.get_scale() * 100))
         try:
             self.root.title(f"{APP_NAME}  ·  {pct}%")
@@ -314,12 +419,77 @@ class AppWindow:
             pass
 
     def _refresh_current_view(self) -> None:
-        """Re-render the currently active main view (for zoom reload)."""
         key = self._active_nav_key
         if key == "pos":
             self.show_pos()
         elif key == "tx":
             self.show_transactions()
+        elif key == "dash":
+            self.show_dashboard()
         elif key == "inv":
-            # Re-open inventory; restore to overview sub-tab
             self.show_inventory()
+        elif key == "reports":
+            self.show_reports()
+
+
+# ── Welcome toast overlay ─────────────────────────────────────────────────────
+
+class _WelcomeToast(tk.Toplevel):
+    """
+    Brief fullscreen-centered overlay that says WELCOME, [NAME]!
+    Fades out automatically after 2 seconds.
+    """
+    _DURATION_MS = 2200
+    _BG          = "#5C3D2E"
+    _FG_HEAD     = "#F5DFB8"
+    _FG_SUB      = "#D4956A"
+
+    def __init__(self, parent: tk.Widget, display_name: str):
+        super().__init__(parent)
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        try:
+            self.attributes("-alpha", 0.93)
+        except Exception:
+            pass
+        self.configure(bg=self._BG)
+
+        # Size and center on parent
+        pw = parent.winfo_width()
+        ph = parent.winfo_height()
+        px = parent.winfo_rootx()
+        py = parent.winfo_rooty()
+        w, h = 420, 180
+        x = px + (pw - w) // 2
+        y = py + (ph - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+        tk.Frame(self, bg=THEME["accent"], height=4).pack(fill="x")
+
+        body = tk.Frame(self, bg=self._BG)
+        body.pack(fill="both", expand=True)
+
+        tk.Label(
+            body,
+            text="WELCOME,",
+            bg=self._BG, fg=self._FG_SUB,
+            font=("Segoe UI", 13, "italic"),
+        ).pack(pady=(30, 0))
+
+        tk.Label(
+            body,
+            text=display_name.upper() + "!",
+            bg=self._BG, fg=self._FG_HEAD,
+            font=("Segoe UI", 22, "bold"),
+        ).pack()
+
+        tk.Frame(self, bg=THEME["accent"], height=4).pack(fill="x")
+
+        self.after(self._DURATION_MS, self._close)
+        self.bind("<Button-1>", lambda _e: self._close())
+
+    def _close(self) -> None:
+        try:
+            self.destroy()
+        except Exception:
+            pass

@@ -29,12 +29,12 @@ _LEFT_FRAC = 0.54   # left hero = 54 % of card width  → ~443 px
 _FORM_PADX = 36     # horizontal padding inside form content area
 
 # ── Gradient palettes ─────────────────────────────────────────────────────────
-_BG_TOP   = (44,  24, 12)   # background behind card
-_BG_MID   = (82,  54, 34)
-_BG_BOT   = (58,  36, 20)
-_HERO_TOP = (52,  28, 14)   # hero canvas inside card (richer)
-_HERO_MID = (100, 66, 42)
-_HERO_BOT = (74,  48, 28)
+_BG_TOP   = (247, 243, 239)  # background behind card — soft cream (#F7F3EF)
+_BG_MID   = (242, 232, 220)  # slightly warmer centre
+_BG_BOT   = (237, 224, 208)  # warm blush at bottom
+_HERO_TOP = (160, 123,  91)  # hero canvas — medium wood brown (#A07B5B)
+_HERO_MID = (192, 138, 107)  # warm terracotta (#C08A6B)
+_HERO_BOT = (166, 112,  85)  # deeper terracotta (#A67055)
 
 # ── Colour tokens ─────────────────────────────────────────────────────────────
 _TITLE_FG    = "#FFFFFF"
@@ -46,8 +46,8 @@ _DOT_IDLE    = "#5A3820"
 _CARD_BG     = "#FFFFFF"
 _SEPARATOR   = "#E0CEB8"    # vertical rule between hero and form
 _FIELD_BG    = THEME["beige"]      # "#EADFD2"
-_BTN_BG      = THEME["accent"]     # "#8B5E3C"
-_BTN_HOVER   = THEME["brown"]      # "#6B4B3A"
+_BTN_BG      = THEME["primary"]    # warm wood brown
+_BTN_HOVER   = THEME["primary_dark"]  # darker brown on hover
 
 
 class LoginView(tk.Frame):
@@ -66,7 +66,7 @@ class LoginView(tk.Frame):
 
     def __init__(self, parent: tk.Widget, auth: AuthService,
                  on_success: Callable[[], None]) -> None:
-        super().__init__(parent, bg=THEME["brown_dark"])
+        super().__init__(parent, bg=THEME["bg"])
         self.auth       = auth
         self.on_success = on_success
 
@@ -108,8 +108,8 @@ class LoginView(tk.Frame):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _build(self) -> None:
-        # Full-screen canvas — warm brown gradient background
-        self._bg = tk.Canvas(self, bg=THEME["brown_dark"], highlightthickness=0)
+        # Full-screen canvas — soft cream gradient background
+        self._bg = tk.Canvas(self, bg=THEME["bg"], highlightthickness=0)
         self._bg.pack(fill=tk.BOTH, expand=True)
         self._bg.bind("<Configure>", self._on_bg_resize)
 
@@ -132,7 +132,7 @@ class LoginView(tk.Frame):
         card.grid_rowconfigure(0, weight=1)
 
         # ── Left: hero canvas ─────────────────────────────────────────────────
-        self._hero = tk.Canvas(card, bg=THEME["brown"], highlightthickness=0,
+        self._hero = tk.Canvas(card, bg=THEME["primary"], highlightthickness=0,
                                width=left_w, height=_CARD_H)
         self._hero.grid(row=0, column=0, sticky="nsew")
         self._hero.bind("<Configure>", self._on_hero_configure)
@@ -177,7 +177,7 @@ class LoginView(tk.Frame):
                 self._img_refs.append(ico)
 
         # ── Username ──────────────────────────────────────────────────────────
-        tk.Label(inner, text="USERNAME",
+        tk.Label(inner, text="Username",
                  bg=_CARD_BG, fg=THEME["muted"],
                  font=("Segoe UI", 8, "bold")).pack(anchor="w")
         self.username_var = tk.StringVar()
@@ -198,7 +198,7 @@ class LoginView(tk.Frame):
                                  padx=(0, 12), pady=10)
 
         # ── Password ──────────────────────────────────────────────────────────
-        tk.Label(inner, text="PASSWORD",
+        tk.Label(inner, text="Password",
                  bg=_CARD_BG, fg=THEME["muted"],
                  font=("Segoe UI", 8, "bold")).pack(anchor="w")
         self.password_var = tk.StringVar()
@@ -228,7 +228,7 @@ class LoginView(tk.Frame):
 
         # ── Sign In ───────────────────────────────────────────────────────────
         tk.Button(
-            inner, text="SIGN IN",
+            inner, text="Sign In",
             command=self._do_login,
             bg=_BTN_BG, fg="white",
             activebackground=_BTN_HOVER, activeforeground="white",

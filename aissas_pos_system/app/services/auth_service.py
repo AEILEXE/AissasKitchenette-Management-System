@@ -93,6 +93,7 @@ class AuthService:
     def create_user(
         self, username: str, password: str, role: str,
         enforce_policy: bool = True,
+        full_name: str = "",
     ) -> tuple[bool, str, int]:
         if not username.strip():
             return False, "Username cannot be empty", 0
@@ -111,7 +112,8 @@ class AuthService:
             return False, "Username already exists", 0
 
         pw_hash = hash_password(password)
-        uid = self.user_dao.create(username.strip(), pw_hash, role.upper())
+        uid = self.user_dao.create(username.strip(), pw_hash, role.upper(),
+                                   full_name.strip())
         return True, f"User '{username}' created successfully", uid
 
     def has_permission(self, perm: str) -> bool:

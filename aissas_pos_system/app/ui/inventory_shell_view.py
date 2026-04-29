@@ -11,6 +11,7 @@ from app.db.dao import OrderDAO, DraftDAO, ProductDAO
 from app.services.auth_service import AuthService
 from app.ui.inventory_products_view import InventoryProductsView
 from app.ui.inventory_sales_view import InventorySalesView
+from app.ui.inventory_raw_materials_view import InventoryRawMaterialsView
 from app.ui.transactions_view import TransactionDetailsDialog
 from app.utils import money
 from app.constants import P_MANAGE_PRODS, P_MANAGE_USERS, P_DATABASE, P_EXPORT, P_REPORTS
@@ -59,49 +60,56 @@ class InventoryShellView(tk.Frame):
         self.content = tk.Frame(self, bg=THEME["bg"])
         self.content.pack(fill="both", expand=True)
 
-        self.show_overview()
+        self.show_products()
 
     # ── Top navigation bar ────────────────────────────────────────────────────
 
     def _build_topnav(self):
-        nav = tk.Frame(self, bg=THEME["brown_dark"])
+        nav = tk.Frame(self, bg=THEME["sidebar"])
         nav.pack(fill="x")
 
         tk.Label(
             nav, text="Inventory",
-            bg=THEME["brown_dark"], fg="white",
+            bg=THEME["sidebar"], fg="white",
             font=("Segoe UI", 12, "bold"),
         ).pack(side="left", padx=(16, 20), pady=12)
 
-        tab_items = [
-            ("overview", "Overview",  self.show_overview),
-        ]
+        tab_items = []
         if self.auth.has_permission(P_REPORTS):
             tab_items.append(("sales", "Sales", self.show_sales))
         tab_items.append(("products", "Products", self.show_products))
+        tab_items.append(("raw_materials", "Raw Materials", self.show_raw_materials))
         for key, text, cmd in tab_items:
             btn = tk.Button(
                 nav, text=text,
                 command=cmd,
-                bg=THEME["brown_dark"],
-                fg="white",
-                activebackground=THEME["brown"],
+                bg=THEME["sidebar"],
+                fg="#B0BEC5",
+                activebackground=THEME["sidebar"],
                 activeforeground="white",
-                bd=0, padx=16, pady=10,
+                bd=0, padx=18, pady=12,
                 cursor="hand2",
                 font=("Segoe UI", 10),
                 relief="flat",
             )
-            btn.pack(side="left", padx=2, pady=4)
+            btn.pack(side="left")
             self._tab_btns[key] = btn
 
     def _set_active(self, key: str):
         self._active = key
         for k, btn in self._tab_btns.items():
             if k == key:
-                btn.configure(bg=THEME["brown"], font=("Segoe UI", 10, "bold"))
+                btn.configure(
+                    bg=THEME["primary"],
+                    fg="white",
+                    font=("Segoe UI", 10, "bold")
+                )
             else:
-                btn.configure(bg=THEME["brown_dark"], font=("Segoe UI", 10))
+                btn.configure(
+                    bg=THEME["sidebar"],
+                    fg="#B0BEC5",
+                    font=("Segoe UI", 10)
+                )
 
     def _clear_content(self):
         for w in self.content.winfo_children():
@@ -126,6 +134,11 @@ class InventoryShellView(tk.Frame):
         self._set_active("products")
         self._clear_content()
         InventoryProductsView(self.content, self.db, self.auth).pack(fill="both", expand=True)
+
+    def show_raw_materials(self):
+        self._set_active("raw_materials")
+        self._clear_content()
+        InventoryRawMaterialsView(self.content, self.db, self.auth).pack(fill="both", expand=True)
 
     # ── Overview (dashboard) ──────────────────────────────────────────────────
 

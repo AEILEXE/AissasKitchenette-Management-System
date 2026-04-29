@@ -13,49 +13,49 @@ from app.models.product import Product
 class UserDAO:
     """
     Database access for users table.
-    Columns: id, username, password_hash, role, is_active, created_at
+    Columns: id, username, password_hash, role, full_name, is_active, created_at
     """
 
     def __init__(self, db: Database):
         self.db = db
 
-    def get_by_username(self, username: str) -> Optional[User]:
-        """Fetch user by username."""
-        r = self.db.fetchone(
-            "SELECT id AS user_id, username, password_hash, role, is_active FROM users WHERE username=?;",
-            (username,),
-        )
-        if not r:
-            return None
+    def _row_to_user(self, r) -> User:
         return User(
             int(r["user_id"]),
             r["username"],
             r["password_hash"],
             r["role"],
             bool(r["is_active"]),
+            r["full_name"] if "full_name" in r.keys() else "",
         )
+
+    def get_by_username(self, username: str) -> Optional[User]:
+        """Fetch user by username."""
+        r = self.db.fetchone(
+            "SELECT id AS user_id, username, password_hash, role, "
+            "COALESCE(full_name, '') AS full_name, is_active "
+            "FROM users WHERE username=?;",
+            (username,),
+        )
+        return self._row_to_user(r) if r else None
 
     def get_by_id(self, user_id: int) -> Optional[User]:
         """Fetch user by ID."""
         r = self.db.fetchone(
-            "SELECT id AS user_id, username, password_hash, role, is_active FROM users WHERE id=?;",
+            "SELECT id AS user_id, username, password_hash, role, "
+            "COALESCE(full_name, '') AS full_name, is_active "
+            "FROM users WHERE id=?;",
             (user_id,),
         )
-        if not r:
-            return None
-        return User(
-            int(r["user_id"]),
-            r["username"],
-            r["password_hash"],
-            r["role"],
-            bool(r["is_active"]),
-        )
+        return self._row_to_user(r) if r else None
 
-    def create(self, username: str, password_hash: str, role: str) -> int:
+    def create(self, username: str, password_hash: str, role: str,
+               full_name: str = "") -> int:
         """Create new user."""
         return self.db.execute_id(
-            "INSERT INTO users(username, password_hash, role, is_active) VALUES(?,?,?,1);",
-            (username, password_hash, role),
+            "INSERT INTO users(username, password_hash, role, full_name, is_active) "
+            "VALUES(?,?,?,?,1);",
+            (username, password_hash, role, full_name),
         )
 
     def update_password(self, user_id: int, password_hash: str) -> None:
@@ -65,10 +65,19 @@ class UserDAO:
             (password_hash, user_id),
         )
 
+    def update_full_name(self, user_id: int, full_name: str) -> None:
+        """Update display name for a user."""
+        self.db.execute(
+            "UPDATE users SET full_name=? WHERE id=?;",
+            (full_name, user_id),
+        )
+
     def list_users(self):
         """List all users."""
         return self.db.fetchall(
-            "SELECT id AS user_id, username, role, is_active FROM users ORDER BY id;"
+            "SELECT id AS user_id, username, "
+            "COALESCE(full_name, '') AS full_name, role, is_active "
+            "FROM users ORDER BY id;"
         )
 
     def set_active(self, user_id: int, active: int) -> None:
@@ -566,6 +575,158 @@ class OrderDAO:
         except Exception:
             self.db.rollback()
             raise
+
+    def void_completed_order(
+        self,
+        order_id: int,
+        voided_by_user_id: int,
+        voided_by_username: str,
+        reason: str = "",
+    ) -> None:
+        """
+        Void a Completed order: mark it Cancelled, restore stock for all items,
+        and create a void_record row. Raises ValueError if not Completed.
+        """
+        try:
+            order = self.db.fetchone(
+                "SELECT status FROM orders WHERE id=?;",
+                (int(order_id),),
+            )
+            if order is None:
+                raise ValueError(f"Order {order_id} not found.")
+            if order["status"] != "Completed":
+                raise ValueError(
+                    f"Order {order_id} cannot be voided "
+                    f"(current status: {order['status']})."
+                )
+
+            items = self.db.fetchall(
+                "SELECT id AS item_id, product_id, qty FROM order_items WHERE order_id=? AND voided=0;",
+                (int(order_id),),
+            )
+            for row in items:
+                if row["product_id"] is not None:
+                    self.db.execute_no_commit(
+                        "UPDATE products SET stock = stock + ? WHERE id=?;",
+                        (int(row["qty"]), int(row["product_id"])),
+                    )
+            # Mark every active item as voided so double-void is prevented
+            self.db.execute_no_commit(
+                "UPDATE order_items SET voided=1 WHERE order_id=? AND voided=0;",
+                (int(order_id),),
+            )
+            self.db.execute_no_commit(
+                """
+                UPDATE orders
+                SET status='Cancelled',
+                    end_datetime=datetime('now','localtime')
+                WHERE id=?;
+                """,
+                (int(order_id),),
+            )
+            self.db.execute_no_commit(
+                """
+                INSERT INTO void_records(
+                    original_order_id, void_type, order_item_id,
+                    voided_by_user_id, voided_by_username, reason
+                ) VALUES(?, 'FULL_ORDER', NULL, ?, ?, ?);
+                """,
+                (int(order_id), int(voided_by_user_id), str(voided_by_username), str(reason)),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def void_order_item(
+        self,
+        order_id: int,
+        item_id: int,
+        product_id: int | None,
+        qty: int,
+        unit_price: float,
+        voided_by_user_id: int,
+        voided_by_username: str,
+        reason: str = "",
+    ) -> None:
+        """
+        Void a single item in a Completed order: mark item voided,
+        restore stock, recalculate order total, insert void_record.
+        """
+        try:
+            order = self.db.fetchone(
+                "SELECT status, subtotal, discount, total FROM orders WHERE id=?;",
+                (int(order_id),),
+            )
+            if order is None:
+                raise ValueError(f"Order {order_id} not found.")
+            if order["status"] not in ("Completed", "Cancelled"):
+                raise ValueError(
+                    f"Cannot void item on order with status: {order['status']}."
+                )
+
+            self.db.execute_no_commit(
+                "UPDATE order_items SET voided=1, subtotal=0 WHERE id=? AND order_id=?;",
+                (int(item_id), int(order_id)),
+            )
+
+            if product_id is not None:
+                self.db.execute_no_commit(
+                    "UPDATE products SET stock = stock + ? WHERE id=?;",
+                    (int(qty), int(product_id)),
+                )
+
+            # Recalculate order total from non-voided items
+            new_subtotal_row = self.db.fetchone(
+                "SELECT COALESCE(SUM(subtotal), 0) AS s FROM order_items WHERE order_id=? AND voided=0;",
+                (int(order_id),),
+            )
+            new_subtotal = float(new_subtotal_row["s"]) if new_subtotal_row else 0.0
+            discount = float(order["discount"] or 0.0)
+            new_total = max(0.0, new_subtotal - discount)
+
+            self.db.execute_no_commit(
+                """
+                UPDATE orders
+                SET subtotal=?, total=?,
+                    end_datetime=datetime('now','localtime')
+                WHERE id=?;
+                """,
+                (new_subtotal, new_total, int(order_id)),
+            )
+
+            self.db.execute_no_commit(
+                """
+                INSERT INTO void_records(
+                    original_order_id, void_type, order_item_id,
+                    voided_by_user_id, voided_by_username, reason
+                ) VALUES(?, 'ITEM_VOID', ?, ?, ?, ?);
+                """,
+                (int(order_id), int(item_id), int(voided_by_user_id), str(voided_by_username), str(reason)),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def get_order_items_with_void(self, order_id: int):
+        """Get items in order including voided status."""
+        return self.db.fetchall(
+            """
+            SELECT oi.id AS item_id,
+                   oi.product_id,
+                   p.name,
+                   oi.qty,
+                   oi.unit_price,
+                   oi.subtotal,
+                   oi.voided
+            FROM order_items oi
+            LEFT JOIN products p ON oi.product_id=p.id
+            WHERE oi.order_id=?
+            ORDER BY oi.id;
+            """,
+            (int(order_id),),
+        )
 
     def count_by_status(self, status: str) -> int:
         """Count orders by status."""

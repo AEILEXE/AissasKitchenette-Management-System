@@ -57,57 +57,81 @@ BASE_DIR    = _BUNDLE_DIR    # receipt_service uses this for font lookup
 PROJECT_DIR = _WRITABLE_ROOT
 
 
-# ── Theme (Brown / Beige / White) ─────────────────────────────────────────
+# ── RESTAURANT POS THEME — Light Café Palette ────────────────────────────
 THEME = {
-    # main colors
-    "bg": "#F5EFE6",            # beige background
-    "panel": "#FFFFFF",         # white panels
+    # ── Core Palette ──────────────────────────────────────────────────────
+    "bg":           "#F7F3EF",   # soft off-white cream background
+    "bg_warm":      "#F7F3EF",   # unified background
+    "panel":        "#FFFFFF",   # white card panels
 
-    # primary browns
-    "brown": "#6B4B3A",
-    "brown_dark": "#3E2A22",
+    # Sidebar & Topbar — Medium Warm Brown (not dark, readable with white text)
+    "sidebar":       "#A67B5B",   # medium warm brown (same as PRIMARY)
+    "sidebar_active":"#C08A6B",   # warm accent terracotta
+    "sidebar_hover": "#8B6548",   # slightly darker on hover
+    "topbar":        "#A67B5B",
 
-    # neutrals
-    "beige": "#EADFD2",
-    "border": "#D5C7B8",
-    "text": "#1F1F1F",
-    "muted": "#6E6E6E",
+    # Primary — Soft Warm Brown
+    "primary":      "#A67B5B",   # required warm wood brown
+    "primary_dark": "#8B6548",   # darker wood brown (hover)
+    "primary_light":"#C8A07A",   # lighter warm brown
 
-    # buttons / states
-    "accent": "#8B5E3C",
-    "danger": "#C04B45",
-    "success": "#2E7D32",
-    "warning": "#D49B28",
+    # Accent — Warm Terracotta
+    "accent":       "#C08A6B",   # required warm terracotta accent
+    "accent_dark":  "#A67055",   # deeper terracotta for hover
 
-    # selection highlight
-    "select_bg": "#8B5E3C",
-    "select_fg": "#FFFFFF",
+    # Dark Neutral
+    "neutral_dark":  "#A67B5B",
+
+    # Text & Borders
+    "text":         "#2E2E2E",   # required: near-black text
+    "text_light":   "#FFFFFF",
+    "muted":        "#8A7060",   # warm muted brown-gray
+    "border":       "#E5D7C8",   # required: soft warm border
+    "border_focus": "#C08A6B",   # terracotta focus border
+    "beige":        "#F2E8DC",   # warm beige for inputs
+
+    # Status colors
+    "success":      "#4A7C59",   # muted green
+    "success_bg":   "#EEF7F2",
+    "danger":       "#B55B52",   # muted warm red
+    "danger_bg":    "#FDF0EE",
+    "warning":      "#C8903A",   # warm amber warning
+    "warning_bg":   "#FDF4E7",
+
+    # Card accent borders
+    "card_accent_1": "#C08A6B",
+    "card_accent_2": "#A67B5B",
+    "card_accent_3": "#C8903A",
+    "card_accent_4": "#4A7C59",
+
+    # Selection
+    "select_bg":    "#A67B5B",
+    "select_fg":    "#FFFFFF",
+
+    # Legacy keys — map to new warm palette so existing code works unchanged
+    "brown":        "#A67B5B",   # required PRIMARY
+    "brown_dark":   "#8B6548",   # darker brown (hover)
+    "brown2":       "#C08A6B",   # terracotta accent
 }
 
-# Backwards / UI aliases
-THEME["primary"]       = THEME["brown"]
-THEME["primary_dark"]  = THEME["brown_dark"]
-THEME["primary_light"] = THEME["accent"]
-
-THEME.setdefault("header_bg", THEME["primary_dark"])
-THEME.setdefault("nav_bg",    THEME["primary"])
-THEME.setdefault("input_bg",  THEME["beige"])
-THEME.setdefault("card_bg",   THEME["panel"])
-THEME.setdefault("panel2",    THEME["beige"])   # login_view / pos_view
-THEME.setdefault("brown2",    THEME["accent"])  # login sign-in button
-THEME.setdefault("primary",   THEME["brown"])
-THEME.setdefault("secondary", THEME["beige"])
+THEME["header_bg"]      = THEME["primary_dark"]
+THEME["nav_bg"]         = THEME["primary"]
+THEME["input_bg"]       = THEME["beige"]
+THEME["card_bg"]        = THEME["panel"]
+THEME["panel2"]         = THEME["beige"]
+THEME["secondary"]      = THEME["beige"]
 
 THEME["text_on_primary"] = "#FFFFFF"
-THEME["text_on_accent"]  = "#FFFFFF"
+THEME["text_on_accent"]  = "#1C1C1C"
 THEME["text_on_danger"]  = "#FFFFFF"
 THEME["text_on_success"] = "#FFFFFF"
-THEME["text_on_warning"] = "#FFFFFF"
+THEME["text_on_warning"] = "#1C1C1C"
+THEME["text_on_sidebar"] = "#FFFFFF"
 
 
 # ── Defaults / Seeding ─────────────────────────────────────────────────────
 DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "admin123"
+DEFAULT_ADMIN_PASSWORD = "Admin123@"
 
 DEFAULT_ADMIN_USER          = DEFAULT_ADMIN_USERNAME
 DEFAULT_ADMIN_PASS          = DEFAULT_ADMIN_PASSWORD

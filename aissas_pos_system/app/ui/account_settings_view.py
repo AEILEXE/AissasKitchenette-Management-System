@@ -1,7 +1,7 @@
 """
 app/ui/account_settings_view.py
-Settings: Profile, Security (policy-enforced password change), Database Backup,
-          User Management (create + deactivate), Role Permissions (admin only).
+Settings: Profile, Security (policy-enforced password change), Backup & Restore,
+          Database Management, User Management, Role Permissions (admin only).
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from app.config import THEME, DB_PATH, DATA_DIR, PRODUCT_IMAGES_DIR
 from app.db.database import Database
 from app.db.dao import UserDAO, RolePermissionDAO
 from app.services.auth_service import AuthService
+from app.services.backup_service import BackupService
 from app.constants import (
     ROLES, ROLE_ADMIN,
     ALL_PERMISSION_KEYS, PERMISSION_LABELS,
@@ -164,13 +165,14 @@ class AccountSettingsDialog(tk.Toplevel):
     """
 
     def __init__(self, parent: tk.Widget, db: Database, auth: AuthService,
-                 on_data_import=None):
+                 on_data_import=None, initial_section: str = "profile"):
         super().__init__(parent)
         self.db              = db
         self.auth            = auth
         self.user_dao        = UserDAO(db)
         self.rbac_dao        = RolePermissionDAO(db)
         self._on_data_import = on_data_import
+        self._initial_section = initial_section
 
         self.title("Settings")
         self.configure(bg=THEME["bg"])
@@ -212,9 +214,12 @@ class AccountSettingsDialog(tk.Toplevel):
             command=self.destroy,
         ).pack(side="right", padx=8, pady=6)
 
+        full_name_hdr = getattr(u, "full_name", "").strip() if u else ""
+        display_hdr   = full_name_hdr if full_name_hdr else (u.username if u else "")
+        role_hdr      = (u.role or "").capitalize() if u else ""
         tk.Label(
             hdr,
-            text=f"{u.username}  \u00b7  {u.role}" if u else "",
+            text=f"{display_hdr}  ({role_hdr})" if display_hdr else "",
             bg=THEME["brown_dark"], fg="#c9b8a8",
             font=("Segoe UI", sf(8)),
         ).pack(side="right", padx=(0, 4))
@@ -262,6 +267,7 @@ class AccountSettingsDialog(tk.Toplevel):
         sections: list[tuple[str, str, bool]] = [
             ("profile",   "Profile",             False),
             ("security",  "Security",            False),
+            ("backup",    "Backup & Restore",    True),
             ("database",  "Database",            True),
             ("users",     "User Management",     True),
             ("seed",      "Demo Seed",           True),
@@ -289,8 +295,11 @@ class AccountSettingsDialog(tk.Toplevel):
             btn.pack(fill="x", padx=6, pady=1)
             self._nav_btns_settings[key] = btn
 
-        # Default section
-        self._show_section("profile")
+        # Default section (or initial section from caller)
+        start = self._initial_section
+        if start not in self._nav_btns_settings:
+            start = "profile"
+        self._show_section(start)
 
     # ── Sidebar navigation ────────────────────────────────────────────────────
 
@@ -299,16 +308,16 @@ class AccountSettingsDialog(tk.Toplevel):
         sf = ui_scale.scale_font
         self._current_section = key
 
-        # Rebuild inner frame inside the canvas
+        # Destroy all previous inner frames (canvas.delete only removes the item, not the widget)
         self._right_canvas.delete("all")
+        for _child in list(self._right_canvas.winfo_children()):
+            try:
+                _child.destroy()
+            except Exception:
+                pass
+
         inner = tk.Frame(self._right_canvas, bg=THEME["bg"])
         win = self._right_canvas.create_window((0, 0), window=inner, anchor="nw")
-
-        # Immediately fill the canvas width — prevents narrow first render after section switch
-        self._right_canvas.update_idletasks()
-        cw = self._right_canvas.winfo_width()
-        if cw > 1:
-            self._right_canvas.itemconfigure(win, width=cw)
 
         inner.bind(
             "<Configure>",
@@ -326,23 +335,30 @@ class AccountSettingsDialog(tk.Toplevel):
         # Dispatch to the right builder
         u = self._user
         builders = {
-            "profile":  lambda: (self._section_header(inner, "Profile"),             self._build_profile(inner, u)),
-            "security": lambda: (self._section_header(inner, "Security"),            self._build_security(inner)),
-            "database": lambda: (self._section_header(inner, "Database Management"), self._build_db_section(inner)),
-            "users":    lambda: (self._section_header(inner, "User Management"),     self._build_user_mgmt(inner)),
-            "seed":     lambda: (self._section_header(inner, "Seed Demo Sales"),      self._build_seed_section(inner)),
-            "roles":    lambda: (self._section_header(inner, "Role Permissions"),     self._build_role_mgmt(inner)),
+            "profile":  lambda: (self._section_header(inner, "Profile"),              self._build_profile(inner, u)),
+            "security": lambda: (self._section_header(inner, "Security"),             self._build_security(inner)),
+            "backup":   lambda: (self._section_header(inner, "Backup & Restore"),     self._build_backup_section(inner)),
+            "database": lambda: (self._section_header(inner, "Database Management"),  self._build_db_section(inner)),
+            "users":    lambda: (self._section_header(inner, "User Management"),      self._build_user_mgmt(inner)),
+            "seed":     lambda: (self._section_header(inner, "Seed Demo Sales"),       self._build_seed_section(inner)),
+            "roles":    lambda: (self._section_header(inner, "Role Permissions"),      self._build_role_mgmt(inner)),
         }
         if key in builders:
             builders[key]()
 
         tk.Frame(inner, bg=THEME["bg"], height=ui_scale.s(24)).pack()
 
-        # Scroll to top
-        try:
-            self._right_canvas.yview_moveto(0)
-        except Exception:
-            pass
+        # Deferred: set inner width to canvas width and reset scroll position
+        def _finalize():
+            try:
+                cw = self._right_canvas.winfo_width()
+                if cw > 1:
+                    self._right_canvas.itemconfigure(win, width=cw)
+                self._right_canvas.configure(scrollregion=self._right_canvas.bbox("all"))
+                self._right_canvas.yview_moveto(0)
+            except Exception:
+                pass
+        self.after(0, _finalize)
 
         # Update sidebar button highlights
         for k, btn in self._nav_btns_settings.items():
@@ -444,7 +460,8 @@ class AccountSettingsDialog(tk.Toplevel):
         info_row = tk.Frame(card, bg=THEME["panel"])
         info_row.pack(fill="x", padx=20, pady=(20, 16))
 
-        avatar = (u.username[0].upper() if u and u.username else "?")
+        full_name = getattr(u, "full_name", "").strip() if u else ""
+        avatar = (full_name[0].upper() if full_name else (u.username[0].upper() if u and u.username else "?"))
         tk.Label(
             info_row, text=avatar,
             bg=THEME["brown"], fg="white",
@@ -454,11 +471,18 @@ class AccountSettingsDialog(tk.Toplevel):
 
         user_info = tk.Frame(info_row, bg=THEME["panel"])
         user_info.pack(side="left", fill="x", expand=True)
+        display = full_name if full_name else (u.username if u else "\u2014")
         tk.Label(
-            user_info, text=u.username if u else "\u2014",
+            user_info, text=display,
             bg=THEME["panel"], fg=THEME["text"],
             font=("Segoe UI", ui_scale.scale_font(14), "bold"), anchor="w",
         ).pack(anchor="w")
+        if full_name and u:
+            tk.Label(
+                user_info, text=f"@{u.username}",
+                bg=THEME["panel"], fg=THEME["muted"],
+                font=("Segoe UI", ui_scale.scale_font(9)), anchor="w",
+            ).pack(anchor="w")
         role_text  = u.role.upper() if u else "\u2014"
         role_color = THEME["brown"] if role_text == ROLE_ADMIN else THEME["accent"]
         tk.Label(
@@ -490,9 +514,9 @@ class AccountSettingsDialog(tk.Toplevel):
                 font=("Segoe UI", ui_scale.scale_font(10), "bold"),
             ).pack(anchor="w")
 
-        _detail("Username",  u.username if u else "\u2014",              0, 0)
-        _detail("Role",      u.role if u else "\u2014",                  0, 1)
-        _detail("User ID",   f"#{u.user_id}" if u else "\u2014",         1, 0)
+        _detail("Full Name", full_name if full_name else "\u2014",         0, 0)
+        _detail("Username",  u.username if u else "\u2014",              0, 1)
+        _detail("Role",      u.role if u else "\u2014",                  1, 0)
         _detail("Status",    "Active" if u and u.is_active else "Inactive", 1, 1)
 
     # ── Security ──────────────────────────────────────────────────────────────
@@ -569,48 +593,228 @@ class AccountSettingsDialog(tk.Toplevel):
         for ent in (self.old_pwd, self.new_pwd, self.confirm_pwd):
             ent.delete(0, tk.END)
 
+    # ── Backup & Restore ──────────────────────────────────────────────────────
+
+    def _build_backup_section(self, parent):
+        sp = ui_scale.s
+        sf = ui_scale.scale_font
+
+        backup_svc = BackupService(DB_PATH)
+
+        # ── Action buttons card ───────────────────────────────────────────────
+        actions_card = self._card(parent)
+
+        tk.Label(
+            actions_card, text="Backup & Restore",
+            bg=THEME["panel"], fg=THEME["text"],
+            font=("Segoe UI", sf(11), "bold"),
+        ).pack(anchor="w", padx=16, pady=(14, 4))
+        tk.Label(
+            actions_card,
+            text="Create a timestamped backup of the database or restore from a previous backup file.",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", sf(9)), justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 10))
+
+        status_var = tk.StringVar(value="")
+        status_lbl = tk.Label(
+            actions_card, textvariable=status_var,
+            bg=THEME["panel"], fg=THEME["success"],
+            font=("Segoe UI", sf(9), "italic"),
+            wraplength=500, justify="left",
+        )
+        status_lbl.pack(anchor="w", padx=16, pady=(0, 4))
+
+        btn_row = tk.Frame(actions_card, bg=THEME["panel"])
+        btn_row.pack(fill="x", padx=16, pady=(0, 14))
+
+        def _create_backup():
+            ok, msg = backup_svc.create_backup("manual")
+            if ok:
+                status_var.set(f"Backup saved: {msg}")
+                _reload_list_full()
+            else:
+                messagebox.showerror("Backup Failed", f"Could not create backup:\n{msg}")
+
+        def _restore_from_file():
+            src = filedialog.askopenfilename(
+                title="Select Backup File",
+                filetypes=[("SQLite Database", "*.db"), ("All files", "*.*")],
+            )
+            if not src:
+                return
+            if not messagebox.askyesno(
+                "Confirm Restore",
+                "WARNING: This will REPLACE the current database.\n\n"
+                "All current data will be overwritten. This cannot be undone.\n\nProceed?",
+                icon="warning",
+            ):
+                return
+            try:
+                self.db.close()
+            except Exception:
+                pass
+            ok, msg = backup_svc.restore_backup(src)
+            try:
+                self.db.connect()
+            except Exception:
+                pass
+            if ok:
+                status_var.set(f"Restored from: {src}")
+                messagebox.showinfo("Restore Complete", "Database restored. Restart the app to reload all data.")
+            else:
+                messagebox.showerror("Restore Failed", f"Could not restore:\n{msg}")
+
+        tk.Button(
+            btn_row, text="Create Backup Now",
+            bg=THEME["primary"], fg="white",
+            bd=0, padx=sp(14), pady=sp(8), cursor="hand2",
+            font=("Segoe UI", sf(9), "bold"),
+            command=_create_backup,
+        ).pack(side="left", padx=(0, sp(8)))
+
+        tk.Button(
+            btn_row, text="Restore from File…",
+            bg=THEME["warning"], fg="white",
+            bd=0, padx=sp(14), pady=sp(8), cursor="hand2",
+            font=("Segoe UI", sf(9), "bold"),
+            command=_restore_from_file,
+        ).pack(side="left", padx=(0, sp(8)))
+
+        # ── Backup history card ───────────────────────────────────────────────
+        hist_card = self._card(parent, pady=(8, 4))
+        tk.Label(
+            hist_card, text="Backup History",
+            bg=THEME["panel"], fg=THEME["text"],
+            font=("Segoe UI", sf(11), "bold"),
+        ).pack(anchor="w", padx=16, pady=(14, 4))
+
+        cols = [("created", "Created", 180), ("filename", "Filename", 280), ("size", "Size (KB)", 80)]
+        tree_frame = tk.Frame(hist_card, bg=THEME["panel"])
+        tree_frame.pack(fill="x", padx=16, pady=(0, 6))
+
+        tree = ttk.Treeview(tree_frame, columns=[c[0] for c in cols],
+                            show="headings", height=8,
+                            style="Treeview")
+        for cid, heading, w in cols:
+            tree.heading(cid, text=heading)
+            tree.column(cid, width=w, minwidth=50)
+        tree_sb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=tree_sb.set)
+        tree_sb.pack(side="right", fill="y")
+        tree.pack(fill="x", expand=True)
+
+        # Store backup path indexed by tree row for restore
+        _backup_paths: dict[str, str] = {}
+
+        def _reload_list_full():
+            for item in tree.get_children():
+                tree.delete(item)
+            _backup_paths.clear()
+            try:
+                for b in backup_svc.list_backups():
+                    iid = tree.insert("", "end", values=(
+                        b.get("created", ""),
+                        b.get("filename", ""),
+                        b.get("size_kb", 0),
+                    ))
+                    _backup_paths[iid] = b.get("path", "")
+            except Exception:
+                pass
+
+        _reload_list_full()
+
+        restore_row = tk.Frame(hist_card, bg=THEME["panel"])
+        restore_row.pack(fill="x", padx=16, pady=(4, 14))
+
+        def _restore_selected():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showinfo("Selection", "Select a backup file from the list first.")
+                return
+            iid = sel[0]
+            fname = tree.item(iid)["values"][1]
+            fpath = _backup_paths.get(iid, "")
+            if not fpath:
+                messagebox.showerror("Error", "Could not determine backup file path.")
+                return
+            if not messagebox.askyesno(
+                "Confirm Restore",
+                f"Restore from:\n  {fname}\n\n"
+                "WARNING: This will REPLACE the current database.\n\nProceed?",
+                icon="warning",
+            ):
+                return
+            try:
+                self.db.close()
+            except Exception:
+                pass
+            ok, msg = backup_svc.restore_backup(fpath)
+            try:
+                self.db.connect()
+            except Exception:
+                pass
+            if ok:
+                status_var.set(f"Restored: {fname}")
+                messagebox.showinfo("Restore Complete", "Database restored. Restart the app to reload all data.")
+            else:
+                messagebox.showerror("Restore Failed", f"Could not restore:\n{msg}")
+
+        tk.Button(
+            restore_row, text="Restore Selected",
+            bg=THEME["danger"], fg="white",
+            bd=0, padx=sp(14), pady=sp(8), cursor="hand2",
+            font=("Segoe UI", sf(9), "bold"),
+            command=_restore_selected,
+        ).pack(side="left")
+
+        tk.Label(
+            restore_row,
+            text="Current DB is backed up automatically before each restore.",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", sf(8)),
+        ).pack(side="left", padx=sp(10))
+
     # ── Database Management ───────────────────────────────────────────────────
 
     def _build_db_section(self, parent):
-        db_card = self._card(parent)
+        # \u2500\u2500 Info card: redirect to Backup page \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        info_card = self._card(parent)
         tk.Label(
-            db_card, text="SQLite Database Backup",
+            info_card, text="Database Backup & Restore",
             bg=THEME["panel"], fg=THEME["text"],
             font=("Segoe UI", ui_scale.scale_font(11), "bold"),
         ).pack(anchor="w", padx=16, pady=(14, 4))
         tk.Label(
-            db_card,
-            text="Export a full .db backup or restore from a previous backup file.\n"
-                 "Admin password confirmation is required before importing.\n"
-                 "Use \"Import Data (ZIP)\" to restore both the database and product images at once.",
+            info_card,
+            text="Use the Backup & Restore section (Settings sidebar) to create backups,\n"
+                 "browse backup history, and restore from a previous backup file.",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", ui_scale.scale_font(9)), justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 14))
+
+        # \u2500\u2500 ZIP import card (unique to this panel \u2014 imports DB + images) \u2500\u2500\u2500\u2500\u2500\u2500
+        zip_card = self._card(parent, pady=(8, 4))
+        tk.Label(
+            zip_card, text="Import Data Package (ZIP)",
+            bg=THEME["panel"], fg=THEME["text"],
+            font=("Segoe UI", ui_scale.scale_font(11), "bold"),
+        ).pack(anchor="w", padx=16, pady=(14, 4))
+        tk.Label(
+            zip_card,
+            text="Restore both the database and product images at once from a ZIP package.\n"
+                 "Expected structure:  data/pos.db  +  product_images/<images>\n"
+                 "Admin password confirmation is required.",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", ui_scale.scale_font(9)), justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 12))
-        btn_grid = tk.Frame(db_card, bg=THEME["panel"])
-        btn_grid.pack(fill="x", padx=16, pady=(0, 16))
-        btn_grid.columnconfigure(0, weight=1)
-        btn_grid.columnconfigure(1, weight=1)
         tk.Button(
-            btn_grid, text="Export Database (.db)",
-            bg=THEME["accent"], fg="white",
-            bd=0, pady=ui_scale.s(9), cursor="hand2",
-            font=("Segoe UI", ui_scale.scale_font(9), "bold"),
-            command=self._export_db,
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 6), ipady=2)
-        tk.Button(
-            btn_grid, text="Import Database (.db)",
-            bg=THEME["danger"], fg="white",
-            bd=0, pady=ui_scale.s(9), cursor="hand2",
-            font=("Segoe UI", ui_scale.scale_font(9), "bold"),
-            command=self._import_db,
-        ).grid(row=0, column=1, sticky="ew", ipady=2)
-        tk.Button(
-            btn_grid, text="Import Data (ZIP)  \u2014  database + product images",
-            bg=THEME["brown_dark"], fg="white",
+            zip_card, text="Import Data (ZIP)  \u2014  database + product images",
+            bg=THEME["brown"], fg="white",
             bd=0, pady=ui_scale.s(9), cursor="hand2",
             font=("Segoe UI", ui_scale.scale_font(9), "bold"),
             command=self._import_zip,
-        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0), ipady=2)
+        ).pack(fill="x", padx=16, pady=(0, 16), ipady=2)
 
     def _export_db(self):
         dest = filedialog.asksaveasfilename(
@@ -855,7 +1059,7 @@ class AccountSettingsDialog(tk.Toplevel):
 
     def _build_user_mgmt(self, parent):
         u     = self.auth.get_current_user()
-        users = self.user_dao.list_users()
+        users = [dict(row) for row in self.user_dao.list_users()]
 
         # -- Active users list --
         users_card = self._card(parent)
@@ -867,14 +1071,14 @@ class AccountSettingsDialog(tk.Toplevel):
 
         hdr = tk.Frame(users_card, bg=THEME["beige"])
         hdr.pack(fill="x", padx=16)
-        for col_text, w in [("Username", 0), ("Role", 110), ("Status", 90), ("Action", 90)]:
-            anchor = "w" if col_text == "Username" else "center"
-            expand = col_text == "Username"
+        for col_text, expand in [("Full Name", True), ("Username", False),
+                                  ("Role", False), ("Status", False), ("Action", False)]:
             tk.Label(
                 hdr, text=col_text,
                 bg=THEME["beige"], fg=THEME["muted"],
                 font=("Segoe UI", ui_scale.scale_font(8), "bold"),
-                anchor=anchor, width=w // 8 if w else 0,
+                anchor="w" if expand else "center",
+                width=0 if expand else 11,
             ).pack(
                 side="left",
                 fill="x" if expand else None,
@@ -888,15 +1092,25 @@ class AccountSettingsDialog(tk.Toplevel):
                 highlightthickness=1, highlightbackground=THEME["border"],
             )
             row_frame.pack(fill="x", padx=16, pady=2)
+            _full  = str(user_row.get("full_name") or "").strip()
+            _uname = str(user_row["username"])
+            # Full Name (expands)
             tk.Label(
-                row_frame, text=user_row["username"],
+                row_frame, text=_full or "\u2014",
                 bg=row_bg, fg=THEME["text"],
                 font=("Segoe UI", ui_scale.scale_font(10), "bold"), anchor="w",
             ).pack(side="left", fill="x", expand=True, padx=10, pady=8)
+            # Username
             tk.Label(
-                row_frame, text=user_row["role"],
+                row_frame, text=f"@{_uname}",
                 bg=row_bg, fg=THEME["muted"],
-                font=("Segoe UI", ui_scale.scale_font(9)), width=13, anchor="center",
+                font=("Segoe UI", ui_scale.scale_font(9)), width=11, anchor="center",
+            ).pack(side="left", padx=4)
+            # Role
+            tk.Label(
+                row_frame, text=user_row["role"].capitalize(),
+                bg=row_bg, fg=THEME["muted"],
+                font=("Segoe UI", ui_scale.scale_font(9)), width=11, anchor="center",
             ).pack(side="left", padx=4)
 
             active    = user_row["is_active"]
@@ -907,7 +1121,7 @@ class AccountSettingsDialog(tk.Toplevel):
                 text="\u25cf Active" if active else "\u25cf Inactive",
                 bg=status_bg, fg=status_fg,
                 font=("Segoe UI", ui_scale.scale_font(8), "bold"),
-                padx=6, pady=2,
+                padx=6, pady=2, width=9, anchor="center",
             ).pack(side="left", padx=8)
 
             if active and user_row["user_id"] != (u.user_id if u else None):
@@ -940,6 +1154,7 @@ class AccountSettingsDialog(tk.Toplevel):
             font=("Segoe UI", ui_scale.scale_font(9)),
         ).pack(anchor="w", padx=16, pady=(0, 6))
 
+        self.create_name_ent = self._labeled_entry(create_card, "Full Name (optional)")
         self.create_user_ent = self._labeled_entry(create_card, "Username")
         self.create_pass_ent = self._labeled_pwd_entry(create_card, "Password")
         self.create_conf_ent = self._labeled_pwd_entry(create_card, "Confirm Password")
@@ -968,10 +1183,11 @@ class AccountSettingsDialog(tk.Toplevel):
         ).pack(side="left")
 
     def _create_user(self):
-        username = self.create_user_ent.get().strip()
-        password = self.create_pass_ent.get()
-        confirm  = self.create_conf_ent.get()
-        role     = self.create_role_var.get()
+        full_name = self.create_name_ent.get().strip()
+        username  = self.create_user_ent.get().strip()
+        password  = self.create_pass_ent.get()
+        confirm   = self.create_conf_ent.get()
+        role      = self.create_role_var.get()
 
         if not username or not password:
             messagebox.showerror("Required", "Username and password are required.")
@@ -981,7 +1197,7 @@ class AccountSettingsDialog(tk.Toplevel):
             return
 
         # auth.create_user enforces the 12-char policy by default
-        ok, msg, _ = self.auth.create_user(username, password, role)
+        ok, msg, _ = self.auth.create_user(username, password, role, full_name=full_name)
         if not ok:
             messagebox.showerror("Create User Failed", msg or "Failed to create user.")
             return

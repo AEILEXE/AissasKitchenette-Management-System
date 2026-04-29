@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 @dataclass
 class User:
@@ -8,3 +8,4 @@ class User:
     password_hash: str
     role: str
     is_active: bool
+    full_name: str = ""
