@@ -57,38 +57,38 @@ BASE_DIR    = _BUNDLE_DIR    # receipt_service uses this for font lookup
 PROJECT_DIR = _WRITABLE_ROOT
 
 
-# ── RESTAURANT POS THEME — Light Café Palette ────────────────────────────
+# ── RESTAURANT POS THEME — Balanced Warm Café Palette ───────────────────
 THEME = {
     # ── Core Palette ──────────────────────────────────────────────────────
-    "bg":           "#F7F3EF",   # soft off-white cream background
-    "bg_warm":      "#F7F3EF",   # unified background
+    "bg":           "#F4EFEA",   # warm cream background
+    "bg_warm":      "#F4EFEA",   # unified background
     "panel":        "#FFFFFF",   # white card panels
 
-    # Sidebar & Topbar — Medium Warm Brown (not dark, readable with white text)
-    "sidebar":       "#A67B5B",   # medium warm brown (same as PRIMARY)
-    "sidebar_active":"#C08A6B",   # warm accent terracotta
-    "sidebar_hover": "#8B6548",   # slightly darker on hover
-    "topbar":        "#A67B5B",
+    # Sidebar & Topbar — Rich Warm Brown
+    "sidebar":       "#8B5E3C",   # rich warm coffee brown
+    "sidebar_active":"#C08A6B",   # terracotta active highlight
+    "sidebar_hover": "#7A5030",   # deeper hover brown
+    "topbar":        "#8B5E3C",
 
-    # Primary — Soft Warm Brown
-    "primary":      "#A67B5B",   # required warm wood brown
-    "primary_dark": "#8B6548",   # darker wood brown (hover)
-    "primary_light":"#C8A07A",   # lighter warm brown
+    # Primary — Warm Wood Brown
+    "primary":      "#8B5E3C",   # warm wood brown
+    "primary_dark": "#7A5030",   # darker brown (hover)
+    "primary_light":"#B8855C",   # lighter warm brown
 
     # Accent — Warm Terracotta
-    "accent":       "#C08A6B",   # required warm terracotta accent
+    "accent":       "#C08A6B",   # warm terracotta accent
     "accent_dark":  "#A67055",   # deeper terracotta for hover
 
     # Dark Neutral
-    "neutral_dark":  "#A67B5B",
+    "neutral_dark":  "#8B5E3C",
 
     # Text & Borders
-    "text":         "#2E2E2E",   # required: near-black text
+    "text":         "#2B2B2B",   # near-black text
     "text_light":   "#FFFFFF",
-    "muted":        "#8A7060",   # warm muted brown-gray
-    "border":       "#E5D7C8",   # required: soft warm border
+    "muted":        "#6A6A6A",   # neutral muted gray
+    "border":       "#D9C5B2",   # soft warm border
     "border_focus": "#C08A6B",   # terracotta focus border
-    "beige":        "#F2E8DC",   # warm beige for inputs
+    "beige":        "#EDE4D8",   # warm beige for inputs
 
     # Status colors
     "success":      "#4A7C59",   # muted green
@@ -100,17 +100,17 @@ THEME = {
 
     # Card accent borders
     "card_accent_1": "#C08A6B",
-    "card_accent_2": "#A67B5B",
+    "card_accent_2": "#8B5E3C",
     "card_accent_3": "#C8903A",
     "card_accent_4": "#4A7C59",
 
     # Selection
-    "select_bg":    "#A67B5B",
+    "select_bg":    "#8B5E3C",
     "select_fg":    "#FFFFFF",
 
     # Legacy keys — map to new warm palette so existing code works unchanged
-    "brown":        "#A67B5B",   # required PRIMARY
-    "brown_dark":   "#8B6548",   # darker brown (hover)
+    "brown":        "#8B5E3C",   # PRIMARY warm brown
+    "brown_dark":   "#7A5030",   # darker brown (hover)
     "brown2":       "#C08A6B",   # terracotta accent
 }
 

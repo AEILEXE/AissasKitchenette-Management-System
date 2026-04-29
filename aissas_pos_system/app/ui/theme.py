@@ -6,18 +6,18 @@ from tkinter import ttk
 
 
 class Theme:
-    BG           = "#FAF7F2"   # warm cream background
+    BG           = "#F4EFEA"   # warm cream background
     CARD         = "#FFFFFF"   # white card
     PRIMARY      = "#8B5E3C"   # warm wood brown
-    PRIMARY_DARK = "#6B4429"   # darker brown (hover)
-    ACCENT       = "#D4956A"   # warm terra cotta
-    TEXT         = "#3D2B1F"   # warm dark brown text
-    MUTED        = "#8B7355"   # warm muted brown
-    BORDER       = "#E8DFCF"   # soft warm border
+    PRIMARY_DARK = "#7A5030"   # darker brown (hover)
+    ACCENT       = "#C08A6B"   # warm terracotta
+    TEXT         = "#2B2B2B"   # near-black text
+    MUTED        = "#6A6A6A"   # neutral muted gray
+    BORDER       = "#D9C5B2"   # soft warm border
     SUCCESS      = "#4A7C59"   # muted green
     DANGER       = "#B55B52"   # muted warm red
-    INPUT_BG     = "#F5EBD9"   # warm beige input
-    SIDEBAR      = "#5C3D2E"   # warm coffee brown sidebar
+    INPUT_BG     = "#EDE4D8"   # warm beige input
+    SIDEBAR      = "#8B5E3C"   # rich coffee brown sidebar
 
 
 def apply_ttk_theme(root: tk.Tk) -> None:

@@ -57,7 +57,7 @@ class LoginView(tk.Frame):
     ┌────────────────────────────┬──────────────────────┐
     │  Hero canvas  (54 %)       │  Login form  (46 %)  │
     │  Aissa's Kitchenette       │  Welcome Back        │
-    │  Management System         │  ─────────────────   │
+    │  Point of Sale             │  ─────────────────   │
     │                            │  USERNAME            │
     │    [bouncing food image]   │  PASSWORD            │
     │         · · ·              │  SIGN IN ➤           │
@@ -401,7 +401,7 @@ class LoginView(tk.Frame):
         # Subtitle
         sub_cy = y_sub + sub_ph // 2
         self._hero.create_text(cx, sub_cy,
-            text="Management System",
+            text="Point of Sale",
             font=("Segoe UI", sub_size, "italic"),
             fill=_SUBTITLE_FG, anchor="center")
 
