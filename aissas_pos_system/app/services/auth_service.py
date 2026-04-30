@@ -97,6 +97,8 @@ class AuthService:
     ) -> tuple[bool, str, int]:
         if not username.strip():
             return False, "Username cannot be empty", 0
+        if not full_name.strip():
+            return False, "Full Name is required", 0
         if role not in ROLES:
             return False, f"Invalid role: {role}", 0
 

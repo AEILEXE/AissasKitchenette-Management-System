@@ -296,6 +296,9 @@ class AppWindow:
     def _logo_click(self) -> None:
         if self.auth_service.has_permission(P_POS):
             self.show_pos()
+        elif (self.auth_service.has_permission(P_INV_VIEW) or
+              self.auth_service.has_permission(P_INV_MANAGE)):
+            self.show_inventory()
         else:
             self.show_transactions()
 
@@ -331,7 +334,15 @@ class AppWindow:
         self._show_shell(True)
         self._build_nav()
         self._show_welcome()
-        self.show_pos()
+        # Navigate to the most appropriate first view for each role.
+        # Roles without POS access land on Inventory (if they have it) or Transactions.
+        if self.auth_service.has_permission(P_POS):
+            self.show_pos()
+        elif (self.auth_service.has_permission(P_INV_VIEW) or
+              self.auth_service.has_permission(P_INV_MANAGE)):
+            self.show_inventory()
+        else:
+            self.show_transactions()
 
     def _show_welcome(self) -> None:
         u = self.auth_service.get_current_user()
@@ -349,14 +360,20 @@ class AppWindow:
             messagebox.showerror("Access denied", "No permission for POS")
             self.show_login()
             return
+        if self._active_nav_key == "pos" and self._current_view is not None:
+            return  # Already on POS — preserve cart state
         self._set_active_nav("pos")
         self._set_view(POSView, self.db, self.auth_service)
 
     def show_transactions(self) -> None:
+        if self._active_nav_key == "tx" and self._current_view is not None:
+            return
         self._set_active_nav("tx")
         self._set_view(TransactionsView, self.db, self.auth_service)
 
     def show_dashboard(self) -> None:
+        if self._active_nav_key == "dash" and self._current_view is not None:
+            return
         self._set_active_nav("dash")
         self._clear_content()
         view = DashboardView(
@@ -374,16 +391,31 @@ class AppWindow:
                 self.auth_service.has_permission(P_INV_MANAGE)):
             messagebox.showerror("Access denied", "No permission for Inventory")
             return
+        if self._active_nav_key == "inv" and self._current_view is not None:
+            return
         self._set_active_nav("inv")
         self._set_view(InventoryShellView, self.db, self.auth_service,
-                       self.show_transactions, self.show_pos)
+                       self.show_transactions, self.show_pos, self._force_show_reports)
 
     def show_reports(self) -> None:
         if not self.auth_service.has_permission(P_REPORTS):
             messagebox.showerror("Access denied", "No permission to view reports.")
             return
+        if self._active_nav_key == "reports" and self._current_view is not None:
+            # Already on reports — refresh data so latest checkout/resolve shows
+            if hasattr(self._current_view, "refresh"):
+                self._current_view.refresh()
+            return
         self._set_active_nav("reports")
         self._set_view(ReportsView, self.db, self.auth_service)
+
+    def _force_show_reports(self) -> None:
+        """Navigate to Reports, bypassing the same-tab guard (e.g. from Inventory)."""
+        if not self.auth_service.has_permission(P_REPORTS):
+            messagebox.showerror("Access denied", "No permission to view reports.")
+            return
+        self._active_nav_key = None
+        self.show_reports()
 
     def show_backup(self) -> None:
         if not self.auth_service.has_permission(P_DATABASE):
@@ -420,6 +452,8 @@ class AppWindow:
 
     def _refresh_current_view(self) -> None:
         key = self._active_nav_key
+        # Force re-render by clearing the active key first, then navigate
+        self._active_nav_key = None
         if key == "pos":
             self.show_pos()
         elif key == "tx":

@@ -10,7 +10,6 @@ from app.db.database import Database
 from app.db.dao import OrderDAO, DraftDAO, ProductDAO
 from app.services.auth_service import AuthService
 from app.ui.inventory_products_view import InventoryProductsView
-from app.ui.inventory_sales_view import InventorySalesView
 from app.ui.inventory_raw_materials_view import InventoryRawMaterialsView
 from app.ui.transactions_view import TransactionDetailsDialog
 from app.utils import money
@@ -36,17 +35,18 @@ def _bind_mousewheel(canvas: tk.Canvas) -> None:
 
 class InventoryShellView(tk.Frame):
     """
-    B: Inventory shell with a TOP navigation bar (Overview / Sales / Products).
-    No left sidebar — content uses full width.
+    Inventory shell with a top navigation bar (Products / Raw Materials).
+    Sales reporting is in the Reports section of the main nav.
     """
 
     def __init__(self, parent: tk.Frame, db: Database, auth: AuthService,
-                 go_transactions_cb, go_pos_cb):
+                 go_transactions_cb, go_pos_cb, go_reports_cb=None):
         super().__init__(parent, bg=THEME["bg"])
         self.db = db
         self.auth = auth
         self.go_transactions_cb = go_transactions_cb
         self.go_pos_cb = go_pos_cb
+        self.go_reports_cb = go_reports_cb or (lambda: None)
 
         self.orders   = OrderDAO(db)
         self.drafts   = DraftDAO(db)
@@ -74,11 +74,10 @@ class InventoryShellView(tk.Frame):
             font=("Segoe UI", 12, "bold"),
         ).pack(side="left", padx=(16, 20), pady=12)
 
-        tab_items = []
-        if self.auth.has_permission(P_REPORTS):
-            tab_items.append(("sales", "Sales", self.show_sales))
-        tab_items.append(("products", "Products", self.show_products))
-        tab_items.append(("raw_materials", "Raw Materials", self.show_raw_materials))
+        tab_items = [
+            ("products", "Products", self.show_products),
+            ("raw_materials", "Raw Materials", self.show_raw_materials),
+        ]
         for key, text, cmd in tab_items:
             btn = tk.Button(
                 nav, text=text,
@@ -122,20 +121,16 @@ class InventoryShellView(tk.Frame):
         self._clear_content()
         self._build_overview()
 
-    def show_sales(self):
-        if not self.auth.has_permission(P_REPORTS):
-            messagebox.showerror("Access Denied", "You do not have permission to view reports.")
-            return
-        self._set_active("sales")
-        self._clear_content()
-        InventorySalesView(self.content, self.db, self.auth).pack(fill="both", expand=True)
-
     def show_products(self):
+        if self._active == "products":
+            return
         self._set_active("products")
         self._clear_content()
         InventoryProductsView(self.content, self.db, self.auth).pack(fill="both", expand=True)
 
     def show_raw_materials(self):
+        if self._active == "raw_materials":
+            return
         self._set_active("raw_materials")
         self._clear_content()
         InventoryRawMaterialsView(self.content, self.db, self.auth).pack(fill="both", expand=True)
@@ -481,7 +476,7 @@ class InventoryShellView(tk.Frame):
         if can_manage:
             _qa_btn("+ Add Product", THEME["success"], self.show_products)
         if can_export:
-            _qa_btn("Export Sales", THEME["brown"], self.show_sales)
+            _qa_btn("Sales Reports", THEME["brown"], self.go_reports_cb)
         if can_db:
             _qa_btn("Backup Database", THEME["accent"], self._quick_backup_db)
         if can_users:

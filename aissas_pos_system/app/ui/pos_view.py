@@ -4,6 +4,7 @@ import json
 import os
 from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -62,7 +63,7 @@ class POSView(tk.Frame):
         self._selected_category: str = "All"
 
         self._products_cache = []
-        self._all_products_cache: list = []
+        self._all_products_cache: list[Any] = []
         self._all_products_cache_cat: str = ""
         self._search_after: int | None = None
         self._product_card_widgets: list[tk.Frame] = []
@@ -72,7 +73,7 @@ class POSView(tk.Frame):
 
         self._img_cache: dict[str, tk.PhotoImage] = {}
 
-        self._batch_products: list = []
+        self._batch_products: list[Any] = []
         self._batch_idx: int = 0
         self._batch_after: int | None = None
         self._loading_lbl: tk.Label | None = None
@@ -89,11 +90,13 @@ class POSView(tk.Frame):
         self._discount_visible = False
 
         self.var_amount_paid: tk.StringVar | None = None
+        self._amount_entry: tk.Entry | None = None
         self._lbl_subtotal_val: tk.Label | None = None
         self._lbl_discount_row: tk.Frame | None = None
         self._lbl_discount_name: tk.Label | None = None
         self._lbl_discount_val: tk.Label | None = None
         self._lbl_total_val: tk.Label | None = None
+        self._cart_row_refs: dict[int, dict[str, tk.Label]] = {}
 
         # Category grid layout tracking
         self._cat_grid_frame: tk.Frame | None = None
@@ -102,8 +105,7 @@ class POSView(tk.Frame):
 
         try:
             self.recommender = Recommender(db)
-        except Exception as _exc:
-            print(f"[POSView] Recommender init failed (suggestions disabled): {_exc}")
+        except Exception:
             self.recommender = None
         self._suggestions_frame: tk.Frame | None = None
 
@@ -321,11 +323,6 @@ class POSView(tk.Frame):
     # ── UI Build ──────────────────────────────────────────────────────────────
     def _build(self):
         style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
-
         style.configure(
             "Thick.Vertical.TScrollbar",
             troughcolor=THEME["panel"],
@@ -661,11 +658,15 @@ class POSView(tk.Frame):
                  font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=_pad, pady=(6, 2))
 
         self.var_amount_paid = tk.StringVar(value="")
-        tk.Entry(col2, textvariable=self.var_amount_paid,
-                 font=("Segoe UI", 13, "bold"),
-                 bg=THEME["panel2"], fg=THEME["text"],
-                 bd=0, justify="right", state="readonly",
-                 ).pack(fill="x", padx=_pad, ipady=7)
+        self._amount_entry = tk.Entry(
+            col2, textvariable=self.var_amount_paid,
+            font=("Segoe UI", 13, "bold"),
+            bg=THEME["panel2"], fg=THEME["text"],
+            bd=0, justify="right",
+            insertbackground=THEME["text"],
+        )
+        self._amount_entry.pack(fill="x", padx=_pad, ipady=7)
+        self._amount_entry.bind("<Key>", self._on_amount_key)
 
         self._change_lbl = tk.Label(col2, text="", bg=THEME["panel"], fg=THEME["muted"],
                                     font=("Segoe UI", 8, "bold"), anchor="w")
@@ -773,6 +774,22 @@ class POSView(tk.Frame):
                 self.var_amount_paid.set(key)
             else:
                 self.var_amount_paid.set(current + key)
+
+    def _on_amount_key(self, event: tk.Event) -> str:
+        """Route keyboard input on the amount-paid entry through the keypad logic."""
+        sym = event.keysym
+        if sym in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"):
+            self._keypad_press(sym)
+        elif sym == "period":
+            self._keypad_press(".")
+        elif sym == "BackSpace":
+            current = self.var_amount_paid.get() if self.var_amount_paid else ""
+            if self.var_amount_paid:
+                self.var_amount_paid.set(current[:-1])
+        elif sym in ("Delete", "Escape"):
+            self._keypad_press("CLEAR")
+        # Block all default entry behaviour so the StringVar update is the only effect
+        return "break"
 
     # ── Canvas resize ─────────────────────────────────────────────────────────
     def _on_prod_canvas_configure(self, e: object) -> None:
@@ -918,7 +935,6 @@ class POSView(tk.Frame):
                 )
             self._all_products_cache_cat = cat_name
         except Exception as e:
-            print("Product query failed:", e)
             messagebox.showerror("DB Error", str(e))
             self._all_products_cache = []
 
@@ -958,7 +974,7 @@ class POSView(tk.Frame):
         self._start_batch_load()
 
     # ── Batch card loading ────────────────────────────────────────────────────
-    _BATCH_SIZE = 8
+    _BATCH_SIZE = 12
 
     def _start_batch_load(self) -> None:
         if self._destroyed or self._building or not self.winfo_exists():
@@ -985,6 +1001,7 @@ class POSView(tk.Frame):
 
         self._batch_products = list(self._products_cache)
         self._batch_idx = 0
+        self._last_batch_cols = 0
         self._batch_after = self._after(10, self._render_product_batch)
 
     def _render_product_batch(self) -> None:
@@ -1002,13 +1019,34 @@ class POSView(tk.Frame):
         if not self.prod_inner.winfo_exists():
             return
 
-        end = min(self._batch_idx + self._BATCH_SIZE, len(self._batch_products))
-        for i in range(self._batch_idx, end):
+        start = self._batch_idx
+        end = min(start + self._BATCH_SIZE, len(self._batch_products))
+        for i in range(start, end):
             card = self._product_card(self.prod_inner, self._batch_products[i])
             self._product_card_widgets.append(card)
 
         self._batch_idx = end
-        self._do_product_grid_layout()
+
+        # Incremental layout: only place newly added cards unless column count changed
+        cols = max(2, min(5, self._calc_product_cols()))
+        last_cols = getattr(self, "_last_batch_cols", 0)
+        if cols != last_cols or start == 0:
+            # Column count changed or first batch — full relayout needed
+            self._last_batch_cols = cols
+            self._do_product_grid_layout()
+        else:
+            # Fast path: just grid the new cards, existing ones stay in place
+            for idx in range(start, end):
+                self._product_card_widgets[idx].grid(
+                    row=idx // cols, column=idx % cols,
+                    sticky="nsew", padx=4, pady=4,
+                )
+            for r in range((end + cols - 1) // cols):
+                self.prod_inner.rowconfigure(r, weight=0, uniform="prodrow", minsize=160)
+            try:
+                self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
+            except Exception:
+                pass
 
         if self._batch_idx < len(self._batch_products):
             self._batch_after = self._after(10, self._render_product_batch)
@@ -1139,14 +1177,19 @@ class POSView(tk.Frame):
         if desc and len(desc) > 30:
             self._add_tooltip(desc_lbl, desc)
 
-        # ── Price ─────────────────────────────────────────────────────────────
+        # ── Price + Stock badge row ───────────────────────────────────────────
+        price_row = tk.Frame(card, bg=THEME["panel"], cursor="hand2")
+        price_row.grid(row=3, column=1, sticky="ew", padx=(4, 6), pady=(0, 5))
+        price_row.columnconfigure(0, weight=1)
+        _bind_click(price_row)
+
         price_lbl = tk.Label(
-            card, text=money(price),
+            price_row, text=money(price),
             bg=THEME["panel"], fg=THEME["accent"],
             font=("Segoe UI", 9, "bold"),
             anchor="center", cursor="hand2",
         )
-        price_lbl.grid(row=3, column=1, sticky="ew", padx=(4, 6), pady=(0, 5))
+        price_lbl.grid(row=0, column=0, sticky="ew")
         _bind_click(price_lbl)
 
         return card
@@ -1165,7 +1208,7 @@ class POSView(tk.Frame):
                 self.after_cancel(self._cart_resize_after)
             except Exception:
                 pass
-        self._cart_resize_after = self.after(10, self._resize_cart_canvas)
+        self._cart_resize_after = self._after(10, self._resize_cart_canvas)
 
     def _resize_cart_canvas(self):
         self._cart_resize_after = None
@@ -1204,13 +1247,54 @@ class POSView(tk.Frame):
             pass
         return 0
 
+    def _get_live_stock(self, pid: int) -> int:
+        """Always queries the DB for current stock — never uses stale cache."""
+        try:
+            r = self.db.fetchone(
+                "SELECT stock FROM products WHERE id=? AND active=1;", (pid,)
+            )
+            if r:
+                val = int(r["stock"])
+                self._product_stock[pid] = val
+                return val
+        except Exception:
+            pass
+        return 0
+
     def _add_to_cart(self, pid: int, name: str, price: float):
+        live_stock = self._get_live_stock(pid)
+        current_qty = self.cart[pid][2] if pid in self.cart else 0
+        if live_stock <= 0:
+            messagebox.showwarning("Out of Stock", f"'{name}' is out of stock.")
+            return
+        if current_qty >= live_stock:
+            messagebox.showwarning(
+                "Stock Limit",
+                f"Only {live_stock} unit(s) of '{name}' available.\n"
+                f"You already have {current_qty} in the cart.",
+            )
+            return
         if pid in self.cart:
             n, p, qty, note = self.cart[pid]
             self.cart[pid] = (n, p, qty + 1, note)
+            # Fast path: update existing row in-place — no widget rebuild
+            refs = self._cart_row_refs.get(pid)
+            if refs:
+                try:
+                    new_qty = qty + 1
+                    refs["qty_lbl"].configure(text=str(new_qty))
+                    refs["sub_lbl"].configure(text=money(new_qty * p))
+                    _, _, _, total = self._calc_totals()
+                    self.total_lbl.configure(text=money(total))
+                    if self._lbl_total_val:
+                        self._lbl_total_val.configure(text=money(total))
+                    return
+                except Exception:
+                    pass
+            self._refresh_cart()
         else:
             self.cart[pid] = (name, price, 1, "")
-        self._refresh_cart()
+            self._refresh_cart()
 
     def _remove_from_cart(self, pid: int):
         if pid in self.cart:
@@ -1224,8 +1308,47 @@ class POSView(tk.Frame):
         new_qty = qty + delta
         if new_qty <= 0:
             del self.cart[pid]
-        else:
-            self.cart[pid] = (n, p, new_qty, note)
+            self._refresh_cart()
+            return
+        if delta > 0:
+            live_stock = self._get_live_stock(pid)
+            if new_qty > live_stock:
+                messagebox.showwarning(
+                    "Stock Limit",
+                    f"Only {live_stock} unit(s) of '{n}' available.",
+                )
+                return
+        self.cart[pid] = (n, p, new_qty, note)
+        # Fast path: update qty/subtotal labels in-place (avoids full widget rebuild)
+        refs = self._cart_row_refs.get(pid)
+        if refs:
+            try:
+                refs["qty_lbl"].configure(text=str(new_qty))
+                refs["sub_lbl"].configure(text=money(new_qty * p))
+                subtotal, discount, _, total = self._calc_totals()
+                self.total_lbl.configure(text=money(total))
+                if self._lbl_subtotal_val:
+                    self._lbl_subtotal_val.configure(text=money(subtotal))
+                if self._lbl_total_val:
+                    self._lbl_total_val.configure(text=money(total))
+                if discount > 0:
+                    _mode_labels = {"PWD": "PWD 20%", "SENIOR": "Senior 20%", "SPECIAL": "Special"}
+                    _disc_label = _mode_labels.get(self.discount_mode, "Discount")
+                    if self._lbl_discount_name:
+                        self._lbl_discount_name.configure(text=f"{_disc_label}:")
+                    if self._lbl_discount_val:
+                        self._lbl_discount_val.configure(text=f"−{money(discount)}")
+                    if self._lbl_discount_row:
+                        self._lbl_discount_row.pack(fill="x", pady=(0, 2))
+                    self._set_discount_next_to_total(f"{_disc_label}: −{money(discount)}")
+                else:
+                    if self._lbl_discount_row:
+                        self._lbl_discount_row.pack_forget()
+                    self._set_discount_next_to_total(None)
+                return
+            except Exception:
+                pass
+        # Fallback: full rebuild (e.g. refs stale after theme rebuild)
         self._refresh_cart()
 
     def _calc_totals(self):
@@ -1256,6 +1379,7 @@ class POSView(tk.Frame):
                 self._discount_visible = False
 
     def _refresh_cart(self):
+        self._cart_row_refs = {}
         for w in self.cart_tbl.winfo_children():
             w.destroy()
 
@@ -1285,7 +1409,7 @@ class POSView(tk.Frame):
                 self._lbl_total_val.configure(text="₱0.00")
             self._cancel_after(self._suggest_after)
             self._suggest_after = self._after(30, self._refresh_suggestions)
-            self.after(20, self._resize_cart_canvas)
+            self._after(20, self._resize_cart_canvas)
             return
 
         tk.Label(self.cart_tbl, text="Item",
@@ -1312,21 +1436,22 @@ class POSView(tk.Frame):
                       command=lambda p=pid: self._change_qty(p, -1),
                       bg=THEME["panel"], fg=THEME["text"], bd=0, width=2, cursor="hand2",
                       ).grid(row=row_i, column=1, padx=2, pady=2)
-            tk.Label(self.cart_tbl, text=str(qty),
-                     bg=THEME["panel2"], fg=THEME["text"], width=3, anchor="center",
-                     ).grid(row=row_i, column=2, padx=2, pady=2)
+            qty_lbl = tk.Label(self.cart_tbl, text=str(qty),
+                               bg=THEME["panel2"], fg=THEME["text"], width=3, anchor="center")
+            qty_lbl.grid(row=row_i, column=2, padx=2, pady=2)
             tk.Button(self.cart_tbl, text="+",
                       command=lambda p=pid: self._change_qty(p, 1),
                       bg=THEME["panel"], fg=THEME["text"], bd=0, width=2, cursor="hand2",
                       ).grid(row=row_i, column=3, padx=2, pady=2)
-            tk.Label(self.cart_tbl, text=money(qty * price),
-                     bg=THEME["panel2"], fg=THEME["text"], anchor="e",
-                     ).grid(row=row_i, column=4, sticky="e", padx=(4, 4), pady=2)
+            sub_lbl = tk.Label(self.cart_tbl, text=money(qty * price),
+                               bg=THEME["panel2"], fg=THEME["text"], anchor="e")
+            sub_lbl.grid(row=row_i, column=4, sticky="e", padx=(4, 4), pady=2)
             tk.Button(self.cart_tbl, text="✕",
                       command=lambda p=pid: self._remove_from_cart(p),
                       bg=THEME["danger"], fg="white", bd=0, width=3, padx=2, pady=1,
                       cursor="hand2", font=("Segoe UI", 9, "bold"),
                       ).grid(row=row_i, column=5, padx=(4, 10), pady=2, sticky="e")
+            self._cart_row_refs[pid] = {"qty_lbl": qty_lbl, "sub_lbl": sub_lbl}
             row_i += 1
 
         subtotal, discount, _tax, total = self._calc_totals()
@@ -1359,7 +1484,7 @@ class POSView(tk.Frame):
                         self.cart_canvas.configure(scrollregion=bbox)
             except Exception:
                 pass
-        self.after(0, _update_scroll)
+        self._after(0, _update_scroll)
 
         self._cancel_after(self._suggest_after)
         self._suggest_after = self._after(60, self._refresh_suggestions)
@@ -1648,6 +1773,28 @@ class POSView(tk.Frame):
 
         items = [{"product_id": pid, "qty": qty, "unit_price": price, "note": note}
                  for pid, (_name, price, qty, note) in self.cart.items()]
+
+        # Pre-checkout stock validation: fail fast with a clear message before DB write
+        stock_errors: list[str] = []
+        for pid, (_name, _price, qty, _note) in self.cart.items():
+            r = self.db.fetchone(
+                "SELECT name, stock, active FROM products WHERE id=?;", (pid,)
+            )
+            if r is None or not r["active"]:
+                stock_errors.append(f"• '{_name}' is no longer available.")
+            elif qty > int(r["stock"]):
+                avail = int(r["stock"])
+                stock_errors.append(
+                    f"• '{r['name']}': need {qty}, only {avail} in stock."
+                )
+        if stock_errors:
+            messagebox.showerror(
+                "Insufficient Stock",
+                "Cannot complete order — stock issues:\n\n" + "\n".join(stock_errors),
+            )
+            return
+
+        self._product_stock.clear()
         ref_no = f"TXN-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         try:
             order_id = self.svc.create_order(
@@ -1669,15 +1816,34 @@ class POSView(tk.Frame):
                 discount_type=discount_type,
             )
             if status == "Pending":
-                messagebox.showinfo("Saved", f"Order saved as Pending.\n\nTransaction ID: {order_id}")
                 self._checkout_done(cleared=True, completed=False)
+                self._show_ewallet_reference_dialog(order_id, total)
             else:
                 # Clear cart first, then show in-app receipt preview
                 self._checkout_done(cleared=True, completed=True)
                 self._show_receipt_preview(order_id, order_type, table_number, discount_type,
                                            change=change, paid=paid)
         except Exception as e:
-            messagebox.showerror("Checkout Error", f"Failed to save order.\n\n{e}")
+            err = str(e)
+            if "Insufficient stock" in err:
+                messagebox.showerror(
+                    "Out of Stock",
+                    f"{err}\n\n"
+                    "Go to Inventory → Products and increase the stock for this item before selling.",
+                )
+            elif "no longer available" in err:
+                messagebox.showerror(
+                    "Product Unavailable",
+                    f"{err}\n\nThe item may have been deactivated. Remove it from the cart.",
+                )
+            elif "Insufficient raw material" in err:
+                messagebox.showerror(
+                    "Insufficient Ingredients",
+                    f"{err}\n\n"
+                    "Go to Inventory → Raw Materials and restock the ingredient.",
+                )
+            else:
+                messagebox.showerror("Checkout Error", f"Failed to save order.\n\n{err}")
 
     def _checkout_done(self, cleared: bool = True, completed: bool = False):
         if cleared:
@@ -1702,6 +1868,33 @@ class POSView(tk.Frame):
         self._after(80, self._refresh_products)
         if completed and self.recommender is not None:
             self.recommender.invalidate_cache()
+
+    def _show_ewallet_reference_dialog(self, order_id: int, total: float) -> None:
+        """After saving a Bank/E-Wallet Pending order, immediately ask for the
+        reference number.  Shows the order total — no amount re-entry needed.
+        Resolves to Completed on the spot; skipping leaves it as Pending."""
+        from app.ui.dialogs import EWalletDialog
+        dlg = EWalletDialog(self, order_id=order_id, total=total)
+        self.wait_window(dlg)
+
+        if dlg.result:
+            ref = dlg.result
+            try:
+                self.order_dao.resolve_pending(order_id, ref, total)
+                self._show_receipt_preview(order_id, "", "", "NONE")
+            except Exception as e:
+                messagebox.showwarning(
+                    "Resolve Failed",
+                    f"Order saved as Pending but could not be resolved:\n{e}\n\n"
+                    "You can still resolve it from the Transactions page.",
+                )
+            return
+
+        messagebox.showinfo(
+            "Order Pending",
+            f"Order #{order_id} saved as Pending.\n\n"
+            "Go to Transactions to resolve it once the payment reference is confirmed.",
+        )
 
     def _show_receipt_preview(self, order_id: int, order_type: str,
                                table_number: str, discount_type: str,

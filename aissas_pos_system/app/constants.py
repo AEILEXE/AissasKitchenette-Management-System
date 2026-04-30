@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 # APP ROLES (match DB values)
-ROLE_ADMIN   = "ADMIN"
-ROLE_MANAGER = "MANAGER"
-ROLE_CASHIER = "CASHIER"   # renamed from CLERK for clarity
-ROLE_CLERK   = "CASHIER"   # backward-compat alias
+ROLE_ADMIN     = "ADMIN"
+ROLE_MANAGER   = "MANAGER"
+ROLE_CASHIER   = "CASHIER"    # POS + Transactions only
+ROLE_CLERK     = "CASHIER"    # backward-compat alias
+ROLE_INVENTORY = "INVENTORY"  # Raw materials + inventory, no POS
 
-ROLES = [ROLE_ADMIN, ROLE_MANAGER, ROLE_CASHIER]
+ROLES = [ROLE_ADMIN, ROLE_MANAGER, ROLE_CASHIER, ROLE_INVENTORY]
 
 # ── Granular permission keys (stored in role_permissions table) ────────────
 P_SELL            = "can_sell"
@@ -71,7 +72,10 @@ PERMISSION_LABELS: dict[str, str] = {
 
 # Default permissions per role (used for initial DB seed + fallback)
 DEFAULT_ROLE_PERMISSIONS: dict[str, set[str]] = {
-    ROLE_ADMIN: set(ALL_PERMISSION_KEYS),   # Admin gets everything
+    # ADMIN — full access to every module
+    ROLE_ADMIN: set(ALL_PERMISSION_KEYS),
+
+    # MANAGER — everything except raw DB access and ML
     ROLE_MANAGER: {
         P_SELL, P_DISCOUNT, P_VOID, P_VOID_APPROVE,
         P_REPORTS, P_REPORTS_FULL, P_PROFIT,
@@ -79,8 +83,19 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, set[str]] = {
         P_SETTINGS, P_EXPORT, P_INV_VIEW, P_AUDIT_LOG,
         P_EDIT_COMPLETED,
     },
+
+    # CASHIER — POS + Transactions only.
+    # No inventory access (P_INV_VIEW removed) and no user management.
     ROLE_CASHIER: {
-        P_SELL, P_DISCOUNT, P_INV_VIEW,
+        P_SELL, P_DISCOUNT,
+    },
+
+    # INVENTORY STAFF — inventory + raw materials + basic reports.
+    # No POS (P_SELL absent), no user management.
+    ROLE_INVENTORY: {
+        P_INV_VIEW, P_MANAGE_PRODS,
+        P_REPORTS,
+        P_EXPORT,
     },
 }
 
@@ -90,6 +105,7 @@ P_INV_MANAGE = P_MANAGE_PRODS
 P_USERS      = P_MANAGE_USERS
 ROLE_PERMISSIONS = DEFAULT_ROLE_PERMISSIONS
 ROLE_PERMS   = {k: set(v) for k, v in DEFAULT_ROLE_PERMISSIONS.items()}
+ROLE_STAFF   = ROLE_INVENTORY   # alias
 
 # AUTH MESSAGES
 ERROR_USER_NOT_FOUND      = "User not found"

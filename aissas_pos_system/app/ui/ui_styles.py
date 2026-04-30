@@ -8,16 +8,16 @@ from __future__ import annotations
 from tkinter import ttk
 from app.config import THEME
 
-_SB     = THEME["sidebar"]        # #5C3D2E  warm coffee brown
+_SB     = THEME["sidebar"]        # #8B5E3C  rich warm coffee brown
 _BROWN  = THEME["primary"]        # #8B5E3C  warm wood brown
-_TERRA  = THEME["accent"]         # #D4956A  terra cotta
+_TERRA  = THEME["accent"]         # #C08A6B  warm terracotta
 _GREEN  = THEME["success"]        # #4A7C59
-_BG     = THEME["bg"]             # #FAF7F2  warm cream
+_BG     = THEME["bg"]             # #F4EFEA  warm cream
 _PANEL  = THEME["panel"]          # #FFFFFF
-_BEIGE  = THEME["beige"]          # #F5EBD9  warm input beige
-_TEXT   = THEME["text"]           # #3D2B1F  dark brown text
-_MUTED  = THEME["muted"]          # #8B7355  warm muted brown
-_BORDER = THEME["border"]         # #E8DFCF  soft warm border
+_BEIGE  = THEME["beige"]          # #EDE4D8  warm input beige
+_TEXT   = THEME["text"]           # #2B2B2B  near-black text
+_MUTED  = THEME["muted"]          # #6A6A6A  neutral muted gray
+_BORDER = THEME["border"]         # #D9C5B2  soft warm border
 
 
 def apply_global_styles() -> None:
@@ -43,16 +43,18 @@ def apply_global_styles() -> None:
                 relief="flat")
     s.configure("Treeview.Heading",
                 font=("Segoe UI", 9, "bold"),
-                background=_SB,
-                foreground="#FFFFFF",
+                background=_BEIGE,
+                foreground=_TEXT,
                 relief="flat",
                 padding=(10, 8))
+    # Use a darker brown for selected rows to guarantee white text is always
+    # readable regardless of what tag foreground colour the row carries.
     s.map("Treeview",
-          background=[("selected", _BROWN)],
-          foreground=[("selected", "#FFFFFF")])
+          background=[("selected", "#5C3D2E"), ("!selected", _PANEL)],
+          foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])
     s.map("Treeview.Heading",
-          background=[("active", THEME["primary_dark"])],
-          foreground=[("active", "#FFFFFF")])
+          background=[("active", _BORDER)],
+          foreground=[("active", _TEXT)])
 
     # ── TButton — default uses warm brown ──────────────────────────────────
     s.configure("TButton",

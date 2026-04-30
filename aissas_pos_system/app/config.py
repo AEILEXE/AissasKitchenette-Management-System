@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 # ── App Info ───────────────────────────────────────────────────────────────
 APP_NAME = "Aissa's Kitchenette"
-APP_VERSION = "1.0"
+APP_VERSION = "2.0.0"
 
 # Backwards-compat aliases (some modules import these)
 APP_VER = APP_VERSION
@@ -18,20 +19,23 @@ APP_VER = APP_VERSION
 #   sys.executable = path to the .exe itself
 #
 # Bundled READ-ONLY assets  →  sys._MEIPASS  (fonts, icons, logo, product_images)
-# Writable user data        →  dir of sys.executable  (database, exports, receipts)
+# Writable user data        →  %APPDATA%\AissasPOS\  (database, exports, receipts)
+#   Using AppData avoids write-permission issues when installed to Program Files
+#   and keeps user data separate from the application installation.
 #
 # In normal Python (dev) run:
-#   _BUNDLE_DIR   = aissas_pos_system/  (where assets/ lives next to main.py)
-#   _WRITABLE_ROOT = project root  (where data/ and exports/ live)
+#   _BUNDLE_DIR    = aissas_pos_system/  (where assets/ lives next to main.py)
+#   _WRITABLE_ROOT = project root        (where data/ and exports/ live)
 
 def _is_frozen() -> bool:
     return getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
 
 
 if _is_frozen():
-    # Packaged EXE
-    _BUNDLE_DIR    = Path(sys._MEIPASS)           # type: ignore[attr-defined]
-    _WRITABLE_ROOT = Path(sys.executable).parent  # next to the .exe
+    # Packaged EXE — read-only bundle in temp dir, writable data in AppData
+    _BUNDLE_DIR    = Path(sys._MEIPASS)                          # type: ignore[attr-defined]
+    _appdata       = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    _WRITABLE_ROOT = Path(_appdata) / "AissasPOS"
 else:
     # Normal dev run  (this file lives at  aissas_pos_system/app/config.py)
     _BUNDLE_DIR    = Path(__file__).resolve().parent.parent   # aissas_pos_system/

@@ -263,7 +263,7 @@ class TextPromptDialog(tk.Toplevel):
         self.resizable(False, False)
         self.grab_set()
 
-        self.result: Optional[dict] = None
+        self.result: Optional[dict[str, str]] = None
 
         # ── Header bar ────────────────────────────────────────────────────────
         hdr = tk.Frame(self, bg=THEME["sidebar"])
@@ -356,6 +356,120 @@ class TextPromptDialog(tk.Toplevel):
         ref = (self.ref_var.get() or "").strip()
         amount = (self.amount_var.get() or "").strip()
         self.result = {"ref": ref, "amount": amount}
+        self.destroy()
+
+
+class EWalletDialog(tk.Toplevel):
+    """
+    GCash / E-Wallet reference number dialog.
+    Displays the order total and payment method; only asks for reference number.
+    Returns:
+        self.result = str (reference number) or None if cancelled/skipped.
+    """
+
+    def __init__(self, parent: tk.Widget, order_id: int, total: float,
+                 payment_method: str = "GCash / E-Wallet"):
+        super().__init__(parent)
+        self.title("E-Wallet / GCash Payment")
+        self.configure(bg=THEME["panel"])
+        self.resizable(False, False)
+        self.grab_set()
+
+        self.result: Optional[str] = None
+
+        from app.utils import money as _money
+
+        # ── Header ────────────────────────────────────────────────────────────
+        hdr = tk.Frame(self, bg=THEME["sidebar"])
+        hdr.pack(fill="x")
+        tk.Label(
+            hdr, text=f"Order #{order_id}  —  {payment_method}",
+            bg=THEME["sidebar"], fg="white",
+            font=("Segoe UI", 11, "bold"),
+            padx=18, pady=10,
+        ).pack(side="left")
+
+        # ── Order total display ───────────────────────────────────────────────
+        body = tk.Frame(self, bg=THEME["panel"])
+        body.pack(fill="both", expand=True, padx=20, pady=16)
+
+        total_frame = tk.Frame(body, bg=THEME["panel2"], padx=12, pady=10)
+        total_frame.pack(fill="x", pady=(0, 14))
+        tk.Label(
+            total_frame, text="Order Total",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+        ).pack(anchor="w")
+        tk.Label(
+            total_frame, text=_money(total),
+            bg=THEME["panel2"], fg=THEME["text"],
+            font=("Segoe UI", 20, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            total_frame, text=payment_method,
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(2, 0))
+
+        # ── Reference number input ────────────────────────────────────────────
+        tk.Label(
+            body, text="Reference Number",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(0, 4))
+
+        self.ref_var = tk.StringVar()
+        self.ref_entry = tk.Entry(
+            body, textvariable=self.ref_var,
+            font=("Segoe UI", 12),
+            bg="#FFFFFF", bd=0,
+            insertbackground=THEME["text"],
+        )
+        self.ref_entry.pack(fill="x", ipady=9)
+        self.ref_entry.focus_set()
+
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btns = tk.Frame(body, bg=THEME["panel"])
+        btns.pack(fill="x", pady=(18, 0))
+
+        tk.Button(
+            btns, text="Skip (Keep Pending)", command=self.destroy,
+            bg="#FFFFFF", fg=THEME["muted"], bd=0,
+            padx=12, pady=9, cursor="hand2",
+            font=("Segoe UI", 9),
+        ).pack(side="left")
+
+        tk.Button(
+            btns, text="Confirm Payment", command=self._confirm,
+            bg=THEME["accent"], fg="white", bd=0,
+            padx=16, pady=10, cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="right")
+
+        self.bind("<Return>", lambda e: self._confirm())
+        self.bind("<Escape>", lambda e: self.destroy())
+
+        self.update_idletasks()
+        if self.winfo_width() < 400:
+            self.geometry(f"400x{self.winfo_height()}")
+        self._center(parent)
+
+    def _center(self, parent: tk.Widget) -> None:
+        try:
+            px, py = parent.winfo_rootx(), parent.winfo_rooty()
+            pw, ph = parent.winfo_width(), parent.winfo_height()
+            w, h = self.winfo_width(), self.winfo_height()
+            self.geometry(f"+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
+        except Exception:
+            pass
+
+    def _confirm(self) -> None:
+        ref = (self.ref_var.get() or "").strip()
+        if not ref:
+            from tkinter import messagebox as _mb
+            _mb.showwarning("Reference Required", "Please enter a reference number.", parent=self)
+            return
+        self.result = ref
         self.destroy()
 
 

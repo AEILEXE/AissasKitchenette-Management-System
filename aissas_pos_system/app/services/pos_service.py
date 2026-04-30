@@ -169,31 +169,7 @@ class POSService:
                     (qty, product_id),
                 )
 
-                # Deduct raw material stock ONLY for Completed orders.
-                if status == "Completed":
-                    materials = self.db.fetchall(
-                        """SELECT pm.material_id, pm.quantity_used,
-                                  rm.name AS mat_name, rm.unit, rm.quantity AS mat_qty
-                           FROM product_materials pm
-                           JOIN raw_materials rm ON rm.id = pm.material_id
-                           WHERE pm.product_id = ?;""",
-                        (product_id,),
-                    )
-                    for mat in materials:
-                        needed = float(mat["quantity_used"]) * qty
-                        available_mat = float(mat["mat_qty"])
-                        if needed > available_mat:
-                            raise ValueError(
-                                f"Insufficient raw material '{mat['mat_name']}': "
-                                f"need {needed:.3f} {mat['unit']}, "
-                                f"only {available_mat:.3f} available."
-                            )
-                        self.db.execute_no_commit(
-                            "UPDATE raw_materials SET quantity = MAX(0, quantity - ?) WHERE id=?;",
-                            (needed, int(mat["material_id"])),
-                        )
-
-            # Single commit: order + all items + all stock + raw material updates are atomic.
+            # Single commit: order + all items + all product stock updates are atomic.
             # If anything above threw, the except block rolls everything back.
             self.db.commit()
             return order_id

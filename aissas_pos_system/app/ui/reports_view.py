@@ -33,21 +33,77 @@ class ReportsView(tk.Frame):
         super().__init__(parent, bg=_BG)
         self.db   = db
         self.auth = auth
+        self._active_tab: str = "reports"
+        self._tab_btns: dict[str, tk.Button] = {}
+        self._content: tk.Frame | None = None
         self._build()
 
+    # ── Top navigation ────────────────────────────────────────────────────────
     def _build(self):
-        # ── Page header bar ───────────────────────────────────────────────────
+        # ── Header bar with tab nav ───────────────────────────────────────────
         hdr_bar = tk.Frame(self, bg=_SB)
         hdr_bar.pack(fill="x")
         tk.Frame(hdr_bar, bg=_RED, width=5).pack(side="left", fill="y")
-        hdr_inner = tk.Frame(hdr_bar, bg=_SB)
-        hdr_inner.pack(fill="x", padx=(14, 16), pady=12)
-        tk.Label(hdr_inner, text="Reports & Analytics",
+        tk.Label(hdr_bar, text="Reports & Analytics",
                  bg=_SB, fg="#FFFFFF",
-                 font=("Segoe UI", 14, "bold")).pack(side="left")
+                 font=("Segoe UI", 14, "bold"),
+                 padx=14, pady=12).pack(side="left")
 
+        # Tab buttons
+        tk.Frame(hdr_bar, bg="#7A6050", width=1).pack(side="left", fill="y", pady=8)
+        for key, label in (("reports", "Overview"), ("sales", "Sales Analytics")):
+            btn = tk.Button(
+                hdr_bar, text=f"  {label}  ",
+                command=lambda k=key: self._show_tab(k),
+                bg=_SB, fg="#FFFFFF",
+                activebackground=_SB, activeforeground="#FFFFFF",
+                bd=0, padx=4, pady=0,
+                cursor="hand2",
+                font=("Segoe UI", 9, "bold"),
+                height=2,
+                relief="flat",
+            )
+            btn.pack(side="left", padx=2)
+            self._tab_btns[key] = btn
+        self._update_tab_style()
+
+        # Content area
+        self._content = tk.Frame(self, bg=_BG)
+        self._content.pack(fill="both", expand=True)
+
+        self._show_tab("reports")
+
+    def _update_tab_style(self):
+        for key, btn in self._tab_btns.items():
+            if key == self._active_tab:
+                btn.configure(bg=THEME["primary_dark"], fg="#FFFFFF",
+                               font=("Segoe UI", 9, "bold"))
+            else:
+                btn.configure(bg=_SB, fg="#C9B09A",
+                               font=("Segoe UI", 9))
+
+    def refresh(self):
+        """Re-render current tab with fresh data (called from AppWindow after actions)."""
+        self._show_tab(self._active_tab)
+
+    def _show_tab(self, key: str):
+        self._active_tab = key
+        self._update_tab_style()
+        if self._content:
+            for w in self._content.winfo_children():
+                w.destroy()
+        if key == "sales":
+            self._build_sales_tab()
+        else:
+            self._build_reports_tab()
+
+    def _build_sales_tab(self):
+        from app.ui.inventory_sales_view import InventorySalesView
+        InventorySalesView(self._content, self.db, self.auth).pack(fill="both", expand=True)
+
+    def _build_reports_tab(self):
         # ── Scrollable body ───────────────────────────────────────────────────
-        outer = tk.Frame(self, bg=_BG)
+        outer = tk.Frame(self._content, bg=_BG)
         outer.pack(fill="both", expand=True)
         outer.rowconfigure(0, weight=1)
         outer.columnconfigure(0, weight=1)

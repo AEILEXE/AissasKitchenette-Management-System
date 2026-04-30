@@ -129,7 +129,7 @@ class UserManagementView(tk.Frame):
                      padx=(0, 0))
             return var, ent
 
-        self.var_fullname, self.ent_fullname = _field(form_body, "Full Name", 0)
+        self.var_fullname, self.ent_fullname = _field(form_body, "Full Name  (required)", 0)
         self.var_user,     self.ent_user     = _field(form_body, "Username",  1)
         self.var_pass,     self.ent_pass     = _field(form_body, "Password",  2, show="•")
 
@@ -241,6 +241,11 @@ class UserManagementView(tk.Frame):
         username = self.var_user.get().strip()
         password = self.var_pass.get()
         role     = self.var_role.get()
+
+        if not fullname:
+            messagebox.showerror("Validation", "Full Name is required.")
+            self.ent_fullname.focus_set()
+            return
 
         if not username:
             messagebox.showerror("Validation", "Username is required.")

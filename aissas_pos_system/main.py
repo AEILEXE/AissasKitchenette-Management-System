@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import tkinter as tk
+from pathlib import Path
 
 # ── Packaged-EXE bootstrap ────────────────────────────────────────────────
 # Must run BEFORE any app imports so config.py sees the right env.
@@ -70,16 +71,82 @@ def _set_window_icon(root: tk.Tk) -> None:
         pass
 
 
-def init_db(db: Database) -> None:
+def _handle_corrupt_db(db_path: Path) -> bool:
+    """
+    Show an error dialog when the database fails its integrity check.
+    Returns True if the user chose to back up and reset, False to quit.
+    A temporary hidden Tk root is used so the dialog works before the
+    main window is created.
+    """
+    import tkinter.messagebox as mb
+    from datetime import datetime
+
+    tmp = tk.Tk()
+    tmp.withdraw()
+    try:
+        reset = mb.askyesno(
+            title="Database Integrity Error",
+            message=(
+                "The database file failed its integrity check and may be corrupted.\n\n"
+                "YES — Back up the corrupt file and start with a fresh database.\n"
+                "NO  — Quit (keep the file for manual recovery).\n\n"
+                f"Database location:\n{db_path}"
+            ),
+            icon="error",
+            parent=tmp,
+        )
+        if not reset:
+            return False
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup = db_path.with_name(f"pos_corrupt_{ts}.db")
+        try:
+            db_path.rename(backup)
+        except OSError as exc:
+            mb.showerror(
+                "Backup Failed",
+                f"Could not rename the corrupt database:\n{exc}\n\nQuitting.",
+                parent=tmp,
+            )
+            return False
+
+        mb.showinfo(
+            "Database Reset",
+            f"Corrupt database backed up as:\n  {backup.name}\n\n"
+            "A fresh database will now be created and the app will continue.",
+            parent=tmp,
+        )
+        return True
+    finally:
+        tmp.destroy()
+
+
+def init_db(db: Database) -> bool:
+    """
+    Connect, integrity-check, migrate schema, and seed the database.
+    Returns False if the DB is corrupt and the user chose to quit rather
+    than reset — the caller should exit cleanly in that case.
+    """
     db.connect()
+
+    if not db.check_integrity():
+        db.disconnect()
+        if not _handle_corrupt_db(db.db_path):
+            return False
+        # User chose to reset: reconnect against the now-absent file so
+        # SQLite creates a clean database on the next connect() call.
+        db.connect()
+
     db.initialize_schema()
     seed_menu_if_empty(db)
     seed_admin_user(db)
+    return True
 
 
 def main() -> None:
     db = Database()
-    init_db(db)
+    if not init_db(db):
+        return
 
     auth = AuthService(db)
 

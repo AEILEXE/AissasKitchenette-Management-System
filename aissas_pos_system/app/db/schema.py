@@ -114,8 +114,23 @@ ALL_SCHEMAS: list[str] = [
         quantity REAL NOT NULL DEFAULT 0,
         low_stock REAL NOT NULL DEFAULT 0,
         active INTEGER NOT NULL DEFAULT 1,
+        delivered_date TEXT DEFAULT NULL,
+        expiration_date TEXT DEFAULT NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS raw_material_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        material_id INTEGER NOT NULL,
+        action_type TEXT NOT NULL DEFAULT 'ADD',
+        quantity REAL NOT NULL DEFAULT 0,
+        reason TEXT NOT NULL DEFAULT '',
+        reference TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY(material_id) REFERENCES raw_materials(id) ON DELETE CASCADE
     );
     """,
 
@@ -182,6 +197,7 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_void_records_void_receipt_id ON void_records(void_receipt_id);",
     "CREATE INDEX IF NOT EXISTS idx_raw_materials_material_type ON raw_materials(material_type);",
     "CREATE INDEX IF NOT EXISTS idx_raw_materials_active ON raw_materials(active);",
+    "CREATE INDEX IF NOT EXISTS idx_raw_material_logs_material_id ON raw_material_logs(material_id);",
     "CREATE INDEX IF NOT EXISTS idx_product_materials_product_id ON product_materials(product_id);",
     "CREATE INDEX IF NOT EXISTS idx_product_materials_material_id ON product_materials(material_id);",
     "CREATE INDEX IF NOT EXISTS idx_role_perms ON role_permissions(role, permission);",

@@ -296,18 +296,13 @@ class TransactionsView(tk.Frame):
 
     def _build(self):
         style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
-
         style.configure(
             "Tx.Treeview",
             font=("Segoe UI", 10),
             rowheight=38,
             background=THEME["panel"],
             fieldbackground=THEME["panel"],
-            foreground=THEME["text"],
+            foreground="#222222",
             borderwidth=0,
             relief="flat",
         )
@@ -322,8 +317,8 @@ class TransactionsView(tk.Frame):
         style.map("Tx.Treeview.Heading", background=[("active", THEME["panel2"])])
         style.map(
             "Tx.Treeview",
-            background=[("selected", THEME["brown"])],
-            foreground=[("selected", "white")],
+            background=[("selected", "#5C3D2E"), ("!selected", THEME["panel"])],
+            foreground=[("selected", "#FFFFFF"), ("!selected", "#222222")],
         )
 
         self.columnconfigure(0, weight=1)
@@ -507,33 +502,32 @@ class TransactionsView(tk.Frame):
             self.tbl.heading(cid, text=hdr, anchor="center")
             self.tbl.column(cid, width=width, anchor=anchor, stretch=stretch, minwidth=minw)
 
-        _row_font = ("Segoe UI", 10)
-        _row_fg   = THEME["text"]
+        _row_font  = ("Segoe UI", 10)
+        _dark_text = "#1A1A1A"   # near-black — high contrast on any light bg
 
         # ── Status row tags ───────────────────────────────────────────────────
-        # Subtle tint + distinct foreground — entire row is tinted so the eye
-        # can quickly spot Pending/Cancelled without the status column needing
-        # to do all the work.
-        # Completed → near-white (majority; neutral to avoid fatigue)
-        # Pending   → warm amber tint + amber text  (needs attention)
-        # Cancelled → clear red tint + red text     (voided; NOT pink)
+        # Each tag uses an explicit dark foreground so date/time columns are
+        # always readable regardless of the Windows native Treeview renderer.
         self.tbl.tag_configure("row_completed",
-                               background="#FAFFFE", foreground=_row_fg,
+                               background="#FAFFFE", foreground=_dark_text,
                                font=_row_font)
         self.tbl.tag_configure("row_pending",
-                               background="#FFFBEB", foreground="#92400E",
+                               background="#FFFBEB", foreground="#78350F",
                                font=("Segoe UI", 10, "bold"))
         self.tbl.tag_configure("row_cancelled",
-                               background="#FEF2F2", foreground="#991B1B",
+                               background="#FEF2F2", foreground="#7F1D1D",
                                font=_row_font)
 
         # ── Highlight tags ────────────────────────────────────────────────────
-        # Subtle — should not conflict with status colors or overpower the table.
-        # Highest Sale → very light gold/yellow
-        # Latest Order → very light blue accent
-        self.tbl.tag_configure("top_sale",       background="#FEFCE8", foreground=_row_fg, font=("Segoe UI", 10, "bold"))
-        self.tbl.tag_configure("latest_sale",    background="#EFF6FF", foreground=_row_fg, font=_row_font)
-        self.tbl.tag_configure("top_and_latest", background="#FEF9C3", foreground=_row_fg, font=("Segoe UI", 10, "bold"))
+        self.tbl.tag_configure("top_sale",
+                               background="#FEFCE8", foreground=_dark_text,
+                               font=("Segoe UI", 10, "bold"))
+        self.tbl.tag_configure("latest_sale",
+                               background="#EFF6FF", foreground=_dark_text,
+                               font=_row_font)
+        self.tbl.tag_configure("top_and_latest",
+                               background="#FEF9C3", foreground=_dark_text,
+                               font=("Segoe UI", 10, "bold"))
 
         self.tbl.bind("<Double-Button-1>",  lambda _e: self.open_selected())
         self.tbl.bind("<Return>",           lambda _e: self.open_selected())
@@ -1240,6 +1234,16 @@ class ResolveDialog(tk.Toplevel):
 
         paid = float(data["amount_paid"]) if data["amount_paid"] else float(data["total"])
         self.orders.resolve_pending(self.order_id, ref, paid)
+
+        # Auto-generate receipt immediately after resolving
+        try:
+            items = self.orders.get_order_items(self.order_id)
+            order_dict = {k: data[k] for k in data.keys()}
+            items_list = [{k: item[k] for k in item.keys()} for item in items]
+            receipt_path = ReceiptService.generate_receipt(order_dict, items_list)
+            ReceiptService.open_file(receipt_path)
+        except Exception:
+            pass  # Receipt failure must not block the resolve flow
 
         if self.on_done:
             self.on_done()

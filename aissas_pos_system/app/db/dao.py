@@ -238,14 +238,16 @@ class ProductDAO:
         return int(r["c"]) if r else 0
 
     def top_sellers(self, limit: int = 5):
-        """Return top-selling products by total qty sold (completed orders only)."""
+        """Return top-selling products by total qty sold (completed, non-voided items only)."""
         return self.db.fetchall(
             """
             SELECT p.id AS product_id, p.name,
-                   COALESCE(SUM(oi.qty), 0) AS total_qty
+                   COALESCE(SUM(
+                       CASE WHEN o.status = 'Completed' AND oi.voided = 0 THEN oi.qty ELSE 0 END
+                   ), 0) AS total_qty
             FROM products p
             LEFT JOIN order_items oi ON oi.product_id = p.id
-            LEFT JOIN orders o ON oi.order_id = o.id AND o.status = 'Completed'
+            LEFT JOIN orders o ON oi.order_id = o.id
             WHERE p.active = 1
             GROUP BY p.id, p.name
             ORDER BY total_qty DESC
@@ -521,18 +523,35 @@ class OrderDAO:
 
     def resolve_pending(self, order_id: int, reference_no: str, amount_paid: float) -> None:
         """Transition order from Pending to Completed."""
-        self.db.execute(
-            """
-            UPDATE orders
-            SET reference_no=?,
-                amount_paid=?,
-                cash_received=?,
-                status='Completed',
-                end_datetime=datetime('now','localtime')
-            WHERE id=? AND status='Pending';
-            """,
-            (reference_no.strip(), float(amount_paid), float(amount_paid), int(order_id)),
-        )
+        try:
+            order = self.db.fetchone(
+                "SELECT status FROM orders WHERE id=?;",
+                (int(order_id),),
+            )
+            if order is None:
+                raise ValueError(f"Order {order_id} not found.")
+            if order["status"] != "Pending":
+                raise ValueError(
+                    f"Order {order_id} cannot be resolved "
+                    f"(current status: {order['status']})."
+                )
+
+            self.db.execute_no_commit(
+                """
+                UPDATE orders
+                SET reference_no=?,
+                    amount_paid=?,
+                    cash_received=?,
+                    status='Completed',
+                    end_datetime=datetime('now','localtime')
+                WHERE id=? AND status='Pending';
+                """,
+                (reference_no.strip(), float(amount_paid), float(amount_paid), int(order_id)),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
 
     def cancel_order(self, order_id: int) -> None:
         """
@@ -776,7 +795,7 @@ class OrderDAO:
         )
 
     def best_sellers_today(self, limit: int = 10):
-        """Get best-selling products today."""
+        """Get best-selling products today (completed, non-voided items only)."""
         return self.db.fetchall(
             """
             SELECT p.name,
@@ -785,7 +804,9 @@ class OrderDAO:
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id
             JOIN products p ON oi.product_id = p.id
-            WHERE DATE(o.datetime) = DATE('now', 'localtime') AND o.status='Completed'
+            WHERE DATE(o.datetime) = DATE('now', 'localtime')
+              AND o.status = 'Completed'
+              AND oi.voided = 0
             GROUP BY p.id, p.name
             ORDER BY total_qty DESC
             LIMIT ?;
@@ -797,6 +818,7 @@ class OrderDAO:
         """
         Get order_id + product_id rows from the last N COMPLETED orders.
         Used by the offline ML recommender to build pair-frequency counts.
+        Excludes voided items to avoid skewing recommendations.
         """
         return self.db.fetchall(
             """
@@ -809,6 +831,7 @@ class OrderDAO:
                 ORDER BY datetime DESC
                 LIMIT ?
             ) recent ON recent.id = oi.order_id
+            WHERE oi.voided = 0
             ORDER BY oi.order_id ASC;
             """,
             (int(last_n_orders),),

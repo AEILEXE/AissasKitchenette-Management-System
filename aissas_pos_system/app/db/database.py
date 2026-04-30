@@ -44,6 +44,20 @@ class Database:
         """Alias for disconnect() — used by import/export routines."""
         self.disconnect()
 
+    def check_integrity(self) -> bool:
+        """
+        Run SQLite quick_check on the open database.
+        Returns True if healthy, False if any corruption is detected.
+        'quick_check' is significantly faster than full 'integrity_check'
+        and catches the vast majority of real-world corruption cases.
+        Must be called after connect() and before initialize_schema().
+        """
+        try:
+            row = self.fetchone("PRAGMA quick_check;")
+            return row is not None and row[0] == "ok"
+        except Exception:
+            return False
+
     def execute(self, sql: str, params: Iterable[Any] = ()) -> None:
         """Execute SQL statement with parameters (with commit)."""
         assert self.conn is not None, "Database not connected"
@@ -55,7 +69,7 @@ class Database:
         assert self.conn is not None, "Database not connected"
         cur = self.conn.execute(sql, tuple(params))
         self.conn.commit()
-        return int(cur.lastrowid)
+        return int(cur.lastrowid) if cur.lastrowid is not None else 0
 
     def execute_no_commit(self, sql: str, params: Iterable[Any] = ()) -> int:
         """Execute SQL without committing. Returns lastrowid. Use with commit()."""
@@ -237,6 +251,47 @@ class Database:
                 self._seed_default_role_permissions()
 
         # =====================================================================
+        # ROLE_PERMISSIONS MIGRATION v2 — apply revised default permissions
+        # • CASHIER loses can_view_inventory (inventory tab hidden for cashiers)
+        # • INVENTORY role rows are seeded (INSERT OR IGNORE — safe to repeat)
+        # Guarded by app_meta flag so it only runs once per database.
+        # =====================================================================
+        self._apply_permission_migration_v2()
+
+        # =====================================================================
+        # RAW_MATERIALS TABLE MIGRATIONS
+        # =====================================================================
+        if self._table_exists("raw_materials"):
+            self._add_column_if_missing("raw_materials", "delivered_date", "TEXT DEFAULT NULL")
+            self._add_column_if_missing("raw_materials", "expiration_date", "TEXT DEFAULT NULL")
+
+        # =====================================================================
+        # RAW_MATERIAL_LOGS TABLE — create if missing (new table)
+        # =====================================================================
+        if not self._table_exists("raw_material_logs"):
+            try:
+                self.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS raw_material_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        material_id INTEGER NOT NULL,
+                        action_type TEXT NOT NULL DEFAULT 'ADD',
+                        quantity REAL NOT NULL DEFAULT 0,
+                        reason TEXT NOT NULL DEFAULT '',
+                        reference TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                        FOREIGN KEY(material_id) REFERENCES raw_materials(id) ON DELETE CASCADE
+                    );
+                    """
+                )
+                self.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_raw_material_logs_material_id "
+                    "ON raw_material_logs(material_id);"
+                )
+            except Exception:
+                pass
+
+        # =====================================================================
         # APP_META TABLE — key-value store for app-level flags
         # =====================================================================
         if not self._table_exists("app_meta"):
@@ -262,5 +317,47 @@ class Database:
                         )
                     except Exception:
                         pass
+        except Exception:
+            pass
+
+    def _apply_permission_migration_v2(self) -> None:
+        """
+        One-time migration: align role_permissions with revised defaults.
+        • CASHIER: revoke can_view_inventory (cashiers no longer see Inventory).
+        • INVENTORY role: seed all permission rows (INSERT OR IGNORE).
+        Guarded by app_meta key 'perm_migration_v2' so it runs exactly once.
+        """
+        try:
+            if not self._table_exists("role_permissions"):
+                return
+            if not self._table_exists("app_meta"):
+                return
+            done = self.fetchone(
+                "SELECT value FROM app_meta WHERE key='perm_migration_v2';"
+            )
+            if done:
+                return  # already applied
+
+            from app.constants import DEFAULT_ROLE_PERMISSIONS, ALL_PERMISSION_KEYS, ROLE_INVENTORY
+
+            # 1. Revoke can_view_inventory from CASHIER
+            self.execute(
+                "UPDATE role_permissions SET granted=0 "
+                "WHERE role='CASHIER' AND permission='can_view_inventory';",
+            )
+
+            # 2. Seed the INVENTORY role (safe to repeat — INSERT OR IGNORE)
+            inv_perms = DEFAULT_ROLE_PERMISSIONS.get(ROLE_INVENTORY, set())
+            for perm in ALL_PERMISSION_KEYS:
+                granted = 1 if perm in inv_perms else 0
+                self.execute(
+                    "INSERT OR IGNORE INTO role_permissions(role, permission, granted) VALUES(?,?,?);",
+                    (ROLE_INVENTORY, perm, granted),
+                )
+
+            # 3. Mark migration as done
+            self.execute(
+                "INSERT OR REPLACE INTO app_meta(key, value) VALUES('perm_migration_v2','1');"
+            )
         except Exception:
             pass
