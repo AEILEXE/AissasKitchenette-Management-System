@@ -117,8 +117,16 @@ Type: files;          Name: "{app}\app.log"
 // Used to customise the Welcome page message for upgrade scenarios.
 
 function IsUpgrade(): Boolean;
+var
+  AppDir: String;
 begin
-  Result := FileExists(ExpandConstant('{app}\{#MyAppExeName}'));
+  // {app} is not initialized until the directory page is confirmed, so use
+  // WizardDirValue() which is safe to call at any point in the wizard.
+  AppDir := WizardDirValue();
+  if AppDir = '' then
+    Result := False
+  else
+    Result := FileExists(AppDir + '\{#MyAppExeName}');
 end;
 
 // Prepend an upgrade notice to the Welcome page when overwriting an existing
