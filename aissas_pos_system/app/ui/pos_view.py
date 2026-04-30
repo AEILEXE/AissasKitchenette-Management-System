@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from app.config import THEME, resolve_image_path
+from app.config import THEME, resolve_image_path, PRODUCT_IMAGES_DIR
 from app.db.database import Database
 from app.db.dao import CategoryDAO, ProductDAO, DraftDAO, OrderDAO
 from app.services.auth_service import AuthService
@@ -319,6 +320,75 @@ class POSView(tk.Frame):
                 return img
             except Exception:
                 return self._load_default_image()
+
+    def _preload_images_async(self) -> None:
+        """Warm _img_cache for all product images in background so card renders never hit disk.
+
+        PIL resize work runs in a daemon thread; ImageTk.PhotoImage creation is
+        marshalled back to the main thread via after(0, ...) to satisfy Tkinter's
+        requirement that PhotoImages are created on the main thread.
+        """
+        # Paths from the current DB product cache
+        db_paths: list[str] = []
+        for p in self._all_products_cache:
+            rel = (_row_get(p, "image_path", None) or "").strip()
+            if rel:
+                db_paths.append(rel.replace("\\", "/"))
+
+        # All files sitting in the product_images folder on disk
+        folder_paths: list[str] = []
+        try:
+            if PRODUCT_IMAGES_DIR.exists():
+                for f in PRODUCT_IMAGES_DIR.iterdir():
+                    if f.is_file() and f.suffix.lower() in {
+                        ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
+                    }:
+                        folder_paths.append(f"product_images/{f.name}")
+        except Exception:
+            pass
+
+        # Deduplicate while keeping DB paths first (most likely to be displayed first)
+        seen: set[str] = set()
+        all_paths: list[str] = []
+        for rp in db_paths + folder_paths:
+            if rp not in seen:
+                seen.add(rp)
+                all_paths.append(rp)
+
+        if not all_paths:
+            return
+
+        def _worker() -> None:
+            for rel_path in all_paths:
+                if self._destroyed:
+                    return
+                key = f"img::{rel_path}"
+                if key in self._img_cache:
+                    continue
+                try:
+                    from PIL import Image, ImageTk as _ITk  # noqa: F401
+                    path = resolve_image_path(rel_path)
+                    if path is None:
+                        continue
+                    img = Image.open(path).convert("RGBA")
+                    _resample = getattr(Image, "Resampling", Image).LANCZOS
+                    img_r = img.resize((self._IMG_SIZE, self._IMG_SIZE), _resample)
+
+                    def _create(img_resized=img_r, k=key) -> None:
+                        if self._destroyed or k in self._img_cache:
+                            return
+                        try:
+                            from PIL import ImageTk as _ITk2
+                            self._img_cache[k] = _ITk2.PhotoImage(img_resized)
+                        except Exception:
+                            pass
+
+                    if not self._destroyed:
+                        self.after(0, _create)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ── UI Build ──────────────────────────────────────────────────────────────
     def _build(self):
@@ -937,6 +1007,7 @@ class POSView(tk.Frame):
         except Exception as e:
             messagebox.showerror("DB Error", str(e))
             self._all_products_cache = []
+        self._preload_images_async()
 
     def _filter_products(self, search_text: str = ""):
         q = (search_text or "").strip().lower()
@@ -1082,9 +1153,6 @@ class POSView(tk.Frame):
             self.prod_inner.columnconfigure(i, weight=0, uniform="")
         for i in range(cols):
             self.prod_inner.columnconfigure(i, weight=1, uniform="prodcol")
-
-        for w in cards:
-            w.grid_forget()
 
         for idx, card in enumerate(cards):
             row = idx // cols

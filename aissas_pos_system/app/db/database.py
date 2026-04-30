@@ -111,15 +111,16 @@ class Database:
         # Create all tables
         for stmt in ALL_SCHEMAS:
             self.conn.execute(stmt)
-
-        # Create all indexes
-        for stmt in INDEX_STATEMENTS:
-            self.conn.execute(stmt)
-
         self.conn.commit()
 
-        # Run safe migrations for existing databases
+        # Run migrations BEFORE indexes: columns added here (e.g. receipt_id)
+        # must exist before indexes that reference them are created.
         self._migrate_if_needed()
+
+        # Create all indexes (after migration so all referenced columns exist)
+        for stmt in INDEX_STATEMENTS:
+            self.conn.execute(stmt)
+        self.conn.commit()
 
     def _table_columns(self, table: str) -> set[str]:
         """Get set of column names for a table using PRAGMA."""

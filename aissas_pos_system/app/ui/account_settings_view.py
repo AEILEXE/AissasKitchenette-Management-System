@@ -1,21 +1,18 @@
 """
 app/ui/account_settings_view.py
-Settings: Profile, Security (policy-enforced password change), Backup & Restore,
+Settings: Profile, Security (policy-enforced password change),
           Database Management, User Management, Role Permissions (admin only).
 """
 from __future__ import annotations
 
-import datetime
 import shutil
-import zipfile
 import tkinter as tk
 from tkinter import messagebox, ttk, filedialog
 
-from app.config import THEME, DB_PATH, DATA_DIR, PRODUCT_IMAGES_DIR
+from app.config import THEME, DB_PATH
 from app.db.database import Database
 from app.db.dao import UserDAO, RolePermissionDAO
 from app.services.auth_service import AuthService
-from app.services.backup_service import BackupService
 from app.constants import (
     ROLES, ROLE_ADMIN,
     ALL_PERMISSION_KEYS, PERMISSION_LABELS,
@@ -267,7 +264,6 @@ class AccountSettingsDialog(tk.Toplevel):
         sections: list[tuple[str, str, bool]] = [
             ("profile",   "Profile",             False),
             ("security",  "Security",            False),
-            ("backup",    "Backup & Restore",    True),
             ("database",  "Database",            True),
             ("users",     "User Management",     True),
             ("seed",      "Demo Seed",           True),
@@ -337,7 +333,6 @@ class AccountSettingsDialog(tk.Toplevel):
         builders = {
             "profile":  lambda: (self._section_header(inner, "Profile"),              self._build_profile(inner, u)),
             "security": lambda: (self._section_header(inner, "Security"),             self._build_security(inner)),
-            "backup":   lambda: (self._section_header(inner, "Backup & Restore"),     self._build_backup_section(inner)),
             "database": lambda: (self._section_header(inner, "Database Management"),  self._build_db_section(inner)),
             "users":    lambda: (self._section_header(inner, "User Management"),      self._build_user_mgmt(inner)),
             "seed":     lambda: (self._section_header(inner, "Seed Demo Sales"),       self._build_seed_section(inner)),
@@ -593,228 +588,21 @@ class AccountSettingsDialog(tk.Toplevel):
         for ent in (self.old_pwd, self.new_pwd, self.confirm_pwd):
             ent.delete(0, tk.END)
 
-    # ── Backup & Restore ──────────────────────────────────────────────────────
-
-    def _build_backup_section(self, parent):
-        sp = ui_scale.s
-        sf = ui_scale.scale_font
-
-        backup_svc = BackupService(DB_PATH)
-
-        # ── Action buttons card ───────────────────────────────────────────────
-        actions_card = self._card(parent)
-
-        tk.Label(
-            actions_card, text="Backup & Restore",
-            bg=THEME["panel"], fg=THEME["text"],
-            font=("Segoe UI", sf(11), "bold"),
-        ).pack(anchor="w", padx=16, pady=(14, 4))
-        tk.Label(
-            actions_card,
-            text="Create a timestamped backup of the database or restore from a previous backup file.",
-            bg=THEME["panel"], fg=THEME["muted"],
-            font=("Segoe UI", sf(9)), justify="left",
-        ).pack(anchor="w", padx=16, pady=(0, 10))
-
-        status_var = tk.StringVar(value="")
-        status_lbl = tk.Label(
-            actions_card, textvariable=status_var,
-            bg=THEME["panel"], fg=THEME["success"],
-            font=("Segoe UI", sf(9), "italic"),
-            wraplength=500, justify="left",
-        )
-        status_lbl.pack(anchor="w", padx=16, pady=(0, 4))
-
-        btn_row = tk.Frame(actions_card, bg=THEME["panel"])
-        btn_row.pack(fill="x", padx=16, pady=(0, 14))
-
-        def _create_backup():
-            ok, msg = backup_svc.create_backup("manual")
-            if ok:
-                status_var.set(f"Backup saved: {msg}")
-                _reload_list_full()
-            else:
-                messagebox.showerror("Backup Failed", f"Could not create backup:\n{msg}")
-
-        def _restore_from_file():
-            src = filedialog.askopenfilename(
-                title="Select Backup File",
-                filetypes=[("SQLite Database", "*.db"), ("All files", "*.*")],
-            )
-            if not src:
-                return
-            if not messagebox.askyesno(
-                "Confirm Restore",
-                "WARNING: This will REPLACE the current database.\n\n"
-                "All current data will be overwritten. This cannot be undone.\n\nProceed?",
-                icon="warning",
-            ):
-                return
-            try:
-                self.db.close()
-            except Exception:
-                pass
-            ok, msg = backup_svc.restore_backup(src)
-            try:
-                self.db.connect()
-            except Exception:
-                pass
-            if ok:
-                status_var.set(f"Restored from: {src}")
-                messagebox.showinfo("Restore Complete", "Database restored. Restart the app to reload all data.")
-            else:
-                messagebox.showerror("Restore Failed", f"Could not restore:\n{msg}")
-
-        tk.Button(
-            btn_row, text="Create Backup Now",
-            bg=THEME["primary"], fg="white",
-            bd=0, padx=sp(14), pady=sp(8), cursor="hand2",
-            font=("Segoe UI", sf(9), "bold"),
-            command=_create_backup,
-        ).pack(side="left", padx=(0, sp(8)))
-
-        tk.Button(
-            btn_row, text="Restore from File…",
-            bg=THEME["warning"], fg="white",
-            bd=0, padx=sp(14), pady=sp(8), cursor="hand2",
-            font=("Segoe UI", sf(9), "bold"),
-            command=_restore_from_file,
-        ).pack(side="left", padx=(0, sp(8)))
-
-        # ── Backup history card ───────────────────────────────────────────────
-        hist_card = self._card(parent, pady=(8, 4))
-        tk.Label(
-            hist_card, text="Backup History",
-            bg=THEME["panel"], fg=THEME["text"],
-            font=("Segoe UI", sf(11), "bold"),
-        ).pack(anchor="w", padx=16, pady=(14, 4))
-
-        cols = [("created", "Created", 180), ("filename", "Filename", 280), ("size", "Size (KB)", 80)]
-        tree_frame = tk.Frame(hist_card, bg=THEME["panel"])
-        tree_frame.pack(fill="x", padx=16, pady=(0, 6))
-
-        tree = ttk.Treeview(tree_frame, columns=[c[0] for c in cols],
-                            show="headings", height=8,
-                            style="Treeview")
-        for cid, heading, w in cols:
-            tree.heading(cid, text=heading)
-            tree.column(cid, width=w, minwidth=50)
-        tree_sb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=tree_sb.set)
-        tree_sb.pack(side="right", fill="y")
-        tree.pack(fill="x", expand=True)
-
-        # Store backup path indexed by tree row for restore
-        _backup_paths: dict[str, str] = {}
-
-        def _reload_list_full():
-            for item in tree.get_children():
-                tree.delete(item)
-            _backup_paths.clear()
-            try:
-                for b in backup_svc.list_backups():
-                    iid = tree.insert("", "end", values=(
-                        b.get("created", ""),
-                        b.get("filename", ""),
-                        b.get("size_kb", 0),
-                    ))
-                    _backup_paths[iid] = b.get("path", "")
-            except Exception:
-                pass
-
-        _reload_list_full()
-
-        restore_row = tk.Frame(hist_card, bg=THEME["panel"])
-        restore_row.pack(fill="x", padx=16, pady=(4, 14))
-
-        def _restore_selected():
-            sel = tree.selection()
-            if not sel:
-                messagebox.showinfo("Selection", "Select a backup file from the list first.")
-                return
-            iid = sel[0]
-            fname = tree.item(iid)["values"][1]
-            fpath = _backup_paths.get(iid, "")
-            if not fpath:
-                messagebox.showerror("Error", "Could not determine backup file path.")
-                return
-            if not messagebox.askyesno(
-                "Confirm Restore",
-                f"Restore from:\n  {fname}\n\n"
-                "WARNING: This will REPLACE the current database.\n\nProceed?",
-                icon="warning",
-            ):
-                return
-            try:
-                self.db.close()
-            except Exception:
-                pass
-            ok, msg = backup_svc.restore_backup(fpath)
-            try:
-                self.db.connect()
-            except Exception:
-                pass
-            if ok:
-                status_var.set(f"Restored: {fname}")
-                messagebox.showinfo("Restore Complete", "Database restored. Restart the app to reload all data.")
-            else:
-                messagebox.showerror("Restore Failed", f"Could not restore:\n{msg}")
-
-        tk.Button(
-            restore_row, text="Restore Selected",
-            bg=THEME["danger"], fg="white",
-            bd=0, padx=sp(14), pady=sp(8), cursor="hand2",
-            font=("Segoe UI", sf(9), "bold"),
-            command=_restore_selected,
-        ).pack(side="left")
-
-        tk.Label(
-            restore_row,
-            text="Current DB is backed up automatically before each restore.",
-            bg=THEME["panel"], fg=THEME["muted"],
-            font=("Segoe UI", sf(8)),
-        ).pack(side="left", padx=sp(10))
-
-    # ── Database Management ───────────────────────────────────────────────────
+    # ── Database Management ─────────────────────────────────────────
 
     def _build_db_section(self, parent):
-        # \u2500\u2500 Info card: redirect to Backup page \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         info_card = self._card(parent)
         tk.Label(
-            info_card, text="Database Backup & Restore",
+            info_card, text="Database",
             bg=THEME["panel"], fg=THEME["text"],
             font=("Segoe UI", ui_scale.scale_font(11), "bold"),
         ).pack(anchor="w", padx=16, pady=(14, 4))
         tk.Label(
             info_card,
-            text="Use the Backup & Restore section (Settings sidebar) to create backups,\n"
-                 "browse backup history, and restore from a previous backup file.",
+            text=f"Database path:\n  {DB_PATH}",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", ui_scale.scale_font(9)), justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 14))
-
-        # \u2500\u2500 ZIP import card (unique to this panel \u2014 imports DB + images) \u2500\u2500\u2500\u2500\u2500\u2500
-        zip_card = self._card(parent, pady=(8, 4))
-        tk.Label(
-            zip_card, text="Import Data Package (ZIP)",
-            bg=THEME["panel"], fg=THEME["text"],
-            font=("Segoe UI", ui_scale.scale_font(11), "bold"),
-        ).pack(anchor="w", padx=16, pady=(14, 4))
-        tk.Label(
-            zip_card,
-            text="Restore both the database and product images at once from a ZIP package.\n"
-                 "Expected structure:  data/pos.db  +  product_images/<images>\n"
-                 "Admin password confirmation is required.",
-            bg=THEME["panel"], fg=THEME["muted"],
-            font=("Segoe UI", ui_scale.scale_font(9)), justify="left",
-        ).pack(anchor="w", padx=16, pady=(0, 12))
-        tk.Button(
-            zip_card, text="Import Data (ZIP)  \u2014  database + product images",
-            bg=THEME["brown"], fg="white",
-            bd=0, pady=ui_scale.s(9), cursor="hand2",
-            font=("Segoe UI", ui_scale.scale_font(9), "bold"),
-            command=self._import_zip,
-        ).pack(fill="x", padx=16, pady=(0, 16), ipady=2)
 
     def _export_db(self):
         dest = filedialog.asksaveasfilename(
@@ -884,176 +672,6 @@ class AccountSettingsDialog(tk.Toplevel):
             except Exception:
                 pass
             messagebox.showerror("Import Failed", f"Could not import database:\n{e}")
-
-    def _import_zip(self):
-        """
-        Import a ZIP containing data/pos.db and product_images/.
-        Steps:
-          1. Verify admin password.
-          2. Validate ZIP structure and paths.
-          3. Backup current DB to data/pos_backup_<timestamp>.db.
-          4. Close DB connection; remove stale WAL/SHM files.
-          5. Safely extract data/ and product_images/ entries only.
-          6. Reconnect DB.
-        """
-        u = self.auth.get_current_user()
-        if not u:
-            messagebox.showerror("Error", "Not logged in.")
-            return
-
-        pwd = _ask_password(self, "Confirm ZIP Import", "Enter admin password to confirm ZIP import:")
-        if pwd is None:
-            return
-
-        ok, _msg = self.auth.verify_password(u.username, pwd)
-        if not ok:
-            messagebox.showerror("Authentication Failed", "Incorrect password. Import cancelled.")
-            return
-
-        src = filedialog.askopenfilename(
-            title="Select Data ZIP File",
-            filetypes=[("ZIP Archive", "*.zip"), ("All files", "*.*")],
-        )
-        if not src:
-            return
-
-        # ── Validate ZIP ──────────────────────────────────────────────────
-        try:
-            with zipfile.ZipFile(src, "r") as zf:
-                names = zf.namelist()
-        except zipfile.BadZipFile:
-            messagebox.showerror("Invalid ZIP", "The selected file is not a valid ZIP archive.")
-            return
-        except Exception as e:
-            messagebox.showerror("Invalid ZIP", f"Could not open ZIP file:\n{e}")
-            return
-
-        if "data/pos.db" not in names:
-            messagebox.showerror(
-                "Invalid ZIP",
-                "ZIP does not contain the required file:\n\n"
-                "  data/pos.db\n\n"
-                "Expected ZIP structure:\n"
-                "  data/pos.db\n"
-                "  product_images/<image files>",
-            )
-            return
-
-        has_images = any(
-            n.startswith("product_images/") and not n.endswith("/")
-            for n in names
-        )
-        if not has_images:
-            messagebox.showerror(
-                "Invalid ZIP",
-                "ZIP does not contain any files under:\n\n"
-                "  product_images/\n\n"
-                "Expected ZIP structure:\n"
-                "  data/pos.db\n"
-                "  product_images/<image files>",
-            )
-            return
-
-        # Path-traversal safety check
-        for name in names:
-            parts = name.replace("\\", "/").split("/")
-            if ".." in parts:
-                messagebox.showerror(
-                    "Invalid ZIP",
-                    f"ZIP contains an unsafe path:\n  {name}\n\nImport cancelled.",
-                )
-                return
-
-        confirm = messagebox.askyesno(
-            "Confirm ZIP Import",
-            "WARNING: This will REPLACE the current database AND all product images.\n\n"
-            "A timestamped backup of the current database will be saved automatically "
-            "in the data/ folder before replacing.\n\n"
-            "All current data will be overwritten. Proceed?",
-            icon="warning",
-        )
-        if not confirm:
-            return
-
-        # ── Backup current DB ─────────────────────────────────────────────
-        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = DB_PATH.parent / f"pos_backup_{ts}.db"
-        try:
-            if DB_PATH.exists():
-                shutil.copy2(str(DB_PATH), str(backup_path))
-        except Exception as e:
-            messagebox.showerror(
-                "Backup Failed",
-                f"Could not back up the current database:\n{e}\n\nImport cancelled.",
-            )
-            return
-
-        # ── Close DB, clean WAL/SHM, extract ZIP ─────────────────────────
-        try:
-            self.db.close()
-
-            # Remove stale WAL/SHM so the new DB opens cleanly
-            for suffix in (".db-wal", ".db-shm"):
-                stale = DB_PATH.parent / (DB_PATH.name + suffix)
-                if stale.exists():
-                    try:
-                        stale.unlink()
-                    except Exception:
-                        pass
-
-            with zipfile.ZipFile(src, "r") as zf:
-                for member in zf.infolist():
-                    name = member.filename.replace("\\", "/")
-                    parts = name.split("/")
-
-                    # Skip directory entries and any unsafe paths
-                    if member.is_dir() or ".." in parts:
-                        continue
-
-                    # Only extract recognised top-level folders
-                    if name.startswith("data/"):
-                        rel = name[len("data/"):]
-                        dest = DATA_DIR / rel
-                    elif name.startswith("product_images/"):
-                        rel = name[len("product_images/"):]
-                        dest = PRODUCT_IMAGES_DIR / rel
-                    else:
-                        continue  # ignore __MACOSX, .DS_Store, etc.
-
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    with zf.open(member) as src_fh, open(dest, "wb") as dst_fh:
-                        shutil.copyfileobj(src_fh, dst_fh)
-
-            # Reconnect with the freshly imported DB and run schema migrations
-            try:
-                self.db.connect()
-            except Exception:
-                pass
-            try:
-                self.db.initialize_schema()
-            except Exception:
-                pass
-
-            # Save callback before destroying this dialog
-            cb = self._on_data_import
-
-            messagebox.showinfo(
-                "Import Complete",
-                f"Data imported successfully.\n\n"
-                f"Database backup saved as:\n  {backup_path.name}\n\n"
-                "The current view will reload with the imported data.",
-            )
-            self.destroy()
-            if cb:
-                cb()
-
-        except Exception as e:
-            # Always try to reconnect so the app keeps working
-            try:
-                self.db.connect()
-            except Exception:
-                pass
-            messagebox.showerror("Import Failed", f"Could not import ZIP:\n{e}")
 
     # ── User Management ───────────────────────────────────────────────────────
 

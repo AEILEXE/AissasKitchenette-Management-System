@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json as _json
 import os
 import sys
 from pathlib import Path
@@ -42,6 +43,31 @@ else:
     _WRITABLE_ROOT = _BUNDLE_DIR.parent                       # project root
 
 
+# ── DB-mode settings (read from settings.json placed next to the EXE) ────────
+# The installer writes settings.json to the same folder as AissasKitchenette.exe.
+# In dev mode the file lives at the project root (next to aissas_pos_system/).
+_SETTINGS_PATH = (
+    Path(sys.executable).parent / "settings.json"
+    if _is_frozen()
+    else _BUNDLE_DIR.parent / "settings.json"
+)
+
+
+def _load_db_settings() -> tuple[str, str]:
+    """Return (DB_MODE, NETWORK_DB_PATH) from settings.json, defaulting to local."""
+    if _SETTINGS_PATH.exists():
+        try:
+            with _SETTINGS_PATH.open() as _f:
+                _cfg = _json.load(_f)
+            return _cfg.get("DB_MODE", "local"), _cfg.get("NETWORK_DB_PATH", "")
+        except Exception:
+            pass
+    return "local", ""
+
+
+DB_MODE, NETWORK_DB_PATH = _load_db_settings()
+
+
 # ── Read-only bundled assets (safe in both modes) ─────────────────────────
 ASSETS_DIR = _BUNDLE_DIR / "assets"
 ICONS_DIR  = ASSETS_DIR / "icons"
@@ -49,7 +75,11 @@ LOGO_PATH  = ASSETS_DIR / "logo.png"
 
 # ── Writable directories (persistent; never in the temp bundle dir) ────────
 DATA_DIR         = _WRITABLE_ROOT / "data"
-DB_PATH          = DATA_DIR / "pos.db"
+DB_PATH = (
+    Path(NETWORK_DB_PATH)
+    if DB_MODE == "network" and NETWORK_DB_PATH
+    else DATA_DIR / "pos.db"
+)
 EXPORTS_DIR      = _WRITABLE_ROOT / "exports"
 RECEIPTS_DIR     = _WRITABLE_ROOT / "receipts"
 

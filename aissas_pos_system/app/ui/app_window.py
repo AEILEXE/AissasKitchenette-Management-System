@@ -280,11 +280,6 @@ class AppWindow:
             label="  Account Settings  ",
             command=self.show_account_settings,
         )
-        if self.auth_service.has_permission(P_DATABASE):
-            self.settings_menu.add_command(
-                label="  Backup & Restore  ",
-                command=self.show_backup_settings,
-            )
         self.settings_menu.add_separator()
         self.settings_menu.add_command(
             label="  Logout  ",
@@ -314,14 +309,6 @@ class AppWindow:
         AccountSettingsDialog(self.root, self.db, self.auth_service,
                               on_data_import=self._refresh_current_view,
                               initial_section="profile")
-
-    def show_backup_settings(self) -> None:
-        if not self.auth_service.has_permission(P_DATABASE):
-            messagebox.showerror("Access Denied", "No permission to manage database backup.")
-            return
-        AccountSettingsDialog(self.root, self.db, self.auth_service,
-                              on_data_import=self._refresh_current_view,
-                              initial_section="backup")
 
     # ── Navigation ────────────────────────────────────────────────────────────
 

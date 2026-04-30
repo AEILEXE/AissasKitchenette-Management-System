@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from app.utils import money
-from app.config import RECEIPTS_DIR as _RECEIPTS_DIR, ASSETS_DIR as _ASSETS_DIR, LOGO_PATH as _LOGO_PATH
+from app.config import RECEIPTS_DIR as _RECEIPTS_DIR, ASSETS_DIR as _ASSETS_DIR
+
+_LOGO_PATH = _ASSETS_DIR / "logo dark.png"
 
 _STORE_PHONE   = "0947 530 4889"
 _STORE_ADDRESS = "1 Esperanza, Quezon City, 1118 Metro Manila"
