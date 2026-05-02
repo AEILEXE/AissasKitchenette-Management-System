@@ -76,7 +76,7 @@ class DiscountDialog(tk.Toplevel):
             body, textvariable=self.value_var,
             font=("Segoe UI", 13),
             bg="#FFFFFF", bd=0,
-            insertbackground=THEME["text"],
+            insertbackground="#3d2b1f", insertwidth=2,
         )
         self.entry.pack(fill="x", ipady=10)
         self._sync_special_entry()
@@ -187,7 +187,7 @@ class DraftTitleDialog(tk.Toplevel):
             body, textvariable=self.var,
             font=("Segoe UI", 12),
             bg="#FFFFFF", bd=0,
-            insertbackground=THEME["text"],
+            insertbackground="#3d2b1f", insertwidth=2,
         )
         self.entry.pack(fill="x", ipady=10)
         self.entry.focus_set()
@@ -290,7 +290,7 @@ class TextPromptDialog(tk.Toplevel):
             body, textvariable=self.ref_var,
             font=("Segoe UI", 11),
             bg="#FFFFFF", bd=0,
-            insertbackground=THEME["text"],
+            insertbackground="#3d2b1f", insertwidth=2,
         )
         self.ref_entry.pack(fill="x", ipady=9)
         self.ref_entry.focus_set()
@@ -308,7 +308,7 @@ class TextPromptDialog(tk.Toplevel):
             body, textvariable=self.amount_var,
             font=("Segoe UI", 11),
             bg="#FFFFFF", bd=0,
-            insertbackground=THEME["text"],
+            insertbackground="#3d2b1f", insertwidth=2,
         )
         self.amount_entry.pack(fill="x", ipady=9)
 
@@ -423,7 +423,7 @@ class EWalletDialog(tk.Toplevel):
             body, textvariable=self.ref_var,
             font=("Segoe UI", 12),
             bg="#FFFFFF", bd=0,
-            insertbackground=THEME["text"],
+            insertbackground="#3d2b1f", insertwidth=2,
         )
         self.ref_entry.pack(fill="x", ipady=9)
         self.ref_entry.focus_set()
@@ -520,7 +520,7 @@ class PasswordConfirmDialog(tk.Toplevel):
             body, textvariable=self._password_var,
             font=("Segoe UI", 11),
             bg="#FFFFFF", bd=0,
-            insertbackground=THEME["text"],
+            insertbackground="#3d2b1f", insertwidth=2,
             show="*",
         )
         self.entry.pack(fill="x", ipady=9)

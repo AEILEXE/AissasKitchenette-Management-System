@@ -123,7 +123,7 @@ class UserManagementView(tk.Frame):
             ent = tk.Entry(parent, textvariable=var,
                            font=("Segoe UI", 10),
                            bg=_BEIGE, fg=_TEXT, bd=0,
-                           insertbackground=_TEXT,
+                           insertbackground="#3d2b1f", insertwidth=2,
                            show=show)
             ent.grid(row=row * 2 + 1, column=0, sticky="ew", ipady=8,
                      padx=(0, 0))
@@ -327,7 +327,7 @@ class _EditNameDialog(tk.Toplevel):
         self.var = tk.StringVar(value=current_name)
         ent = tk.Entry(body, textvariable=self.var,
                        font=("Segoe UI", 12), bg=_BEIGE, fg=_TEXT, bd=0,
-                       insertbackground=_TEXT)
+                       insertbackground="#3d2b1f", insertwidth=2)
         ent.pack(fill="x", ipady=10, pady=(4, 0))
         ent.focus_set()
         ent.select_range(0, "end")

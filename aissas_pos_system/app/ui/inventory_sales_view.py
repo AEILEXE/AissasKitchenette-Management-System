@@ -74,7 +74,7 @@ class InventorySalesView(tk.Frame):
         toggle_frame.grid(row=0, column=1, rowspan=2, sticky="e")
 
         self._toggle_btns: dict[str, tk.Button] = {}
-        for vt in ["Daily", "Monthly", "Yearly"]:
+        for vt in ["Daily", "Weekly", "Monthly", "Yearly"]:
             btn = tk.Button(
                 toggle_frame, text=vt,
                 bg=THEME["beige"], fg=THEME["muted"],
@@ -238,6 +238,8 @@ class InventorySalesView(tk.Frame):
 
                 if view_type == "Daily":
                     key = dt.strftime("%Y-%m-%d")
+                elif view_type == "Weekly":
+                    key = dt.strftime("%Y-W%W")
                 elif view_type == "Monthly":
                     key = dt.strftime("%Y-%m")
                 else:
@@ -281,35 +283,139 @@ class InventorySalesView(tk.Frame):
 
         from matplotlib.figure import Figure  # deferred — avoids freeze on first tab open
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg  # noqa: F811
-
-        fig = Figure(figsize=(10, 5), dpi=80)
-        ax  = fig.add_subplot(111)
+        import numpy as _np
 
         labels = [item[0] for item in data]
         values = [item[1] for item in data]
 
-        bars = ax.bar(labels, values, color=THEME["brown"], edgecolor="none", linewidth=0)
-        for bar in bars:
-            height = bar.get_height()
-            ax.text(
-                bar.get_x() + bar.get_width() / 2, height,
-                f"₱{height:.0f}", ha="center", va="bottom", fontsize=9,
+        # Category breakdown for pie chart
+        category_data: dict[str, float] = {}
+        try:
+            cat_rows = self.order_dao.db.fetchall(
+                """SELECT COALESCE(c.name,'Uncategorized') AS cat,
+                          SUM(oi.subtotal) AS rev
+                   FROM order_items oi
+                   JOIN products p ON p.id = oi.product_id
+                   LEFT JOIN categories c ON c.id = p.category_id
+                   JOIN orders o ON o.id = oi.order_id
+                   WHERE o.status='Completed' AND oi.voided=0
+                   GROUP BY cat ORDER BY rev DESC LIMIT 8;"""
             )
+            category_data = {r["cat"]: float(r["rev"] or 0) for r in cat_rows}
+        except Exception:
+            pass
 
-        ax.set_xlabel("Period", fontsize=10)
-        ax.set_ylabel("Sales (₱)", fontsize=10)
-        ax.grid(axis="y", alpha=0.2)
+        has_pie = bool(category_data)
+        fig = Figure(figsize=(10, 7 if has_pie else 5), dpi=80)
+        fig.patch.set_facecolor("#FAFAFA")
+
+        if has_pie:
+            ax  = fig.add_subplot(211)
+            ax_pie = fig.add_subplot(212)
+        else:
+            ax  = fig.add_subplot(111)
+            ax_pie = None
+
+        # ── Bar chart ─────────────────────────────────────────────────────────
+        n_bars = len(labels)
+        # Gradient: interpolate from #8c6e3b to #c4975a across bars
+        c1 = _np.array([0x8c, 0x6e, 0x3b]) / 255
+        c2 = _np.array([0xc4, 0x97, 0x5a]) / 255
+        bar_colors = [tuple(c1 + (c2 - c1) * (i / max(n_bars - 1, 1))) for i in range(n_bars)]
+
+        bars = ax.bar(labels, values, color=bar_colors, edgecolor="none", linewidth=0,
+                      width=0.65)
+        ax.set_facecolor("#FAFAFA")
+
+        # Value labels on bars
+        max_val = max(values) if values else 1
+        for bar, val in zip(bars, values):
+            if val > 0:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    val + max_val * 0.01,
+                    f"₱{val:,.0f}", ha="center", va="bottom",
+                    fontsize=7, color="#5a3e28",
+                )
+
+        ax.set_xlabel("Period", fontsize=9, color="#555")
+        ax.set_ylabel("Sales (₱)", fontsize=9, color="#555")
+        ax.grid(axis="y", alpha=0.25, color="#ccc", linestyle="--")
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color("#ddd")
+        ax.spines["bottom"].set_color("#ddd")
+        ax.tick_params(colors="#555", labelsize=8)
 
-        if len(labels) > 10:
-            ax.tick_params(axis="x", rotation=45)
+        if n_bars > 8:
+            ax.tick_params(axis="x", rotation=45, labelsize=7)
 
-        fig.tight_layout()
+        # ── Hover annotation ──────────────────────────────────────────────────
+        annot = ax.annotate("", xy=(0, 0), xytext=(10, 10),
+                            textcoords="offset points",
+                            bbox=dict(boxstyle="round,pad=0.3", fc="#fff8f0",
+                                      ec="#8c6e3b", lw=1),
+                            fontsize=9, color="#3d2b1f")
+        annot.set_visible(False)
+
+        def _on_hover(event):
+            if event.inaxes != ax:
+                annot.set_visible(False)
+                try:
+                    fig.canvas.draw_idle()
+                except Exception:
+                    pass
+                return
+            for bar, lbl, val in zip(bars, labels, values):
+                if bar.contains(event)[0]:
+                    annot.xy = (bar.get_x() + bar.get_width() / 2,
+                                bar.get_height())
+                    annot.set_text(f"{lbl}\n₱{val:,.2f}")
+                    annot.set_visible(True)
+                    try:
+                        fig.canvas.draw_idle()
+                    except Exception:
+                        pass
+                    return
+            annot.set_visible(False)
+            try:
+                fig.canvas.draw_idle()
+            except Exception:
+                pass
+
+        # ── Pie chart (category breakdown) ────────────────────────────────────
+        if ax_pie is not None and category_data:
+            pie_labels = list(category_data.keys())
+            pie_vals   = list(category_data.values())
+            total_rev  = sum(pie_vals)
+            pie_colors = [
+                "#8c6e3b", "#c4975a", "#e8b87a", "#a07855",
+                "#d4a96a", "#6b4b2a", "#b8905c", "#9a7040",
+            ][:len(pie_vals)]
+            wedges, texts, autotexts = ax_pie.pie(
+                pie_vals, labels=pie_labels, colors=pie_colors,
+                autopct=lambda p: f"{p:.1f}%" if p > 3 else "",
+                startangle=90, pctdistance=0.8,
+                wedgeprops=dict(linewidth=0.5, edgecolor="white"),
+            )
+            for t in texts:
+                t.set_fontsize(8)
+                t.set_color("#3d2b1f")
+            for at in autotexts:
+                at.set_fontsize(7)
+                at.set_color("white")
+            ax_pie.set_title("Revenue by Category", fontsize=10, color="#3d2b1f", pad=8)
+            ax_pie.set_facecolor("#FAFAFA")
+
+        fig.tight_layout(pad=1.5)
 
         canvas = FigureCanvasTkAgg(fig, master=self.canvas_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
+        try:
+            canvas.mpl_connect("motion_notify_event", _on_hover)
+        except Exception:
+            pass
         self.canvas_figure = fig
 
     # ──────────────────────────────────────────────────────────────────────────

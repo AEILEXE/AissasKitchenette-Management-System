@@ -23,6 +23,10 @@ _BORDER = THEME["border"]         # #D9C5B2  soft warm border
 def apply_global_styles() -> None:
     """Apply the warm café ttk theme globally."""
     s = ttk.Style()
+    try:
+        s.theme_use("clam")   # clam allows full fg/bg override on all platforms
+    except Exception:
+        pass
 
     # ── Scrollbar ──────────────────────────────────────────────────────────
     s.configure("Vertical.TScrollbar",
@@ -31,6 +35,10 @@ def apply_global_styles() -> None:
     s.configure("Horizontal.TScrollbar",
                 troughcolor=_BG, background=_BORDER,
                 arrowcolor=_MUTED, borderwidth=0, relief="flat")
+    s.configure("Thick.Vertical.TScrollbar",
+                troughcolor=_BG, background=_BORDER,
+                arrowcolor=_MUTED, borderwidth=0, relief="flat",
+                width=10)
 
     # ── Base Treeview ──────────────────────────────────────────────────────
     s.configure("Treeview",

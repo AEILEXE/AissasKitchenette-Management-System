@@ -48,22 +48,24 @@ _DASH_STYLE = "Dash.Treeview"
 def _apply_dash_style() -> None:
     s = ttk.Style()
     s.configure(_DASH_STYLE,
-        rowheight=34,
+        rowheight=28,
         font=("Segoe UI", 9),
         background=_PANEL,
         fieldbackground=_PANEL,
         foreground=_TEXT,
+        borderwidth=0,
+        relief="flat",
     )
     s.configure(f"{_DASH_STYLE}.Heading",
         font=("Segoe UI", 9, "bold"),
-        background="#2D2D2D",
+        background=_SB,
         foreground="#FFFFFF",
         relief="flat",
-        padding=(10, 8),
+        padding=(8, 7),
     )
     s.map(_DASH_STYLE,
-        background=[("selected", _RED)],
-        foreground=[("selected", "#FFFFFF")],
+        background=[("selected", _RED), ("!selected", _PANEL)],
+        foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)],
     )
     s.map(f"{_DASH_STYLE}.Heading",
         background=[("active", THEME["primary_dark"])],
@@ -131,7 +133,7 @@ class DashboardView(tk.Frame):
 
         tk.Label(
             hdr_inner, text=_dt.datetime.now().strftime("%A, %B %d, %Y"),
-            bg=_SB, fg="#90A4AE",
+            bg=_SB, fg="#F5DFB8",
             font=("Segoe UI", 9),
         ).grid(row=1, column=0, sticky="w")
 
@@ -213,14 +215,14 @@ class DashboardView(tk.Frame):
         tk.Label(
             banner,
             text="  This Month's Revenue",
-            bg=_SB, fg="#CCCCCC",
+            bg=_SB, fg="#F5DFB8",
             font=("Segoe UI", 9),
         ).pack(side="left", padx=(12, 0), pady=10)
 
         tk.Label(
             banner,
             text=money(weekly_sales),
-            bg=_SB, fg="#90A4AE",
+            bg=_SB, fg="#FFFFFF",
             font=("Segoe UI", 14, "bold"),
         ).pack(side="left", padx=(6, 0), pady=10)
 
@@ -519,11 +521,11 @@ class DashboardView(tk.Frame):
         tbl.configure(yscrollcommand=ysb.set)
 
         col_cfg = [
-            ("id",      "#",           60,  "center", False),
-            ("date",    "Date & Time", 180, "center", True),
-            ("payment", "Payment",     130, "center", False),
-            ("total",   "Total",       110, "e",      False),
-            ("status",  "Status",      100, "center", False),
+            ("id",      "#",            50, "center", False),
+            ("date",    "Date & Time", 140, "center", True),
+            ("payment", "Payment",     120, "center", False),
+            ("total",   "Total",       100, "e",      False),
+            ("status",  "Status",       90, "center", False),
         ]
         for cid, heading, width, anchor, stretch in col_cfg:
             tbl.heading(cid, text=heading, anchor="center")
@@ -706,14 +708,16 @@ class VoidsPopup(tk.Toplevel):
 
         s = ttk.Style()
         s.configure("Voids.Treeview",
-                    rowheight=30, font=("Segoe UI", 9),
-                    background=_PANEL, fieldbackground=_PANEL, foreground=_TEXT)
+                    rowheight=28, font=("Segoe UI", 9),
+                    background=_PANEL, fieldbackground=_PANEL, foreground=_TEXT,
+                    borderwidth=0, relief="flat")
         s.configure("Voids.Treeview.Heading",
                     font=("Segoe UI", 9, "bold"),
-                    background=_SB, foreground="#FFFFFF", relief="flat")
+                    background=_SB, foreground="#FFFFFF", relief="flat",
+                    padding=(8, 7))
         s.map("Voids.Treeview",
-              background=[("selected", _RED)],
-              foreground=[("selected", "#FFFFFF")])
+              background=[("selected", _RED), ("!selected", _PANEL)],
+              foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])
 
         cols = [c[0] for c in self._COLS]
         self._tbl = ttk.Treeview(tbl_frame, columns=cols, show="headings",

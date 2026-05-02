@@ -52,7 +52,8 @@ class InventoryView(tk.Frame):
 
         search = tk.Entry(
             header, textvariable=self.search_var,
-            bd=0, bg=THEME["panel2"], fg=THEME["text"]
+            bd=0, bg=THEME["panel2"], fg=THEME["text"],
+            insertbackground="#3d2b1f", insertwidth=2,
         )
         search.grid(row=0, column=1, sticky="ew", padx=(14, 0), ipady=8)
         search.bind("<KeyRelease>", lambda _e: self.refresh())
@@ -108,7 +109,8 @@ class InventoryView(tk.Frame):
         controls.columnconfigure(10, weight=1)
 
         tk.Label(controls, text="Qty:", bg=THEME["bg"], fg=THEME["text"]).grid(row=0, column=0, sticky="w")
-        self.ent_qty = tk.Entry(controls, width=10, bd=0, bg=THEME["panel2"], fg=THEME["text"])
+        self.ent_qty = tk.Entry(controls, width=10, bd=0, bg=THEME["panel2"], fg=THEME["text"],
+                                insertbackground="#3d2b1f", insertwidth=2)
         self.ent_qty.grid(row=0, column=1, sticky="w", padx=(6, 14), ipady=6)
 
         tk.Button(

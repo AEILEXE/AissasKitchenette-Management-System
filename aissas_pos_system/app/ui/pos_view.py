@@ -485,6 +485,7 @@ class POSView(tk.Frame):
             search_frame, textvariable=self.search_var,
             bd=0, bg=THEME["panel2"], fg=THEME["text"],
             font=("Segoe UI", 10),
+            insertbackground="#3d2b1f", insertwidth=2,
         )
         search.pack(fill="x", ipady=7, padx=(10, 10))
         self._search_entry = search
@@ -760,7 +761,7 @@ class POSView(tk.Frame):
         tk.Entry(tbl_outer, textvariable=self.var_table_number,
                  bg=THEME["panel2"], fg=THEME["text"], bd=0,
                  font=("Segoe UI", 11, "bold"), justify="center",
-                 insertbackground=THEME["text"],
+                 insertbackground="#3d2b1f", insertwidth=2,
                  ).pack(fill="x", ipady=7)
 
         # ── PAYMENT METHOD ────────────────────────────────────────────────────
@@ -811,7 +812,7 @@ class POSView(tk.Frame):
             font=("Segoe UI", 13, "bold"),
             bg=THEME["panel2"], fg=THEME["text"],
             bd=0, justify="right",
-            insertbackground=THEME["text"],
+            insertbackground="#3d2b1f", insertwidth=2,
         )
         self._amount_entry.pack(fill="x", padx=_pad, ipady=7)
         self._amount_entry.bind("<Key>", self._on_amount_key)
@@ -1241,6 +1242,7 @@ class POSView(tk.Frame):
             for r in range((end + cols - 1) // cols):
                 self.prod_inner.rowconfigure(r, weight=0, uniform="prodrow", minsize=180)
             try:
+                self.prod_inner.update_idletasks()
                 self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
             except Exception:
                 pass
@@ -1303,7 +1305,12 @@ class POSView(tk.Frame):
         for r in range(new_rows):
             self.prod_inner.rowconfigure(r, weight=0, uniform="prodrow", minsize=180)
 
-        self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
+        # update_idletasks ensures geometry is computed before bbox
+        try:
+            self.prod_inner.update_idletasks()
+            self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
+        except Exception:
+            pass
 
         # Track for skip-on-no-change optimisation in _relayout_products
         self._last_relayout_cols = cols
@@ -2669,7 +2676,8 @@ class ConfirmOrderDialog(tk.Toplevel):
 
         ent_table = tk.Entry(right, textvariable=self.var_table_number,
                              bd=0, bg=THEME["panel2"], fg=THEME["text"],
-                             insertbackground=THEME["text"], font=("Segoe UI", f(10)))
+                             insertbackground="#3d2b1f", insertwidth=2,
+                             font=("Segoe UI", f(10)))
         ent_table.pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 6))
         ent_table.focus_set()
         _update_ot_buttons()
@@ -2695,7 +2703,7 @@ class ConfirmOrderDialog(tk.Toplevel):
                  font=("Segoe UI", f(10))).grid(row=0, column=0, padx=(8, 2), sticky="ns")
         tk.Entry(amt_frame, textvariable=self.var_amount_paid,
                  bd=0, bg=THEME["panel2"], fg=THEME["text"],
-                 insertbackground=THEME["text"],
+                 insertbackground="#3d2b1f", insertwidth=2,
                  font=("Segoe UI", f(10))).grid(row=0, column=1, sticky="ew", ipady=sp(8), padx=(0, 4))
 
         self._change_lbl = tk.Label(right, text="", bg=THEME["panel"], fg=THEME["muted"],

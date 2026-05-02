@@ -47,6 +47,7 @@ class InventoryProductsView(tk.Frame):
         self.var_category = tk.StringVar(value="All")
         self._hovered_iid: str | None = None
         self._iid_tags: dict[str, str] = {}   # iid → original tag name
+        self._prod_sort: dict = {"col": None, "reverse": False}
 
         self._build()
         self.refresh()
@@ -120,7 +121,7 @@ class InventoryProductsView(tk.Frame):
         ent_search = tk.Entry(
             search_pill, textvariable=self.var_search,
             bd=0, bg=THEME["panel"], fg=THEME["text"],
-            insertbackground=THEME["text"],
+            insertbackground="#3d2b1f", insertwidth=2,
             font=("Segoe UI", ui_scale.scale_font(10)),
         )
         ent_search.grid(row=0, column=1, sticky="ew", ipady=ui_scale.s(7), padx=(0, 10))
@@ -202,14 +203,15 @@ class InventoryProductsView(tk.Frame):
         # Column headers
         col_cfg = [
             ("name",        "Name",         ui_scale.s(180),  "w",      True),
-            ("category",    "Category",     ui_scale.s(130),  "w",      False),
-            ("description", "Description",  ui_scale.s(280),  "w",      True),
-            ("price",       "Price",        ui_scale.s(95),   "e",      False),
-            ("available",   "Status",       ui_scale.s(120),  "center", False),
-            ("action",      "",             ui_scale.s(70),   "center", False),
+            ("category",    "Category",     ui_scale.s(120),  "w",      False),
+            ("description", "Description",  ui_scale.s(260),  "w",      True),
+            ("price",       "Price",        ui_scale.s(100),  "e",      False),
+            ("available",   "Status",       ui_scale.s(90),   "center", False),
+            ("action",      "",             ui_scale.s(60),   "center", False),
         ]
         for cid, heading, width, anchor, stretch in col_cfg:
-            self.tbl.heading(cid, text=heading)
+            self.tbl.heading(cid, text=heading, anchor="center",
+                             command=lambda c=cid: self._prod_sort_by(c))
             self.tbl.column(cid, width=width, minwidth=width // 2,
                             anchor=anchor, stretch=stretch)
 
@@ -258,6 +260,21 @@ class InventoryProductsView(tk.Frame):
                 pass
         self._hovered_iid = None
 
+    def _prod_sort_by(self, col: str) -> None:
+        if self._prod_sort["col"] == col:
+            self._prod_sort["reverse"] = not self._prod_sort["reverse"]
+        else:
+            self._prod_sort["col"] = col
+            self._prod_sort["reverse"] = False
+        rev = self._prod_sort["reverse"]
+        ind = " ▲" if not rev else " ▼"
+        _labels = {"name": "Name", "category": "Category", "description": "Description",
+                   "price": "Price", "available": "Status", "action": ""}
+        for cid, hdr in _labels.items():
+            self.tbl.heading(cid, text=(hdr + ind) if cid == col else hdr,
+                             anchor="center", command=lambda c=cid: self._prod_sort_by(c))
+        self.refresh()
+
     # ──────────────────────────────────────────────────────────────────────────
     # Data helpers
     # ──────────────────────────────────────────────────────────────────────────
@@ -280,30 +297,42 @@ class InventoryProductsView(tk.Frame):
         q   = (self.var_search.get() or "").strip().lower()
         cat = self.var_category.get()
 
-        rows = self.products.list_all()
-        for r in rows:
+        all_rows = self.products.list_all()
+        filtered = []
+        for r in all_rows:
             name = str(r["name"])
             cat_name = str(r["category"])
             desc = str(r["description"] or "")
-
-            # Filter by search text
             if q and q not in name.lower() and q not in cat_name.lower() and q not in desc.lower():
                 continue
-            # Filter by category
             if cat != "All" and cat_name != cat:
                 continue
+            filtered.append(r)
 
+        # Apply sort
+        sort_col = self._prod_sort["col"]
+        if sort_col and sort_col != "action":
+            _key = {
+                "name":      lambda r: str(r.get("name") or "").lower(),
+                "category":  lambda r: str(r.get("category") or "").lower(),
+                "description": lambda r: str(r.get("description") or "").lower(),
+                "price":     lambda r: float(r.get("price") or 0),
+                "available": lambda r: int(r.get("active") or 0),
+            }
+            filtered = sorted(filtered,
+                               key=_key.get(sort_col, lambda r: 0),
+                               reverse=self._prod_sort["reverse"])
+
+        for r in filtered:
             pid    = int(r["product_id"])
             active = int(r["active"])
-
             tag          = "avail" if active else "unavail"
             status_text  = "● Available" if active else "● Unavailable"
-
             self.tbl.insert(
                 "", tk.END,
                 iid=str(pid),
                 values=(
-                    name, cat_name, desc,
+                    str(r["name"]), str(r["category"]), str(r["description"] or ""),
                     money(r["price"]),
                     status_text,
                     "Edit ›",
@@ -472,6 +501,7 @@ class ProductEditor(tk.Toplevel):
             row_img, textvariable=self.var_image,
             bd=0, bg=THEME["panel2"], fg=THEME["text"],
             font=("Segoe UI", f(9)),
+            insertbackground="#3d2b1f", insertwidth=2,
         ).grid(row=0, column=1, sticky="ew", padx=(10, 0), ipady=sp(6))
 
         # Image preview — fixed 140px height, proportional resize, centered
@@ -503,6 +533,7 @@ class ProductEditor(tk.Toplevel):
             box, textvariable=self.var_name,
             bd=0, bg=THEME["panel2"], fg=THEME["text"],
             font=("Segoe UI", f(10)),
+            insertbackground="#3d2b1f", insertwidth=2,
         ).grid(row=5, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 8), ipady=sp(8))
 
         # ── Description ───────────────────────────────────────────────────────
@@ -553,6 +584,7 @@ class ProductEditor(tk.Toplevel):
             box, textvariable=self.var_price,
             bd=0, bg=THEME["panel2"], fg=THEME["text"],
             font=("Segoe UI", f(10)),
+            insertbackground="#3d2b1f", insertwidth=2,
         ).grid(row=9, column=1, sticky="ew", padx=14, pady=(0, 8), ipady=sp(8))
 
         # ── Available checkbox ────────────────────────────────────────────────
@@ -779,7 +811,8 @@ def simple_input(parent: tk.Widget, title: str, label: str) -> str | None:
     tk.Label(dlg, text=label, bg=THEME["bg"], fg=THEME["text"],
              font=("Segoe UI", ui_scale.scale_font(9))).pack(anchor="w", padx=14, pady=(14, 6))
     ent = tk.Entry(dlg, textvariable=var, bd=0, bg=THEME["panel2"], fg=THEME["text"],
-                   font=("Segoe UI", ui_scale.scale_font(9)))
+                   font=("Segoe UI", ui_scale.scale_font(9)),
+                   insertbackground="#3d2b1f", insertwidth=2)
     ent.pack(fill="x", padx=14, ipady=8)
     ent.focus_set()
 

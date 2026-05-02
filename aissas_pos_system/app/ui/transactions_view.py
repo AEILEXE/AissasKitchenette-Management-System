@@ -200,6 +200,8 @@ class TransactionsView(tk.Frame):
         self.var_to      = tk.StringVar()
 
         self._search_after = None
+        self._tx_sort: dict = {"col": None, "reverse": False}
+        self._tx_rows_cache: list = []
 
         # entry refs for placeholder restore
         self.ent_search: tk.Entry | None = None
@@ -363,7 +365,8 @@ class TransactionsView(tk.Frame):
             bd=0,
             bg=THEME["panel2"],
             fg=THEME["text"],
-            insertbackground=THEME["text"],
+            insertbackground="#3d2b1f",
+            insertwidth=2,
         )
         self.ent_search.grid(row=0, column=1, sticky="ew", ipady=8, padx=(0, 10))
 
@@ -399,7 +402,8 @@ class TransactionsView(tk.Frame):
                 bd=0,
                 bg=THEME["panel2"],
                 fg=THEME["text"],
-                insertbackground=THEME["text"],
+                insertbackground="#3d2b1f",
+                insertwidth=2,
                 width=12,
             )
             ent.pack(side="left", fill="x", expand=True, padx=(10, 2), ipady=8)
@@ -484,22 +488,26 @@ class TransactionsView(tk.Frame):
 
         # (id, heading, width, anchor, stretch, minwidth)
         col_cfg = [
-            ("id",      "ID",        65, "center", False,  45),
+            ("id",      "ID",        50, "center", False,  40),
             ("payment", "PAYMENT",  140, "w",      False,  90),
-            ("cashier", "CASHIER",  120, "w",      False,  80),
-            ("customer","CUSTOMER", 160, "w",      False, 100),
-            ("paid",    "PAID",     110, "e",      False,  80),
-            ("change",  "CHANGE",   100, "e",      False,  80),
-            ("items",   "ITEMS",     60, "center", False,  40),
-            ("status",  "STATUS",   110, "center", False,  80),
-            ("total",   "TOTAL",    120, "e",      False,  90),
-            ("start",   "START",    180, "center", True,  120),
-            ("end",     "END",      160, "center", False,  80),
-            ("details", "",          60, "center", False,  40),
+            ("cashier", "CASHIER",  100, "w",      False,  70),
+            ("customer","CUSTOMER", 160, "w",      True,   90),
+            ("paid",    "PAID",     100, "e",      False,  70),
+            ("change",  "CHANGE",   100, "e",      False,  70),
+            ("items",   "ITEMS",     55, "center", False,  40),
+            ("status",  "STATUS",    90, "center", False,  70),
+            ("total",   "TOTAL",    100, "e",      False,  70),
+            ("start",   "START",    140, "center", False, 100),
+            ("end",     "END",      140, "center", False,  70),
+            ("details", "",          55, "center", False,  40),
         ]
 
         for cid, hdr, width, anchor, stretch, minw in col_cfg:
-            self.tbl.heading(cid, text=hdr, anchor="center")
+            if cid != "details":
+                self.tbl.heading(cid, text=hdr, anchor="center",
+                                 command=lambda c=cid: self._tx_sort_by(c))
+            else:
+                self.tbl.heading(cid, text=hdr, anchor="center")
             self.tbl.column(cid, width=width, anchor=anchor, stretch=stretch, minwidth=minw)
 
         _row_font  = ("Segoe UI", 10)
@@ -567,19 +575,61 @@ class TransactionsView(tk.Frame):
     }
 
     def refresh(self):
-        for iid in self.tbl.get_children():
-            self.tbl.delete(iid)
-
-        q        = self.var_search.get().replace("Search transaction ID…", "").strip()
-        status   = self.var_status.get()
-        payment  = self.var_payment.get()
+        q         = self.var_search.get().replace("Search transaction ID…", "").strip()
+        status    = self.var_status.get()
+        payment   = self.var_payment.get()
         date_from = self.var_from.get().replace("YYYY-MM-DD", "").strip()
         date_to   = self.var_to.get().replace("YYYY-MM-DD", "").strip()
 
-        rows = self.orders.list_orders(q, status, payment, date_from, date_to)
+        self._tx_rows_cache = list(self.orders.list_orders(q, status, payment, date_from, date_to))
+        self._tx_apply_sort_and_display()
 
-        top_id    = None
-        latest_id = None
+    def _tx_apply_sort_and_display(self) -> None:
+        rows = list(self._tx_rows_cache)
+        col  = self._tx_sort["col"]
+        rev  = self._tx_sort["reverse"]
+        if col:
+            _key: dict = {
+                "id":       lambda r: int(r.get("order_id") or 0),
+                "payment":  lambda r: str(r.get("payment_method") or "").lower(),
+                "cashier":  lambda r: str(r.get("cashier_username") or "").lower(),
+                "customer": lambda r: str(r.get("customer_name") or "").lower(),
+                "paid":     lambda r: float(r.get("amount_paid") or 0),
+                "change":   lambda r: float(r.get("change_due") or 0),
+                "items":    lambda r: int(r.get("items_count") or 0),
+                "status":   lambda r: str(r.get("status") or "").lower(),
+                "total":    lambda r: float(r.get("total") or 0),
+                "start":    lambda r: str(r.get("start_dt") or ""),
+                "end":      lambda r: str(r.get("end_dt") or ""),
+            }
+            rows = sorted(rows, key=_key.get(col, lambda r: 0), reverse=rev)
+        self._tx_populate(rows)
+
+    def _tx_sort_by(self, col: str) -> None:
+        if self._tx_sort["col"] == col:
+            self._tx_sort["reverse"] = not self._tx_sort["reverse"]
+        else:
+            self._tx_sort["col"] = col
+            self._tx_sort["reverse"] = False
+        rev = self._tx_sort["reverse"]
+        ind = " ▲" if not rev else " ▼"
+        _col_labels = {
+            "id": "ID", "payment": "PAYMENT", "cashier": "CASHIER",
+            "customer": "CUSTOMER", "paid": "PAID", "change": "CHANGE",
+            "items": "ITEMS", "status": "STATUS", "total": "TOTAL",
+            "start": "START", "end": "END",
+        }
+        for cid, lbl in _col_labels.items():
+            self.tbl.heading(cid, text=(lbl + ind) if cid == col else lbl,
+                             anchor="center", command=lambda c=cid: self._tx_sort_by(c))
+        self._tx_apply_sort_and_display()
+
+    def _tx_populate(self, rows: list) -> None:
+        for iid in self.tbl.get_children():
+            self.tbl.delete(iid)
+
+        top_id     = None
+        latest_id  = None
         best_total = None
         best_dt    = None
 
@@ -589,26 +639,21 @@ class TransactionsView(tk.Frame):
                 total = float(r["total"] or 0.0)
             except Exception:
                 total = 0.0
-
             dt_str = str(r["start_dt"] or "") or str(r["end_dt"] or "")
             dt = None
             try:
                 dt = datetime.fromisoformat(dt_str)
             except Exception:
                 pass
-
             if best_total is None or total > best_total:
                 best_total = total
-                top_id     = oid
-
+                top_id = oid
             if dt is not None and (best_dt is None or dt > best_dt):
-                best_dt   = dt
+                best_dt = dt
                 latest_id = oid
 
         for r in rows:
             oid = int(r["order_id"])
-
-            # ── Status-based base color (applied first; lower priority) ────────
             status_str = str(r["status"] or "").lower()
             if status_str == "pending":
                 status_tag = "row_pending"
@@ -617,9 +662,6 @@ class TransactionsView(tk.Frame):
             else:
                 status_tag = "row_completed"
 
-            # ── Highlight modifier (applied last; wins over base color) ────────
-            # Pending/cancelled always keep their status color so the cashier
-            # can instantly spot unpaid/voided orders regardless of rank.
             if status_tag in ("row_pending", "row_cancelled"):
                 if top_id == oid and latest_id == oid:
                     tag = ("top_and_latest", status_tag)
@@ -630,7 +672,6 @@ class TransactionsView(tk.Frame):
                 else:
                     tag = (status_tag,)
             else:
-                # Completed rows: highlight bg wins when applicable
                 if top_id == oid and latest_id == oid:
                     tag = (status_tag, "top_and_latest")
                 elif top_id == oid:
@@ -640,9 +681,8 @@ class TransactionsView(tk.Frame):
                 else:
                     tag = (status_tag,)
 
-            end_val = str(r["end_dt"] or "")   # Never display literal "None"
-
-            raw_status = str(r["status"] or "")
+            end_val      = str(r["end_dt"] or "")
+            raw_status   = str(r["status"] or "")
             badge_status = self._STATUS_BADGE.get(raw_status.lower(), raw_status)
 
             self.tbl.insert(
@@ -668,7 +708,6 @@ class TransactionsView(tk.Frame):
         n = len(rows)
         if hasattr(self, "_count_var"):
             self._count_var.set(f"{n} transaction{'s' if n != 1 else ''} shown")
-
         if hasattr(self, "_empty_lbl"):
             if n == 0:
                 self._empty_lbl.place(relx=0.5, rely=0.5, anchor="center")
@@ -1186,7 +1225,8 @@ class ResolveDialog(tk.Toplevel):
             font=("Segoe UI", 10),
         ).pack(anchor="w", padx=14, pady=(14, 4))
 
-        ent_ref = tk.Entry(box, textvariable=self.var_ref, bd=0, bg="white", fg=THEME["text"])
+        ent_ref = tk.Entry(box, textvariable=self.var_ref, bd=0, bg="white", fg=THEME["text"],
+                           insertbackground="#3d2b1f", insertwidth=2)
         ent_ref.pack(fill="x", padx=14, pady=(0, 14), ipady=8)
 
         ent_ref.insert(0, "Reference No.")
@@ -1417,6 +1457,7 @@ class VoidDialog(tk.Toplevel):
             bg="white", fg=THEME["text"],
             bd=1, relief="solid",
             font=("Segoe UI", f(9)),
+            insertbackground="#3d2b1f", insertwidth=2,
         ).pack(fill="x", ipady=sp(5), pady=(sp(4), 0))
 
         # Footer buttons

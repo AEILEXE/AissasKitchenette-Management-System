@@ -11,6 +11,18 @@ from datetime import date, timedelta
 from app.config import THEME
 from app.db.database import Database
 from app.services.auth_service import AuthService
+from app.ui.transactions_view import DatePickerDialog
+
+
+def _bind_date_picker(entry: tk.Entry, var: tk.StringVar) -> None:
+    """Attach a calendar popup to a date Entry widget."""
+    def _open(e=None):
+        parent = entry.winfo_toplevel()
+        dlg = DatePickerDialog(parent, initial=var.get() or None)
+        if dlg.result:
+            var.set(dlg.result)
+    entry.bind("<Button-1>", _open)
+    entry.configure(cursor="hand2")
 
 _SB     = THEME["sidebar"]
 _RED    = THEME["primary"]
@@ -85,7 +97,7 @@ class ReportsView(tk.Frame):
                 btn.configure(bg=THEME["primary_dark"], fg="#FFFFFF",
                                font=("Segoe UI", 9, "bold"))
             else:
-                btn.configure(bg=_SB, fg="#C9B09A",
+                btn.configure(bg=_SB, fg="#F5DFB8",
                                font=("Segoe UI", 9))
 
     def refresh(self):
@@ -228,16 +240,16 @@ class ReportsView(tk.Frame):
 
         top_prods = self._fetch_top_products_alltime()
         if top_prods:
-            hdr_row = tk.Frame(top_card, bg=THEME["beige"])
+            hdr_row = tk.Frame(top_card, bg=_SB)
             hdr_row.pack(fill="x", padx=16, pady=(6, 0))
             for txt, w in [("Product", 0), ("Units Sold", 100), ("Revenue", 120)]:
                 expand = w == 0
-                tk.Label(hdr_row, text=txt, bg=THEME["beige"], fg=_MUTED,
+                tk.Label(hdr_row, text=txt, bg=_SB, fg="#FFFFFF",
                          font=("Segoe UI", 8, "bold"),
                          anchor="w" if expand else "e",
                          width=0 if expand else w // 8).pack(
                     side="left", fill="x" if expand else None,
-                    expand=expand, padx=8, pady=4)
+                    expand=expand, padx=8, pady=6)
             for p in top_prods:
                 r = tk.Frame(top_card, bg=_PANEL,
                              highlightthickness=1, highlightbackground=_BORDER)
@@ -290,16 +302,18 @@ class ReportsView(tk.Frame):
         from_var = tk.StringVar()
         from_ent = tk.Entry(bar, textvariable=from_var, width=11,
                             bd=0, bg=THEME["panel2"], fg=_TEXT,
-                            insertbackground=_TEXT)
+                            insertbackground=_TEXT, insertwidth=2)
         from_ent.pack(side="left", ipady=5, pady=8)
+        _bind_date_picker(from_ent, from_var)
 
         tk.Label(bar, text="To:", bg=_PANEL, fg=_MUTED,
                  font=("Segoe UI", 9)).pack(side="left", padx=(8, 4), pady=8)
         to_var = tk.StringVar()
         to_ent = tk.Entry(bar, textvariable=to_var, width=11,
                           bd=0, bg=THEME["panel2"], fg=_TEXT,
-                          insertbackground=_TEXT)
+                          insertbackground=_TEXT, insertwidth=2)
         to_ent.pack(side="left", ipady=5, pady=8)
+        _bind_date_picker(to_ent, to_var)
 
         # Table
         tbl_frame = tk.Frame(outer, bg=_PANEL,
@@ -310,14 +324,16 @@ class ReportsView(tk.Frame):
 
         s = ttk.Style()
         s.configure("TS.Treeview",
-                    rowheight=30, font=("Segoe UI", 9),
-                    background=_PANEL, fieldbackground=_PANEL, foreground=_TEXT)
+                    rowheight=28, font=("Segoe UI", 9),
+                    background=_PANEL, fieldbackground=_PANEL, foreground=_TEXT,
+                    borderwidth=0, relief="flat")
         s.configure("TS.Treeview.Heading",
                     font=("Segoe UI", 9, "bold"),
-                    background=_SB, foreground="#FFFFFF", relief="flat")
+                    background=_SB, foreground="#FFFFFF", relief="flat",
+                    padding=(8, 7))
         s.map("TS.Treeview",
-              background=[("selected", _RED)],
-              foreground=[("selected", "#FFFFFF")])
+              background=[("selected", _RED), ("!selected", _PANEL)],
+              foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])
 
         ts_cols = ("rank", "name", "category", "qty", "revenue")
         tbl = ttk.Treeview(tbl_frame, columns=ts_cols, show="headings",
@@ -330,13 +346,13 @@ class ReportsView(tk.Frame):
 
         col_cfg = [
             ("rank",     "#",         50,  "center", False),
-            ("name",     "Product",  220,  "w",      True),
-            ("category", "Category", 140,  "w",      False),
+            ("name",     "Product",  200,  "w",      True),
+            ("category", "Category", 120,  "w",      False),
             ("qty",      "Qty Sold",  90,  "center", False),
-            ("revenue",  "Revenue",  130,  "e",      False),
+            ("revenue",  "Revenue",  100,  "e",      False),
         ]
+        _ts_col_labels = {cid: hdr for cid, hdr, *_ in col_cfg}
         for cid, hdr, w, anc, stretch in col_cfg:
-            tbl.heading(cid, text=hdr, anchor="center")
             tbl.column(cid, width=w, minwidth=50, anchor=anc, stretch=stretch)
 
         rank_tags = ["rank1", "rank2", "rank3"]
@@ -354,6 +370,50 @@ class ReportsView(tk.Frame):
         count_lbl.pack(side="left")
 
         rows_cache: list[dict] = []
+        _ts_sort: dict = {"col": None, "reverse": False}
+
+        def _ts_display(rows: list[dict]) -> None:
+            for iid in tbl.get_children():
+                tbl.delete(iid)
+            if not rows:
+                empty_lbl.place(relx=0.5, rely=0.5, anchor="center")
+            else:
+                empty_lbl.place_forget()
+            for i, r in enumerate(rows, 1):
+                tag = rank_tags[i - 1] if i <= 3 else ("odd" if i % 2 else "even")
+                tbl.insert("", tk.END, tags=(tag,), values=(
+                    f"#{i}", r["name"], r["category"],
+                    int(r["total_qty"] or 0), _money(r["total_revenue"]),
+                ))
+            n = len(rows)
+            count_lbl.configure(text=f"{n} product{'s' if n != 1 else ''} shown")
+
+        def _ts_sort_by(col: str) -> None:
+            if _ts_sort["col"] == col:
+                _ts_sort["reverse"] = not _ts_sort["reverse"]
+            else:
+                _ts_sort["col"] = col
+                _ts_sort["reverse"] = False
+            rev = _ts_sort["reverse"]
+            ind = "▲" if not rev else "▼"
+            for cid, hdr in _ts_col_labels.items():
+                tbl.heading(cid, text=(hdr + " " + ind) if cid == col else hdr,
+                            anchor="center",
+                            command=lambda c=cid: _ts_sort_by(c))
+            key_map = {
+                "rank": lambda r: float(r.get("total_qty") or 0),
+                "name": lambda r: str(r.get("name") or "").lower(),
+                "category": lambda r: str(r.get("category") or "").lower(),
+                "qty": lambda r: float(r.get("total_qty") or 0),
+                "revenue": lambda r: float(r.get("total_revenue") or 0),
+            }
+            kf = key_map.get(col, lambda r: 0)
+            sorted_rows = sorted(rows_cache, key=kf, reverse=rev)
+            _ts_display(sorted_rows)
+
+        for cid, hdr, *_ in col_cfg:
+            tbl.heading(cid, text=hdr, anchor="center",
+                        command=lambda c=cid: _ts_sort_by(c))
 
         def export():
             if not rows_cache:
@@ -368,8 +428,21 @@ class ReportsView(tk.Frame):
             if not path:
                 return
             try:
+                from datetime import datetime as _datetime
+                now_str = _datetime.now().strftime("%Y-%m-%d %H:%M")
+                p = period_var.get()
+                df_v = from_var.get().strip()
+                dt_v = to_var.get().strip()
+                period_label = df_v and dt_v and f"{df_v} to {dt_v}" or {
+                    "today": "Today", "week": "This Week",
+                    "month": "This Month", "year": "This Year"}.get(p, p)
                 with open(path, "w", newline="", encoding="utf-8") as f:
                     w = csv.writer(f)
+                    w.writerow(["Aissa's Kitchenette"])
+                    w.writerow(["Top Sellers Report"])
+                    w.writerow([f"Period: {period_label}"])
+                    w.writerow([f"Generated: {now_str}"])
+                    w.writerow([])
                     w.writerow(["Rank", "Product", "Category", "Qty Sold", "Revenue"])
                     for i, r in enumerate(rows_cache, 1):
                         w.writerow([i, r["name"], r["category"],
@@ -389,11 +462,8 @@ class ReportsView(tk.Frame):
                               bg=_PANEL, fg=_MUTED,
                               font=("Segoe UI", 11, "italic"))
 
-        def load(_e=None):
+        def load(*args):
             nonlocal rows_cache
-            for iid in tbl.get_children():
-                tbl.delete(iid)
-
             p = period_var.get()
             df = from_var.get().strip()
             dt = to_var.get().strip()
@@ -432,19 +502,13 @@ class ReportsView(tk.Frame):
             except Exception:
                 rows_cache = []
 
-            if not rows_cache:
-                empty_lbl.place(relx=0.5, rely=0.5, anchor="center")
-            else:
-                empty_lbl.place_forget()
-
-            for i, r in enumerate(rows_cache, 1):
-                tag = rank_tags[i - 1] if i <= 3 else ("odd" if i % 2 else "even")
-                tbl.insert("", tk.END, tags=(tag,), values=(
-                    f"#{i}", r["name"], r["category"],
-                    int(r["total_qty"] or 0), _money(r["total_revenue"]),
-                ))
-            n = len(rows_cache)
-            count_lbl.configure(text=f"{n} product{'s' if n != 1 else ''} shown")
+            # Reset sort state on fresh load
+            _ts_sort["col"] = None
+            _ts_sort["reverse"] = False
+            for cid, hdr in _ts_col_labels.items():
+                tbl.heading(cid, text=hdr, anchor="center",
+                            command=lambda c=cid: _ts_sort_by(c))
+            _ts_display(rows_cache)
 
         period_var.trace_add("write", load)
         from_ent.bind("<Return>", load)
@@ -481,15 +545,17 @@ class ReportsView(tk.Frame):
         from_var = tk.StringVar()
         from_ent = tk.Entry(bar, textvariable=from_var, width=11,
                             bd=0, bg=THEME["panel2"], fg=_TEXT,
-                            insertbackground=_TEXT)
+                            insertbackground=_TEXT, insertwidth=2)
         from_ent.pack(side="left", ipady=5, pady=8)
+        _bind_date_picker(from_ent, from_var)
         tk.Label(bar, text="To:", bg=_PANEL, fg=_MUTED,
                  font=("Segoe UI", 9)).pack(side="left", padx=(8, 4), pady=8)
         to_var = tk.StringVar()
         to_ent = tk.Entry(bar, textvariable=to_var, width=11,
                           bd=0, bg=THEME["panel2"], fg=_TEXT,
-                          insertbackground=_TEXT)
+                          insertbackground=_TEXT, insertwidth=2)
         to_ent.pack(side="left", ipady=5, pady=8)
+        _bind_date_picker(to_ent, to_var)
 
         # Second filter row
         bar2 = tk.Frame(outer, bg=_PANEL,
@@ -524,14 +590,16 @@ class ReportsView(tk.Frame):
 
         s = ttk.Style()
         s.configure("RM.Treeview",
-                    rowheight=30, font=("Segoe UI", 9),
-                    background=_PANEL, fieldbackground=_PANEL, foreground=_TEXT)
+                    rowheight=28, font=("Segoe UI", 9),
+                    background=_PANEL, fieldbackground=_PANEL, foreground=_TEXT,
+                    borderwidth=0, relief="flat")
         s.configure("RM.Treeview.Heading",
                     font=("Segoe UI", 9, "bold"),
-                    background=_SB, foreground="#FFFFFF", relief="flat")
+                    background=_SB, foreground="#FFFFFF", relief="flat",
+                    padding=(8, 7))
         s.map("RM.Treeview",
-              background=[("selected", _RED)],
-              foreground=[("selected", "#FFFFFF")])
+              background=[("selected", _RED), ("!selected", _PANEL)],
+              foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])
 
         rm_cols = ("dt", "material", "mat_type", "action", "qty_change", "notes")
         tbl = ttk.Treeview(tbl_frame, columns=rm_cols, show="headings",
@@ -547,15 +615,15 @@ class ReportsView(tk.Frame):
         tbl.configure(xscrollcommand=xsb.set)
 
         rm_col_cfg = [
-            ("dt",         "Date & Time",     160, "center", False),
-            ("material",   "Material Name",   200, "w",      True),
+            ("dt",         "Date & Time",     140, "center", False),
+            ("material",   "Material Name",   180, "w",      True),
             ("mat_type",   "Type",             70, "center", False),
-            ("action",     "Action",          100, "center", False),
-            ("qty_change", "Qty Change",      110, "center", False),
-            ("notes",      "Notes/Reason",    200, "w",      True),
+            ("action",     "Action",           90, "center", False),
+            ("qty_change", "Qty Change",      100, "center", False),
+            ("notes",      "Notes/Reason",    180, "w",      True),
         ]
+        _rm_col_labels = {cid: hdr for cid, hdr, *_ in rm_col_cfg}
         for cid, hdr, w, anc, stretch in rm_col_cfg:
-            tbl.heading(cid, text=hdr, anchor="center")
             tbl.column(cid, width=w, minwidth=60, anchor=anc, stretch=stretch)
 
         tbl.tag_configure("add",    foreground="#16a34a")
@@ -570,6 +638,56 @@ class ReportsView(tk.Frame):
         count_lbl.pack(side="left")
 
         rows_cache: list[dict] = []
+        _rm_sort: dict = {"col": None, "reverse": False}
+
+        def _rm_display(rows: list[dict]) -> None:
+            for iid in tbl.get_children():
+                tbl.delete(iid)
+            if not rows:
+                empty_lbl.place(relx=0.5, rely=0.5, anchor="center")
+            else:
+                empty_lbl.place_forget()
+            for i, r in enumerate(rows):
+                act = r["action_type"] or ""
+                sign = "+" if act in ("ADD", "Initial") else "-"
+                qty_disp = f"{sign}{r['quantity']}"
+                color_tag = "add" if sign == "+" else "deduct"
+                row_tag   = "odd" if i % 2 else "even"
+                tbl.insert("", tk.END, tags=(color_tag, row_tag), values=(
+                    str(r["created_at"])[:16],
+                    r["name"], r["material_type"], act, qty_disp,
+                    r["reason"] or "",
+                ))
+            n = len(rows)
+            count_lbl.configure(text=f"{n} record{'s' if n != 1 else ''} shown")
+
+        def _rm_sort_by(col: str) -> None:
+            if _rm_sort["col"] == col:
+                _rm_sort["reverse"] = not _rm_sort["reverse"]
+            else:
+                _rm_sort["col"] = col
+                _rm_sort["reverse"] = False
+            rev = _rm_sort["reverse"]
+            ind = "▲" if not rev else "▼"
+            for cid, hdr in _rm_col_labels.items():
+                tbl.heading(cid, text=(hdr + " " + ind) if cid == col else hdr,
+                            anchor="center",
+                            command=lambda c=cid: _rm_sort_by(c))
+            key_map = {
+                "dt":         lambda r: str(r.get("created_at") or ""),
+                "material":   lambda r: str(r.get("name") or "").lower(),
+                "mat_type":   lambda r: str(r.get("material_type") or "").lower(),
+                "action":     lambda r: str(r.get("action_type") or "").lower(),
+                "qty_change": lambda r: float(r.get("quantity") or 0),
+                "notes":      lambda r: str(r.get("reason") or "").lower(),
+            }
+            kf = key_map.get(col, lambda r: "")
+            sorted_rows = sorted(rows_cache, key=kf, reverse=rev)
+            _rm_display(sorted_rows)
+
+        for cid, hdr, *_ in rm_col_cfg:
+            tbl.heading(cid, text=hdr, anchor="center",
+                        command=lambda c=cid: _rm_sort_by(c))
 
         def export():
             if not rows_cache:
@@ -584,8 +702,21 @@ class ReportsView(tk.Frame):
             if not path:
                 return
             try:
+                from datetime import datetime as _datetime
+                now_str = _datetime.now().strftime("%Y-%m-%d %H:%M")
+                p = period_var.get()
+                df_v = from_var.get().strip()
+                dt_v = to_var.get().strip()
+                period_label = df_v and dt_v and f"{df_v} to {dt_v}" or {
+                    "today": "Today", "week": "This Week",
+                    "month": "This Month", "year": "This Year"}.get(p, p)
                 with open(path, "w", newline="", encoding="utf-8") as f:
                     w = csv.writer(f)
+                    w.writerow(["Aissa's Kitchenette"])
+                    w.writerow(["Raw Materials Movement Report"])
+                    w.writerow([f"Period: {period_label}"])
+                    w.writerow([f"Generated: {now_str}"])
+                    w.writerow([])
                     w.writerow(["Date & Time", "Material", "Type",
                                 "Action", "Qty Change", "Notes"])
                     for r in rows_cache:
@@ -612,11 +743,8 @@ class ReportsView(tk.Frame):
                               bg=_PANEL, fg=_MUTED,
                               font=("Segoe UI", 11, "italic"))
 
-        def load(_e=None):
+        def load(*args):
             nonlocal rows_cache
-            for iid in tbl.get_children():
-                tbl.delete(iid)
-
             p = period_var.get()
             df = from_var.get().strip()
             dt = to_var.get().strip()
@@ -661,27 +789,13 @@ class ReportsView(tk.Frame):
             except Exception:
                 rows_cache = []
 
-            if not rows_cache:
-                empty_lbl.place(relx=0.5, rely=0.5, anchor="center")
-            else:
-                empty_lbl.place_forget()
-
-            for i, r in enumerate(rows_cache):
-                act = r["action_type"] or ""
-                sign = "+" if act in ("ADD", "Initial") else "-"
-                qty_disp = f"{sign}{r['quantity']}"
-                color_tag = "add" if sign == "+" else "deduct"
-                row_tag   = "odd" if i % 2 else "even"
-                tbl.insert("", tk.END, tags=(color_tag, row_tag), values=(
-                    str(r["created_at"])[:16],
-                    r["name"],
-                    r["material_type"],
-                    act,
-                    qty_disp,
-                    r["reason"] or "",
-                ))
-            n = len(rows_cache)
-            count_lbl.configure(text=f"{n} record{'s' if n != 1 else ''} shown")
+            # Reset sort state on fresh load
+            _rm_sort["col"] = None
+            _rm_sort["reverse"] = False
+            for cid, hdr in _rm_col_labels.items():
+                tbl.heading(cid, text=hdr, anchor="center",
+                            command=lambda c=cid: _rm_sort_by(c))
+            _rm_display(rows_cache)
 
         period_var.trace_add("write", load)
         type_cb.bind("<<ComboboxSelected>>",   load)

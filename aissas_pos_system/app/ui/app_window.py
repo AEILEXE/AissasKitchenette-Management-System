@@ -74,6 +74,9 @@ class AppWindow:
         self.content = tk.Frame(self.root_frame, bg=THEME["bg"])
         self.content.pack(fill=tk.BOTH, expand=True)
 
+        # Bind root Configure so background stays warm on maximize/restore
+        self.root.bind("<Configure>", self._on_root_configure, add="+")
+
         self._nav_btns: dict[str, tk.Button] = {}
         self._active_nav_key: str | None = None
         self._nav_logo_ref = None
@@ -326,7 +329,20 @@ class AppWindow:
         self._show_shell(False)
         self._set_view(LoginView, self.auth_service, self.on_login_success)
 
+    def _on_root_configure(self, event: tk.Event) -> None:
+        """Keep all container backgrounds warm on every resize/maximize."""
+        if event.widget is self.root:
+            self.root.configure(bg=THEME["bg"])
+            self.root_frame.configure(bg=THEME["bg"])
+            self.content.configure(bg=THEME["bg"])
+
     def on_login_success(self) -> None:
+        # Paint warm backgrounds on ALL containers FIRST to prevent black flash
+        self.root.configure(bg=THEME["bg"])
+        self.root_frame.configure(bg=THEME["bg"])
+        self.content.configure(bg=THEME["bg"])
+        self.root.update_idletasks()
+
         self._show_shell(True)
         self._build_nav()
         self._show_welcome()
@@ -337,6 +353,10 @@ class AppWindow:
 
     def _show_loading_screen(self) -> None:
         """Brief loading indicator shown while the main view is being built."""
+        # Keep all backgrounds warm before destroying old view
+        self.root.configure(bg=THEME["bg"])
+        self.root_frame.configure(bg=THEME["bg"])
+        self.content.configure(bg=THEME["bg"])
         self._clear_content()
         frame = tk.Frame(self.content, bg=THEME["bg"])
         frame.pack(fill=tk.BOTH, expand=True)

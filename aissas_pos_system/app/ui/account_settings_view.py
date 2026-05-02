@@ -119,6 +119,7 @@ def _ask_password(parent: tk.Widget, title: str, prompt: str):
         dlg, textvariable=var, show="*", bd=0,
         bg=THEME["panel2"], fg=THEME["text"],
         font=("Segoe UI", ui_scale.scale_font(10)),
+        insertbackground="#3d2b1f", insertwidth=2,
     )
     ent.pack(fill="x", padx=16, ipady=ui_scale.s(8))
     ent.focus_set()
@@ -399,7 +400,7 @@ class AccountSettingsDialog(tk.Toplevel):
         ent = tk.Entry(
             parent, bd=0,
             bg=THEME["panel2"], fg=THEME["text"],
-            insertbackground=THEME["text"],
+            insertbackground="#3d2b1f", insertwidth=2,
             show=show,
             font=("Segoe UI", ui_scale.scale_font(10)),
         )
@@ -421,7 +422,7 @@ class AccountSettingsDialog(tk.Toplevel):
         ent = tk.Entry(
             row, bd=0,
             bg=THEME["panel2"], fg=THEME["text"],
-            insertbackground=THEME["text"],
+            insertbackground="#3d2b1f", insertwidth=2,
             show="*",
             font=("Segoe UI", ui_scale.scale_font(10)),
         )
@@ -1040,10 +1041,17 @@ class AccountSettingsDialog(tk.Toplevel):
                 padx=12, pady=6,
             ).pack(side="left")
 
-            if is_admin_role:
+            _role_desc = {
+                ROLE_ADMIN:     "(Full access \u2014 cannot be modified)",
+                ROLE_MANAGER:   "Full POS, reports, products & exports. No raw DB/user-mgmt.",
+                ROLE_CASHIER:   "POS sales and discounts only. No inventory or reports.",
+                ROLE_INVENTORY: "Inventory & raw materials management. No POS access.",
+            }
+            desc = _role_desc.get(role, "")
+            if desc:
                 tk.Label(
                     role_hdr,
-                    text="(Full access \u2014 cannot be modified)",
+                    text=desc,
                     bg=THEME["beige"], fg=THEME["muted"],
                     font=("Segoe UI", ui_scale.scale_font(9)),
                     padx=6,

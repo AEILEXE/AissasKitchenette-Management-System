@@ -71,7 +71,7 @@ class _MaterialDialog(tk.Toplevel):
             setattr(self, attr, sv)
             tk.Entry(self, textvariable=sv, width=28,
                      bg=THEME["beige"], fg=THEME["text"],
-                     insertbackground=THEME["text"],
+                     insertbackground="#3d2b1f", insertwidth=2,
                      font=("Segoe UI", 10)).grid(
                 row=row_i, column=1, padx=pad,
                 pady=(pad if row_i == 0 else 4, 4))
@@ -183,7 +183,7 @@ class _StockMovementDialog(tk.Toplevel):
         self.var_qty = tk.StringVar(value="1")
         tk.Entry(self, textvariable=self.var_qty, width=16,
                  bg=THEME["beige"], fg=THEME["text"],
-                 insertbackground=THEME["text"],
+                 insertbackground="#3d2b1f", insertwidth=2,
                  font=("Segoe UI", 11, "bold")).grid(
             row=1, column=1, padx=pad, pady=4, sticky="w")
 
@@ -201,7 +201,7 @@ class _StockMovementDialog(tk.Toplevel):
         self.var_ref = tk.StringVar()
         tk.Entry(self, textvariable=self.var_ref, width=24,
                  bg=THEME["beige"], fg=THEME["text"],
-                 insertbackground=THEME["text"],
+                 insertbackground="#3d2b1f", insertwidth=2,
                  font=("Segoe UI", 10)).grid(row=3, column=1, padx=pad, pady=4, sticky="w")
 
         btn_bg = THEME["success"] if action == "ADD" else THEME["danger"]

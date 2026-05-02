@@ -197,7 +197,7 @@ class LoginView(tk.Frame):
         self.username_entry = tk.Entry(
             user_row, textvariable=self.username_var,
             bd=0, bg=_FIELD_BG, fg=THEME["text"],
-            font=("Segoe UI", 10), insertbackground=THEME["text"])
+            font=("Segoe UI", 10), insertbackground="#3d2b1f", insertwidth=2)
         self.username_entry.pack(side=tk.LEFT, fill=tk.BOTH, expand=True,
                                  padx=(0, 12), pady=10)
 
@@ -222,7 +222,7 @@ class LoginView(tk.Frame):
             pass_row, textvariable=self.password_var,
             bd=0, bg=_FIELD_BG, fg=THEME["text"],
             font=("Segoe UI", 10), show="\u2022",
-            insertbackground=THEME["text"])
+            insertbackground="#3d2b1f", insertwidth=2)
         self.password_entry.pack(side=tk.LEFT, fill=tk.BOTH, expand=True,
                                  padx=(0, 6), pady=10)
         self.eye_btn = tk.Button(
