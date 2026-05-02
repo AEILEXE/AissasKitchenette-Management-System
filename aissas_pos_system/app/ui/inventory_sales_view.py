@@ -283,6 +283,7 @@ class InventorySalesView(tk.Frame):
 
         from matplotlib.figure import Figure  # deferred — avoids freeze on first tab open
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg  # noqa: F811
+        from matplotlib.gridspec import GridSpec
         import numpy as _np
 
         labels = [item[0] for item in data]
@@ -306,14 +307,20 @@ class InventorySalesView(tk.Frame):
             pass
 
         has_pie = bool(category_data)
-        fig = Figure(figsize=(10, 7 if has_pie else 5), dpi=80)
-        fig.patch.set_facecolor("#FAFAFA")
 
+        # constrained_layout=True lets matplotlib compute all padding automatically,
+        # which prevents the bar chart and pie chart from overlapping and handles
+        # rotated x-axis labels without needing manual tight_layout adjustments.
         if has_pie:
-            ax  = fig.add_subplot(211)
-            ax_pie = fig.add_subplot(212)
+            fig = Figure(figsize=(12, 8), dpi=80, constrained_layout=True)
+            fig.patch.set_facecolor("#FAFAFA")
+            gs     = GridSpec(2, 1, figure=fig, height_ratios=[6, 3.5])
+            ax     = fig.add_subplot(gs[0])
+            ax_pie = fig.add_subplot(gs[1])
         else:
-            ax  = fig.add_subplot(111)
+            fig = Figure(figsize=(12, 5), dpi=80, constrained_layout=True)
+            fig.patch.set_facecolor("#FAFAFA")
+            ax     = fig.add_subplot(111)
             ax_pie = None
 
         # ── Bar chart ─────────────────────────────────────────────────────────
@@ -347,8 +354,11 @@ class InventorySalesView(tk.Frame):
         ax.spines["bottom"].set_color("#ddd")
         ax.tick_params(colors="#555", labelsize=8)
 
-        if n_bars > 8:
-            ax.tick_params(axis="x", rotation=45, labelsize=7)
+        # Always rotate x-axis labels 45° — prevents overlap regardless of bar count
+        _x_fontsize = 7 if n_bars > 12 else 8
+        ax.tick_params(axis="x", rotation=45, labelsize=_x_fontsize)
+        for _lbl in ax.get_xticklabels():
+            _lbl.set_ha("right")
 
         # ── Hover annotation ──────────────────────────────────────────────────
         annot = ax.annotate("", xy=(0, 0), xytext=(10, 10),
@@ -394,20 +404,23 @@ class InventorySalesView(tk.Frame):
             ][:len(pie_vals)]
             wedges, texts, autotexts = ax_pie.pie(
                 pie_vals, labels=pie_labels, colors=pie_colors,
-                autopct=lambda p: f"{p:.1f}%" if p > 3 else "",
-                startangle=90, pctdistance=0.8,
+                autopct=lambda p: f"{p:.1f}%" if p > 4 else "",
+                startangle=90,
+                pctdistance=0.72,    # inside wedge — white bold text
+                labeldistance=1.15,  # category names just outside the ring
                 wedgeprops=dict(linewidth=0.5, edgecolor="white"),
             )
             for t in texts:
-                t.set_fontsize(8)
+                t.set_fontsize(9)
                 t.set_color("#3d2b1f")
+                t.set_fontweight("bold")
             for at in autotexts:
-                at.set_fontsize(7)
+                at.set_fontsize(8)
                 at.set_color("white")
-            ax_pie.set_title("Revenue by Category", fontsize=10, color="#3d2b1f", pad=8)
+                at.set_fontweight("bold")
+            ax_pie.set_title("Revenue by Category", fontsize=11,
+                             color="#3d2b1f", fontweight="bold", pad=12)
             ax_pie.set_facecolor("#FAFAFA")
-
-        fig.tight_layout(pad=1.5)
 
         canvas = FigureCanvasTkAgg(fig, master=self.canvas_frame)
         canvas.draw()

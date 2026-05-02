@@ -103,13 +103,15 @@ class AppWindow:
 
     def _clear_content(self) -> None:
         # Paint all containers beige BEFORE destroying the current view so the OS
-        # never sees an undrawn gap; flush pending paint events before destruction.
+        # never sees an undrawn gap; flush pending layout events before destruction.
+        # update() is intentionally avoided here — it processes all pending events
+        # including user input, which can cause re-entrancy and intermediate repaints
+        # that produce a visible black/white flash during tab switches.
         try:
             self.root.configure(bg=self._CANVAS_BG)
             self.root_frame.configure(bg=self._CANVAS_BG)
             self.content.configure(bg=self._CANVAS_BG)
             self.root.update_idletasks()
-            self.root.update()
         except Exception:
             pass
         if self._current_view is not None:

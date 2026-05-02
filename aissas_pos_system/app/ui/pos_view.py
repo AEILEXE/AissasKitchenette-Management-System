@@ -111,6 +111,7 @@ class POSView(tk.Frame):
         self._cat_grid_frame: tk.Frame | None = None
         self._cat_grid_after: int | None = None
         self._cat_grid_width: int = 0
+        self._cat_click_after: int | None = None
 
         try:
             self.recommender = Recommender(db)
@@ -459,9 +460,9 @@ class POSView(tk.Frame):
         body = tk.Frame(self, bg=THEME["bg"])
         body.pack(fill="both", expand=True, padx=12, pady=(8, 12))
         body.rowconfigure(0, weight=1)
-        body.columnconfigure(0, weight=5, minsize=380)   # Products
-        body.columnconfigure(1, weight=2, minsize=220)   # Current Order
-        body.columnconfigure(2, weight=3, minsize=260)   # Payment
+        body.columnconfigure(0, weight=5, minsize=400)   # Products   — 50% of extra space
+        body.columnconfigure(1, weight=3, minsize=350)   # Order      — 30% of extra space
+        body.columnconfigure(2, weight=2, minsize=280)   # Payment    — 20% of extra space
 
         try:
             self._global_click_id = self.winfo_toplevel().bind("<Button-1>", self._on_global_click, add="+")
@@ -1072,11 +1073,20 @@ class POSView(tk.Frame):
         self._cat_grid_after = self._after(60, self._relayout_cat_grid)
 
     def _on_category_click(self, name: str) -> None:
-        print(f"[POS] Category clicked: {name}")
+        # Update the button highlight immediately so UI feels instant.
         self._set_active_category_btn(name)
+        # Debounce the actual load: rapid clicks cancel earlier pending loads.
+        self._cancel_after(self._cat_click_after)
+        self._cat_click_after = self._after(100, lambda: self._do_category_load(name))
+
+    def _do_category_load(self, name: str) -> None:
+        self._cat_click_after = None
+        # Cancel any in-flight batch render from the previous category.
+        self._cancel_after(self._batch_after)
+        self._batch_after = None
         self._all_products_cache = []
         self._all_products_cache_cat = ""
-        self._load_gen += 1  # discard any in-flight background load for old category
+        self._load_gen += 1
         self._refresh_products()
 
     # ── Products ──────────────────────────────────────────────────────────────
@@ -1116,7 +1126,6 @@ class POSView(tk.Frame):
             def _apply() -> None:
                 if self._destroyed or gen != self._load_gen:
                     return
-                print(f"[POS] Products found: {len(rows)} for category '{cat_name}'")
                 self._all_products_cache = rows
                 self._all_products_cache_cat = cat_name
                 if err_msg:
@@ -1170,6 +1179,11 @@ class POSView(tk.Frame):
             return
         self._search_after = None
         if not self._all_products_cache:
+            # Cancel any in-flight batch BEFORE resetting the widget list.
+            # Without this, a stale batch fires with _batch_idx>0 but an empty
+            # _product_card_widgets list, causing the IndexError in the fast path.
+            self._cancel_after(self._batch_after)
+            self._batch_after = None
             # Hide pool cards (never destroy) and show loading overlay
             for card in self._card_pool:
                 try:
@@ -1209,7 +1223,6 @@ class POSView(tk.Frame):
         try:
             self.prod_canvas.configure(bg=self._CARD_BG)
             self.prod_inner.configure(bg=self._CARD_BG)
-            self.prod_canvas.update_idletasks()
         except Exception:
             pass
 
@@ -1242,13 +1255,16 @@ class POSView(tk.Frame):
         self._batch_products = list(self._products_cache)
         self._batch_idx = 0
         self._last_batch_cols = 0
+        self._batch_gen = self._load_gen  # snapshot — batch aborts if generation changes
         self._batch_after = self._after(10, self._render_product_batch)
 
     def _render_product_batch(self) -> None:
         self._batch_after = None
         if self._destroyed or self._building or not self.winfo_exists():
             return
-
+        # Abort stale batch: a new category was clicked after this batch was queued.
+        if getattr(self, "_batch_gen", -1) != self._load_gen:
+            return
         if not self.prod_inner.winfo_exists():
             return
 
@@ -1276,8 +1292,12 @@ class POSView(tk.Frame):
             self._last_batch_cols = cols
             self._do_product_grid_layout()
         else:
-            # Fast path: just grid the new cards, existing ones stay in place
+            # Fast path: just grid the new cards, existing ones stay in place.
+            # Bounds-guard against any edge case where the list is shorter than expected.
+            n_widgets = len(self._product_card_widgets)
             for idx in range(start, end):
+                if idx >= n_widgets:
+                    break
                 self._product_card_widgets[idx].grid(
                     row=idx // cols, column=idx % cols,
                     sticky="nsew", padx=4, pady=4,
