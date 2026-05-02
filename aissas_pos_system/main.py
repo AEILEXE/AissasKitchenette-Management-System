@@ -158,6 +158,7 @@ def main() -> None:
     root = tk.Tk()
     root.title(f"{APP_NAME} v{APP_VERSION}")
     root.minsize(1000, 650)
+    root.configure(bg="#e6ddbd")   # permanent beige root bg — any exposed gap matches canvas
 
     _set_window_icon(root)
 

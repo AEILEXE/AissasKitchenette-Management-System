@@ -99,7 +99,19 @@ class AppWindow:
             return
         self.user_label.config(text=_format_display_name(u))
 
+    _CANVAS_BG = "#e6ddbd"   # beige — matches POS canvas; used to mask all view transitions
+
     def _clear_content(self) -> None:
+        # Paint all containers beige BEFORE destroying the current view so the OS
+        # never sees an undrawn gap; flush pending paint events before destruction.
+        try:
+            self.root.configure(bg=self._CANVAS_BG)
+            self.root_frame.configure(bg=self._CANVAS_BG)
+            self.content.configure(bg=self._CANVAS_BG)
+            self.root.update_idletasks()
+            self.root.update()
+        except Exception:
+            pass
         if self._current_view is not None:
             self._current_view.destroy()
         self._current_view = None
@@ -330,19 +342,13 @@ class AppWindow:
         self._set_view(LoginView, self.auth_service, self.on_login_success)
 
     def _on_root_configure(self, event: tk.Event) -> None:
-        """Keep all container backgrounds warm on every resize/maximize."""
+        """Keep all container backgrounds matching the canvas beige on every resize/maximize."""
         if event.widget is self.root:
-            self.root.configure(bg=THEME["bg"])
-            self.root_frame.configure(bg=THEME["bg"])
-            self.content.configure(bg=THEME["bg"])
+            self.root.configure(bg=self._CANVAS_BG)
+            self.root_frame.configure(bg=self._CANVAS_BG)
+            self.content.configure(bg=self._CANVAS_BG)
 
     def on_login_success(self) -> None:
-        # Paint warm backgrounds on ALL containers FIRST to prevent black flash
-        self.root.configure(bg=THEME["bg"])
-        self.root_frame.configure(bg=THEME["bg"])
-        self.content.configure(bg=THEME["bg"])
-        self.root.update_idletasks()
-
         self._show_shell(True)
         self._build_nav()
         self._show_welcome()
@@ -353,16 +359,12 @@ class AppWindow:
 
     def _show_loading_screen(self) -> None:
         """Brief loading indicator shown while the main view is being built."""
-        # Keep all backgrounds warm before destroying old view
-        self.root.configure(bg=THEME["bg"])
-        self.root_frame.configure(bg=THEME["bg"])
-        self.content.configure(bg=THEME["bg"])
         self._clear_content()
-        frame = tk.Frame(self.content, bg=THEME["bg"])
+        frame = tk.Frame(self.content, bg=self._CANVAS_BG)
         frame.pack(fill=tk.BOTH, expand=True)
         tk.Label(
             frame, text="Loading…",
-            bg=THEME["bg"], fg=THEME["muted"],
+            bg=self._CANVAS_BG, fg=THEME["muted"],
             font=("Segoe UI", 14),
         ).place(relx=0.5, rely=0.5, anchor="center")
         self._current_view = frame

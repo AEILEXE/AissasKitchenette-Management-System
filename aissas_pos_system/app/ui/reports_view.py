@@ -279,25 +279,54 @@ class ReportsView(tk.Frame):
         outer.rowconfigure(1, weight=1)
         outer.columnconfigure(0, weight=1)
 
+        _FILTER_BG = "#f5f0e8"
+        _LABEL_FG  = "#3d2b1f"
+
         # Filter bar
-        bar = tk.Frame(outer, bg=_PANEL,
+        bar = tk.Frame(outer, bg=_FILTER_BG,
                        highlightthickness=1, highlightbackground=_BORDER)
         bar.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 0))
 
-        tk.Label(bar, text="Period:", bg=_PANEL, fg=_MUTED,
+        tk.Label(bar, text="Period:", bg=_FILTER_BG, fg=_LABEL_FG,
                  font=("Segoe UI", 9)).pack(side="left", padx=(12, 6), pady=8)
 
         period_var = tk.StringVar(value="month")
+
+        _SEL_BG   = "#8c6e3b"
+        _SEL_FG   = "white"
+        _UNSEL_BG = _FILTER_BG   # "#f5f0e8"
+        _UNSEL_FG = _LABEL_FG    # "#3d2b1f"
+
+        _period_btns: dict[str, tk.Button] = {}
+
+        def _set_period(val: str) -> None:
+            period_var.set(val)
+            for v, b in _period_btns.items():
+                b.configure(
+                    bg=_SEL_BG if v == val else _UNSEL_BG,
+                    fg=_SEL_FG if v == val else _UNSEL_FG,
+                )
+
         periods = [("Today", "today"), ("This Week", "week"),
                    ("This Month", "month"), ("This Year", "year")]
         for lbl, val in periods:
-            tk.Radiobutton(bar, text=lbl, variable=period_var, value=val,
-                           bg=_PANEL, fg=_TEXT, selectcolor=_PANEL,
-                           activebackground=_PANEL, font=("Segoe UI", 9),
-                           ).pack(side="left", padx=6, pady=8)
+            is_default = val == "month"
+            btn = tk.Button(
+                bar, text=lbl,
+                command=lambda v=val: _set_period(v),
+                bg=_SEL_BG   if is_default else _UNSEL_BG,
+                fg=_SEL_FG   if is_default else _UNSEL_FG,
+                activebackground=_SEL_BG, activeforeground=_SEL_FG,
+                relief="flat", bd=0,
+                padx=12, pady=5,
+                cursor="hand2",
+                font=("Segoe UI", 9, "bold"),
+            )
+            btn.pack(side="left", padx=2, pady=8)
+            _period_btns[val] = btn
 
         # Custom date range
-        tk.Label(bar, text="From:", bg=_PANEL, fg=_MUTED,
+        tk.Label(bar, text="From:", bg=_FILTER_BG, fg=_LABEL_FG,
                  font=("Segoe UI", 9)).pack(side="left", padx=(14, 4), pady=8)
         from_var = tk.StringVar()
         from_ent = tk.Entry(bar, textvariable=from_var, width=11,
@@ -306,7 +335,7 @@ class ReportsView(tk.Frame):
         from_ent.pack(side="left", ipady=5, pady=8)
         _bind_date_picker(from_ent, from_var)
 
-        tk.Label(bar, text="To:", bg=_PANEL, fg=_MUTED,
+        tk.Label(bar, text="To:", bg=_FILTER_BG, fg=_LABEL_FG,
                  font=("Segoe UI", 9)).pack(side="left", padx=(8, 4), pady=8)
         to_var = tk.StringVar()
         to_ent = tk.Entry(bar, textvariable=to_var, width=11,
@@ -523,24 +552,53 @@ class ReportsView(tk.Frame):
         outer.rowconfigure(1, weight=1)
         outer.columnconfigure(0, weight=1)
 
+        _FILTER_BG  = "#f5f0e8"   # warm beige for filter bar
+        _LABEL_FG   = "#3d2b1f"   # dark brown — high contrast on beige
+
         # Filter bar
-        bar = tk.Frame(outer, bg=_PANEL,
+        bar = tk.Frame(outer, bg=_FILTER_BG,
                        highlightthickness=1, highlightbackground=_BORDER)
         bar.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 0))
 
         # Date period
-        tk.Label(bar, text="Period:", bg=_PANEL, fg=_MUTED,
+        tk.Label(bar, text="Period:", bg=_FILTER_BG, fg=_LABEL_FG,
                  font=("Segoe UI", 9)).pack(side="left", padx=(12, 6), pady=8)
         period_var = tk.StringVar(value="month")
-        for lbl, val in [("Today","today"),("This Week","week"),
-                          ("This Month","month"),("This Year","year")]:
-            tk.Radiobutton(bar, text=lbl, variable=period_var, value=val,
-                           bg=_PANEL, fg=_TEXT, selectcolor=_PANEL,
-                           activebackground=_PANEL, font=("Segoe UI", 9),
-                           ).pack(side="left", padx=4, pady=8)
+
+        _SEL_BG   = "#8c6e3b"
+        _SEL_FG   = "white"
+        _UNSEL_BG = _FILTER_BG   # "#f5f0e8"
+        _UNSEL_FG = _LABEL_FG    # "#3d2b1f"
+
+        _period_btns: dict[str, tk.Button] = {}
+
+        def _set_period(val: str) -> None:
+            period_var.set(val)
+            for v, b in _period_btns.items():
+                b.configure(
+                    bg=_SEL_BG if v == val else _UNSEL_BG,
+                    fg=_SEL_FG if v == val else _UNSEL_FG,
+                )
+
+        for lbl, val in [("Today", "today"), ("This Week", "week"),
+                          ("This Month", "month"), ("This Year", "year")]:
+            is_default = val == "month"
+            btn = tk.Button(
+                bar, text=lbl,
+                command=lambda v=val: _set_period(v),
+                bg=_SEL_BG   if is_default else _UNSEL_BG,
+                fg=_SEL_FG   if is_default else _UNSEL_FG,
+                activebackground=_SEL_BG, activeforeground=_SEL_FG,
+                relief="flat", bd=0,
+                padx=12, pady=5,
+                cursor="hand2",
+                font=("Segoe UI", 9, "bold"),
+            )
+            btn.pack(side="left", padx=2, pady=8)
+            _period_btns[val] = btn
 
         # Custom from/to
-        tk.Label(bar, text="From:", bg=_PANEL, fg=_MUTED,
+        tk.Label(bar, text="From:", bg=_FILTER_BG, fg=_LABEL_FG,
                  font=("Segoe UI", 9)).pack(side="left", padx=(10, 4), pady=8)
         from_var = tk.StringVar()
         from_ent = tk.Entry(bar, textvariable=from_var, width=11,
@@ -548,7 +606,7 @@ class ReportsView(tk.Frame):
                             insertbackground=_TEXT, insertwidth=2)
         from_ent.pack(side="left", ipady=5, pady=8)
         _bind_date_picker(from_ent, from_var)
-        tk.Label(bar, text="To:", bg=_PANEL, fg=_MUTED,
+        tk.Label(bar, text="To:", bg=_FILTER_BG, fg=_LABEL_FG,
                  font=("Segoe UI", 9)).pack(side="left", padx=(8, 4), pady=8)
         to_var = tk.StringVar()
         to_ent = tk.Entry(bar, textvariable=to_var, width=11,
@@ -557,14 +615,10 @@ class ReportsView(tk.Frame):
         to_ent.pack(side="left", ipady=5, pady=8)
         _bind_date_picker(to_ent, to_var)
 
-        # Second filter row
-        bar2 = tk.Frame(outer, bg=_PANEL,
-                        highlightthickness=1, highlightbackground=_BORDER)
-        bar2.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 0))
-        # Reuse bar for both filter rows by putting everything in one bar
+        # Type and Action filters — same bar, separated by a divider
         tk.Frame(bar, bg=_BORDER, width=1, height=30).pack(side="left", padx=10, pady=4)
 
-        tk.Label(bar, text="Type:", bg=_PANEL, fg=_MUTED,
+        tk.Label(bar, text="Type:", bg=_FILTER_BG, fg=_LABEL_FG,
                  font=("Segoe UI", 9)).pack(side="left", padx=(4, 4), pady=8)
         type_var = tk.StringVar(value="All")
         type_cb = ttk.Combobox(bar, textvariable=type_var,
@@ -572,14 +626,13 @@ class ReportsView(tk.Frame):
                                state="readonly", width=7)
         type_cb.pack(side="left", padx=(0, 10), pady=8)
 
-        tk.Label(bar, text="Action:", bg=_PANEL, fg=_MUTED,
+        tk.Label(bar, text="Action:", bg=_FILTER_BG, fg=_LABEL_FG,
                  font=("Segoe UI", 9)).pack(side="left", padx=(0, 4), pady=8)
         action_var = tk.StringVar(value="All")
         action_cb = ttk.Combobox(bar, textvariable=action_var,
                                  values=["All", "ADD", "DEDUCT", "Initial"],
                                  state="readonly", width=9)
         action_cb.pack(side="left", padx=(0, 10), pady=8)
-        bar2.pack_forget()  # hide the dummy bar2
 
         # Table
         tbl_frame = tk.Frame(outer, bg=_PANEL,

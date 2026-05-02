@@ -73,6 +73,8 @@ class POSView(tk.Frame):
         self._all_products_cache_cat: str = ""
         self._search_after: int | None = None
         self._product_card_widgets: list[tk.Frame] = []
+        self._card_pool: list[tk.Frame] = []     # never destroyed — only hidden/shown
+        self._loading_lbl: tk.Label | None = None  # unified overlay tracker
         self._prod_resize_after: int | None = None
         self._prod_canvas_w: int = 0
         self._cart_resize_after: int | None = None
@@ -84,7 +86,6 @@ class POSView(tk.Frame):
         self._batch_products: list[Any] = []
         self._batch_idx: int = 0
         self._batch_after: int | None = None
-        self._loading_lbl: tk.Label | None = None
 
         self._after_ids: set[int] = set()
         self._destroyed: bool = False
@@ -531,6 +532,8 @@ class POSView(tk.Frame):
             add="+",
         )
         self.prod_canvas.bind("<Configure>", self._on_prod_canvas_configure, add="+")
+        self.prod_canvas.bind("<Map>", self._on_prod_canvas_map, add="+")
+        self.prod_inner.bind("<Map>", self._on_prod_canvas_map, add="+")
         self._bind_canvas_scroll(self.prod_canvas)
 
         # ══ COLUMN 1 — CURRENT ORDER + TOTALS ══════════════════════════════════
@@ -916,6 +919,13 @@ class POSView(tk.Frame):
 
     # ── Canvas resize ─────────────────────────────────────────────────────────
     def _on_prod_canvas_configure(self, e: object) -> None:
+        # Set backgrounds FIRST before any layout — prevents black flash during resize/maximize
+        try:
+            self.prod_canvas.configure(bg=self._CARD_BG)
+            self.prod_inner.configure(bg=self._CARD_BG)
+        except Exception:
+            pass
+
         ew: int = int(getattr(e, "width", 0))
         try:
             self.prod_canvas.itemconfigure(self._prod_window_id, width=ew)
@@ -943,6 +953,14 @@ class POSView(tk.Frame):
             self._prod_resize_after = self._after(30, self._relayout_products)
         else:
             self._debounced_relayout()
+
+    def _on_prod_canvas_map(self, _event: object = None) -> None:
+        """Fire when the canvas becomes visible — pre-paint beige before any items are drawn."""
+        try:
+            self.prod_canvas.configure(bg=self._CARD_BG)
+            self.prod_inner.configure(bg=self._CARD_BG)
+        except Exception:
+            pass
 
     def _draft_mousewheel(self, e):
         try:
@@ -1054,6 +1072,7 @@ class POSView(tk.Frame):
         self._cat_grid_after = self._after(60, self._relayout_cat_grid)
 
     def _on_category_click(self, name: str) -> None:
+        print(f"[POS] Category clicked: {name}")
         self._set_active_category_btn(name)
         self._all_products_cache = []
         self._all_products_cache_cat = ""
@@ -1097,6 +1116,7 @@ class POSView(tk.Frame):
             def _apply() -> None:
                 if self._destroyed or gen != self._load_gen:
                     return
+                print(f"[POS] Products found: {len(rows)} for category '{cat_name}'")
                 self._all_products_cache = rows
                 self._all_products_cache_cat = cat_name
                 if err_msg:
@@ -1150,19 +1170,24 @@ class POSView(tk.Frame):
             return
         self._search_after = None
         if not self._all_products_cache:
-            # Show loading label immediately on main thread; worker fills cards when done
-            try:
-                for w in self.prod_inner.winfo_children():
-                    w.destroy()
-            except Exception:
-                pass
+            # Hide pool cards (never destroy) and show loading overlay
+            for card in self._card_pool:
+                try:
+                    card.grid_remove()
+                except Exception:
+                    pass
             self._product_card_widgets = []
-            self._loading_lbl = None
-            tk.Label(
+            if self._loading_lbl is not None:
+                try:
+                    self._loading_lbl.destroy()
+                except Exception:
+                    pass
+            self._loading_lbl = tk.Label(
                 self.prod_inner, text="Loading menu…",
                 bg=self._CARD_BG, fg=THEME["muted"],
                 font=("Segoe UI", 12),
-            ).pack(pady=40)
+            )
+            self._loading_lbl.pack(pady=40)
             self._load_products_for_category()
             return
         search_text = self.search_var.get().strip()
@@ -1180,22 +1205,39 @@ class POSView(tk.Frame):
         self._cancel_after(self._batch_after)
         self._batch_after = None
 
-        for w in self.prod_inner.winfo_children():
-            w.destroy()
+        # Set canvas backgrounds FIRST to prevent any flash
+        try:
+            self.prod_canvas.configure(bg=self._CARD_BG)
+            self.prod_inner.configure(bg=self._CARD_BG)
+            self.prod_canvas.update_idletasks()
+        except Exception:
+            pass
+
+        # Destroy the overlay label (loading/empty) if present
+        if self._loading_lbl is not None:
+            try:
+                self._loading_lbl.destroy()
+            except Exception:
+                pass
+            self._loading_lbl = None
+
+        # Hide ALL pool cards (never destroy — just remove from grid)
+        for card in self._card_pool:
+            try:
+                card.grid_remove()
+            except Exception:
+                pass
         self._product_card_widgets = []
-        self._loading_lbl = None
 
         if not self._products_cache:
-            tk.Label(self.prod_inner,
-                     text="No items found. Clear search or seed products.",
-                     bg=self._CARD_BG, fg=THEME["muted"],
-                     font=("Segoe UI", 12, "bold")).pack(pady=40)
+            self._loading_lbl = tk.Label(
+                self.prod_inner,
+                text="No items found. Clear search or seed products.",
+                bg=self._CARD_BG, fg=THEME["muted"],
+                font=("Segoe UI", 12, "bold"),
+            )
+            self._loading_lbl.pack(pady=40)
             return
-
-        self._loading_lbl = tk.Label(self.prod_inner, text="Loading menu…",
-                                     bg=self._CARD_BG, fg=THEME["muted"],
-                                     font=("Segoe UI", 12))
-        self._loading_lbl.pack(pady=40)
 
         self._batch_products = list(self._products_cache)
         self._batch_idx = 0
@@ -1207,29 +1249,30 @@ class POSView(tk.Frame):
         if self._destroyed or self._building or not self.winfo_exists():
             return
 
-        if self._loading_lbl is not None:
-            try:
-                self._loading_lbl.destroy()
-            except Exception:
-                pass
-            self._loading_lbl = None
-
         if not self.prod_inner.winfo_exists():
             return
 
         start = self._batch_idx
         end = min(start + self._BATCH_SIZE, len(self._batch_products))
+
         for i in range(start, end):
-            card = self._product_card(self.prod_inner, self._batch_products[i])
+            product_data = self._batch_products[i]
+            if i < len(self._card_pool):
+                # Reuse existing card — update its content in place
+                card = self._card_pool[i]
+                self._pool_update_card(card, product_data)
+            else:
+                # Create new card and permanently add it to the pool
+                card = self._product_card(self.prod_inner, product_data)
+                self._card_pool.append(card)
             self._product_card_widgets.append(card)
 
         self._batch_idx = end
 
-        # Incremental layout: only place newly added cards unless column count changed
+        # Incremental layout: only full relayout if column count changed
         cols = max(2, min(5, self._calc_product_cols()))
         last_cols = getattr(self, "_last_batch_cols", 0)
         if cols != last_cols or start == 0:
-            # Column count changed or first batch — full relayout needed
             self._last_batch_cols = cols
             self._do_product_grid_layout()
         else:
@@ -1240,7 +1283,7 @@ class POSView(tk.Frame):
                     sticky="nsew", padx=4, pady=4,
                 )
             for r in range((end + cols - 1) // cols):
-                self.prod_inner.rowconfigure(r, weight=0, uniform="prodrow", minsize=180)
+                self.prod_inner.rowconfigure(r, weight=0, minsize=0)
             try:
                 self.prod_inner.update_idletasks()
                 self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
@@ -1300,10 +1343,10 @@ class POSView(tk.Frame):
             col = idx % cols
             card.grid(row=row, column=col, sticky="nsew", padx=4, pady=4)
 
-        # Enforce uniform row height so all cards align regardless of text length
+        # Configure rows — let cards determine their own height naturally
         new_rows = (len(cards) + cols - 1) // cols
         for r in range(new_rows):
-            self.prod_inner.rowconfigure(r, weight=0, uniform="prodrow", minsize=180)
+            self.prod_inner.rowconfigure(r, weight=0, minsize=0)
 
         # update_idletasks ensures geometry is computed before bbox
         try:
@@ -1321,33 +1364,38 @@ class POSView(tk.Frame):
     _CARD_BG = "#e6ddbd"   # beige card background — prevents any black flash
 
     def _product_card(self, parent: tk.Widget, r) -> tk.Frame:
-        pid   = int(r["product_id"])
-        name  = str(r["name"])
-        price = float(r["price"])
-        desc  = str(_row_get(r, "description", "") or "").strip()
+        pid     = int(r["product_id"])
+        name    = str(r["name"])
+        price   = float(r["price"])
+        desc    = str(_row_get(r, "description", "") or "").strip()
+        img_rel = _row_get(r, "image_path", None) or ""
 
         card = tk.Frame(
             parent,
             bg=self._CARD_BG,
             highlightthickness=1,
             highlightbackground=THEME["border"],
-            highlightcolor=THEME["border"],   # prevent default black active highlight
+            highlightcolor=THEME["border"],
             cursor="hand2",
         )
         card.columnconfigure(1, weight=1)
 
+        clickables: list[tk.Widget] = []
+
         def _bind_click(w: tk.Widget):
+            clickables.append(w)
             w.bind("<Button-1>",
-                   lambda _e: self._add_to_cart(pid, name, price), add="+")
+                   lambda _e, p=pid, n=name, pr=price: self._add_to_cart(p, n, pr),
+                   add="+")
 
         _bind_click(card)
 
-        # Left accent border (4 px terracotta stripe)
+        # Left accent border
         accent_bar = tk.Frame(card, bg=THEME["accent"], width=4)
         accent_bar.grid(row=0, column=0, rowspan=6, sticky="nsew")
         _bind_click(accent_bar)
 
-        # ── Image ─────────────────────────────────────────────────────────────
+        # ── Image (unified Label — shows image OR fallback emoji) ─────────────
         img_size = self._IMG_SIZE
         img_frame = tk.Frame(card, bg=self._CARD_BG,
                              width=img_size, height=img_size, cursor="hand2")
@@ -1355,20 +1403,20 @@ class POSView(tk.Frame):
         img_frame.grid_propagate(False)
         _bind_click(img_frame)
 
-        img_rel = _row_get(r, "image_path", None) or ""
+        img_lbl = tk.Label(img_frame, bg=self._CARD_BG, cursor="hand2")
+        img_lbl.place(relx=0.5, rely=0.5, anchor="center")
+        clickables.append(img_lbl)
+        img_lbl.bind("<Button-1>",
+                     lambda _e, p=pid, n=name, pr=price: self._add_to_cart(p, n, pr),
+                     add="+")
+
         photo = self._load_image(img_rel)
         if photo:
-            lbl_img = tk.Label(img_frame, image=photo,
-                               bg=self._CARD_BG, cursor="hand2")
-            lbl_img.image = photo
-            lbl_img.place(relx=0.5, rely=0.5, anchor="center")
-            _bind_click(lbl_img)
+            img_lbl.configure(image=photo, text="")
+            img_lbl.image = photo
         else:
-            lbl_no = tk.Label(img_frame, text="🍽",
-                              bg=self._CARD_BG, fg=THEME["muted"],
-                              font=("Segoe UI", 24), cursor="hand2")
-            lbl_no.place(relx=0.5, rely=0.5, anchor="center")
-            _bind_click(lbl_no)
+            img_lbl.configure(text="🍽", image="",
+                              font=("Segoe UI", 24), fg=THEME["muted"])
 
         # ── Product name ──────────────────────────────────────────────────────
         name_lbl = tk.Label(
@@ -1383,7 +1431,7 @@ class POSView(tk.Frame):
         if len(name) > 32:
             self._add_tooltip(name_lbl, name)
 
-        # ── Description (one line, muted) ─────────────────────────────────────
+        # ── Description ───────────────────────────────────────────────────────
         desc_show = desc if desc else "No description available"
         desc_lbl = tk.Label(
             card, text=desc_show,
@@ -1401,7 +1449,7 @@ class POSView(tk.Frame):
             _d.configure(wraplength=wrap)
         card.bind("<Configure>", _on_card_resize)
 
-        # ── Price row ─────────────────────────────────────────────────────────
+        # ── Price ─────────────────────────────────────────────────────────────
         price_row = tk.Frame(card, bg=self._CARD_BG, cursor="hand2")
         price_row.grid(row=3, column=1, sticky="ew", padx=(4, 6), pady=(0, 6))
         price_row.columnconfigure(0, weight=1)
@@ -1416,7 +1464,58 @@ class POSView(tk.Frame):
         price_lbl.grid(row=0, column=0, sticky="ew")
         _bind_click(price_lbl)
 
+        # Store refs so this card can be updated in-place without recreation
+        card._pool_refs = {   # type: ignore[attr-defined]
+            "image_rel": img_rel,
+            "img_lbl":   img_lbl,
+            "name_lbl":  name_lbl,
+            "desc_lbl":  desc_lbl,
+            "price_lbl": price_lbl,
+            "clickables": clickables,
+        }
+
         return card
+
+    def _pool_update_card(self, card: tk.Frame, r) -> None:
+        """Update an existing pooled card with new product data — no widget destruction."""
+        refs  = card._pool_refs   # type: ignore[attr-defined]
+        pid   = int(r["product_id"])
+        name  = str(r["name"])
+        price = float(r["price"])
+        desc  = str(_row_get(r, "description", "") or "").strip()
+        img_rel = _row_get(r, "image_path", None) or ""
+
+        # Rebind all click targets to the new product
+        for w in refs["clickables"]:
+            try:
+                w.unbind("<Button-1>")
+                w.bind("<Button-1>",
+                       lambda _e, p=pid, n=name, pr=price: self._add_to_cart(p, n, pr))
+            except Exception:
+                pass
+
+        # Update text labels
+        refs["name_lbl"].configure(text=name)
+        refs["desc_lbl"].configure(text=desc if desc else "No description available")
+        refs["price_lbl"].configure(text=money(price))
+
+        # Update image only when changed
+        if img_rel != refs["image_rel"]:
+            photo = self._load_image(img_rel)
+            if photo:
+                refs["img_lbl"].configure(image=photo, text="")
+                refs["img_lbl"].image = photo
+            else:
+                refs["img_lbl"].configure(image="", text="🍽",
+                                          font=("Segoe UI", 24), fg=THEME["muted"])
+            refs["image_rel"] = img_rel
+
+        # Update tooltip on name label
+        refs["name_lbl"].unbind("<Enter>")
+        refs["name_lbl"].unbind("<Leave>")
+        refs["name_lbl"].unbind("<Motion>")
+        if len(name) > 32:
+            self._add_tooltip(refs["name_lbl"], name)
 
     # ── Cart canvas dynamic sizing ────────────────────────────────────────────
     _CART_MAX_H = 300

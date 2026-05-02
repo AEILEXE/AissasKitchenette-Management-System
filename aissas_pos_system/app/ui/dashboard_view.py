@@ -843,8 +843,17 @@ class VoidsPopup(tk.Toplevel):
             )
             if not path:
                 return
+            import datetime as _dt
+            now_str = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+            period_labels = {"today": "Today", "week": "This Week", "month": "This Month"}
+            period_label  = period_labels.get(self._period.get(), self._period.get())
             with open(path, "w", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
+                w.writerow(["Aissa's Kitchenette"])
+                w.writerow(["Voided Orders Report"])
+                w.writerow([f"Period: {period_label}"])
+                w.writerow([f"Generated: {now_str}"])
+                w.writerow([])
                 w.writerow(["Order ID", "Cashier", "Items", "Total", "Time of Void", "Reason"])
                 for r in rows:
                     w.writerow([
