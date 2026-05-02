@@ -18,6 +18,9 @@ try:
 except Exception:
     _HAS_PIL = False
 
+# Cache nav logo so it isn't re-loaded from disk on every login
+_nav_logo_cache: dict = {}
+
 from app.ui.login_view import LoginView
 from app.ui.pos_view import POSView
 from app.ui.transactions_view import TransactionsView
@@ -165,13 +168,19 @@ class AppWindow:
                 self.nav.pack_forget()
 
     def _load_nav_logo(self, height: int = 34) -> "tk.PhotoImage | None":
+        global _nav_logo_cache
+        cache_key = height
+        if cache_key in _nav_logo_cache:
+            return _nav_logo_cache[cache_key]
         try:
             if _HAS_PIL and LOGO_PATH.exists():
                 img = Image.open(LOGO_PATH).convert("RGBA")
                 ratio = height / img.height
                 new_w = max(1, int(img.width * ratio))
                 img = img.resize((new_w, height), Image.Resampling.LANCZOS)
-                return ImageTk.PhotoImage(img)
+                photo = ImageTk.PhotoImage(img)
+                _nav_logo_cache[cache_key] = photo
+                return photo
         except Exception:
             pass
         return None
@@ -321,8 +330,26 @@ class AppWindow:
         self._show_shell(True)
         self._build_nav()
         self._show_welcome()
-        # Navigate to the most appropriate first view for each role.
-        # Roles without POS access land on Inventory (if they have it) or Transactions.
+        # Show loading screen immediately so the UI responds right away,
+        # then defer the heavy view creation to the next event-loop tick.
+        self._show_loading_screen()
+        self.root.after(30, self._finish_login_navigation)
+
+    def _show_loading_screen(self) -> None:
+        """Brief loading indicator shown while the main view is being built."""
+        self._clear_content()
+        frame = tk.Frame(self.content, bg=THEME["bg"])
+        frame.pack(fill=tk.BOTH, expand=True)
+        tk.Label(
+            frame, text="Loading…",
+            bg=THEME["bg"], fg=THEME["muted"],
+            font=("Segoe UI", 14),
+        ).place(relx=0.5, rely=0.5, anchor="center")
+        self._current_view = frame
+        self.root.update_idletasks()   # paint the loading frame before continuing
+
+    def _finish_login_navigation(self) -> None:
+        """Navigate to the appropriate first view after login."""
         if self.auth_service.has_permission(P_POS):
             self.show_pos()
         elif (self.auth_service.has_permission(P_INV_VIEW) or

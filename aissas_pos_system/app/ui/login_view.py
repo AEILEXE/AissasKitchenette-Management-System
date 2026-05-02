@@ -19,7 +19,7 @@ except Exception:
 # ── Animation ─────────────────────────────────────────────────────────────────
 _FOOD_FILES       = ["4.png", "5.png", "6.png"]
 _FOOD_INTERVAL_MS = 8_000
-_BOUNCE_AMPLITUDE = 6       # subtle — was 8
+_BOUNCE_AMPLITUDE = 10      # slightly bigger bounce for larger image
 _BOUNCE_STEP_MS   = 55
 
 # ── Landscape card ────────────────────────────────────────────────────────────
@@ -29,9 +29,9 @@ _LEFT_FRAC = 0.54   # left hero = 54 % of card width  → ~443 px
 _FORM_PADX = 36     # horizontal padding inside form content area
 
 # ── Gradient palettes ─────────────────────────────────────────────────────────
-_BG_TOP   = (247, 243, 239)  # background behind card — soft cream (#F7F3EF)
-_BG_MID   = (242, 232, 220)  # slightly warmer centre
-_BG_BOT   = (237, 224, 208)  # warm blush at bottom
+_BG_TOP   = (235, 228, 198)  # background behind card — light warm beige
+_BG_MID   = (230, 221, 189)  # #e6ddbd warm beige (centre)
+_BG_BOT   = (222, 213, 178)  # slightly deeper beige at bottom
 _HERO_TOP = (160, 123,  91)  # hero canvas — medium wood brown (#A07B5B)
 _HERO_MID = (192, 138, 107)  # warm terracotta (#C08A6B)
 _HERO_BOT = (166, 112,  85)  # deeper terracotta (#A67055)
@@ -43,11 +43,12 @@ _SUBTITLE_FG = "#D4AA82"    # warm cream
 _DIVIDER_CLR = "#B89872"    # accent line under subtitle
 _DOT_ACTIVE  = "#EADBC8"
 _DOT_IDLE    = "#5A3820"
-_CARD_BG     = "#FFFFFF"
-_SEPARATOR   = "#E0CEB8"    # vertical rule between hero and form
-_FIELD_BG    = THEME["beige"]      # "#EADFD2"
-_BTN_BG      = THEME["primary"]    # warm wood brown
-_BTN_HOVER   = THEME["primary_dark"]  # darker brown on hover
+_CARD_BG      = "#FFFFFF"
+_SEPARATOR    = "#E0CEB8"     # vertical rule between hero and form
+_FIELD_BG     = "#e6ddbd"     # warm beige input background
+_FIELD_BORDER = "#8c6e3b"     # brown border/accent on input fields
+_BTN_BG       = "#8c6e3b"     # warm brown button
+_BTN_HOVER    = "#7a5e2e"     # darker brown on hover
 
 
 class LoginView(tk.Frame):
@@ -181,7 +182,10 @@ class LoginView(tk.Frame):
                  bg=_CARD_BG, fg=THEME["muted"],
                  font=("Segoe UI", 8, "bold")).pack(anchor="w")
         self.username_var = tk.StringVar()
-        user_row = tk.Frame(inner, bg=_FIELD_BG, highlightthickness=0)
+        user_row = tk.Frame(inner, bg=_FIELD_BG,
+                            highlightthickness=1,
+                            highlightbackground=_FIELD_BORDER,
+                            highlightcolor=_FIELD_BORDER)
         user_row.pack(fill=tk.X, pady=(5, 16))
         if self.icon_user:
             tk.Label(user_row, image=self.icon_user,
@@ -202,7 +206,10 @@ class LoginView(tk.Frame):
                  bg=_CARD_BG, fg=THEME["muted"],
                  font=("Segoe UI", 8, "bold")).pack(anchor="w")
         self.password_var = tk.StringVar()
-        pass_row = tk.Frame(inner, bg=_FIELD_BG, highlightthickness=0)
+        pass_row = tk.Frame(inner, bg=_FIELD_BG,
+                            highlightthickness=1,
+                            highlightbackground=_FIELD_BORDER,
+                            highlightcolor=_FIELD_BORDER)
         pass_row.pack(fill=tk.X, pady=(5, 24))
         if self.icon_lock:
             tk.Label(pass_row, image=self.icon_lock,
@@ -355,9 +362,9 @@ class LoginView(tk.Frame):
         sub_ph     = int(sub_size   * 1.62)
 
         # ── Food image bounds ─────────────────────────────────────────────────
-        # Up to 58 % of hero width and 52 % of hero height
-        max_food_w = int(w * 0.58)
-        max_food_h = int(h * 0.52)
+        # Use ~88 % of hero width and 70 % of hero height for a much larger image
+        max_food_w = int(w * 0.88)
+        max_food_h = int(h * 0.70)
         self._food_images = self._load_food_images(max_food_w, max_food_h)
         food_h = (self._food_images[0].height()
                   if self._food_images else int(h * 0.46))
@@ -397,13 +404,6 @@ class LoginView(tk.Frame):
             text="Aissa's Kitchenette",
             font=("Segoe UI", title_size, "bold"),
             fill=_TITLE_FG, anchor="center")
-
-        # Subtitle
-        sub_cy = y_sub + sub_ph // 2
-        self._hero.create_text(cx, sub_cy,
-            text="Point of Sale",
-            font=("Segoe UI", sub_size, "italic"),
-            fill=_SUBTITLE_FG, anchor="center")
 
         # Accent divider under subtitle
         line_hw = min(int(sub_size * 8), int(cx * 0.70))

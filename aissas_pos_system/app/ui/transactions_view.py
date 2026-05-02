@@ -299,7 +299,7 @@ class TransactionsView(tk.Frame):
         style.configure(
             "Tx.Treeview",
             font=("Segoe UI", 10),
-            rowheight=38,
+            rowheight=30,
             background=THEME["panel"],
             fieldbackground=THEME["panel"],
             foreground="#222222",

@@ -3,9 +3,11 @@ dashboard_view.py — Premium Modern Restaurant POS Dashboard
 """
 from __future__ import annotations
 
+import csv
 import datetime as _dt
+import io
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 
 from app.config import THEME
 from app.db.database import Database
@@ -166,7 +168,7 @@ class DashboardView(tk.Frame):
 
         try:
             low_prods = self.db.fetchall(
-                "SELECT name, stock FROM products WHERE active=1 AND stock <= low_stock ORDER BY stock;", ())
+                "SELECT name, stock FROM products WHERE active=1 AND low_stock > 0 AND stock <= low_stock ORDER BY stock;", ())
         except Exception:
             low_prods = []
 
@@ -196,8 +198,8 @@ class DashboardView(tk.Frame):
              "awaiting payment",
              THEME["accent"], "⏳", self.go_transactions),
             ("Voids Today",        str(void_count),
-             "⚠ suspicious if high" if void_count >= 3 else "voids recorded today",
-             THEME["danger"] if void_count >= 3 else _NEU, "\U0001f6ab", self.go_transactions),
+             "⚠ suspicious if high" if void_count >= 3 else "click to view details",
+             THEME["danger"] if void_count >= 3 else _NEU, "\U0001f6ab", self._open_voids_popup),
         ]
         for col, (title, val, sub, accent, icon, cmd) in enumerate(kpi_data):
             self._kpi_card(row1, col, title, val, sub, accent, icon, cmd)
@@ -603,6 +605,11 @@ class DashboardView(tk.Frame):
         tree.tag_configure("odd",  background=_PANEL)
         tree.tag_configure("even", background="#FAFAF8")
 
+    # ── Voids popup ───────────────────────────────────────────────────────
+
+    def _open_voids_popup(self):
+        VoidsPopup(self, self.db)
+
     # ── Refresh ───────────────────────────────────────────────────────────
 
     def _refresh(self):
@@ -610,3 +617,237 @@ class DashboardView(tk.Frame):
             w.destroy()
         _apply_dash_style()
         self._build()
+
+
+# ── Voided Orders Popup ───────────────────────────────────────────────────────
+
+class VoidsPopup(tk.Toplevel):
+    """Shows voided orders for a selectable date period."""
+
+    _PERIODS = [
+        ("Today",      "today"),
+        ("This Week",  "week"),
+        ("This Month", "month"),
+    ]
+
+    _COLS = [
+        ("order_id", "Order ID",   80,  "center"),
+        ("cashier",  "Cashier",   130,  "w"),
+        ("items",    "Items",     260,  "w"),
+        ("total",    "Total",     100,  "e"),
+        ("void_time","Time of Void",160,"center"),
+        ("reason",   "Reason",    180,  "w"),
+    ]
+
+    def __init__(self, parent: tk.Widget, db: Database):
+        super().__init__(parent)
+        self.db = db
+        self._period = tk.StringVar(value="today")
+
+        self.title("Voided Orders")
+        self.configure(bg=_BG)
+        self.geometry("960x520")
+        self.minsize(760, 400)
+        self.transient(parent)
+        self.grab_set()
+
+        self._build()
+
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        w = min(960, sw - 80)
+        h = min(580, sh - 100)
+        self.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
+
+    def _build(self):
+        # Header
+        hdr = tk.Frame(self, bg=_SB)
+        hdr.pack(fill="x")
+        tk.Frame(hdr, bg=_RED, width=5).pack(side="left", fill="y")
+        tk.Label(hdr, text="Voided Orders — Today",
+                 bg=_SB, fg="#FFFFFF",
+                 font=("Segoe UI", 13, "bold"),
+                 padx=14, pady=12).pack(side="left")
+
+        # Period filter bar
+        bar = tk.Frame(self, bg=_PANEL,
+                       highlightthickness=1, highlightbackground=_BORDER)
+        bar.pack(fill="x", padx=16, pady=(12, 0))
+
+        tk.Label(bar, text="Period:", bg=_PANEL, fg=_MUTED,
+                 font=("Segoe UI", 9)).pack(side="left", padx=(12, 6), pady=8)
+
+        for label, key in self._PERIODS:
+            tk.Radiobutton(
+                bar, text=label, variable=self._period, value=key,
+                bg=_PANEL, fg=_TEXT, selectcolor=_PANEL,
+                activebackground=_PANEL,
+                font=("Segoe UI", 9),
+                command=self._refresh,
+            ).pack(side="left", padx=6, pady=8)
+
+        # Export button
+        tk.Button(
+            bar, text="Export CSV",
+            bg=THEME["success"], fg="white",
+            activebackground="#16a34a", activeforeground="white",
+            bd=0, padx=12, pady=5, cursor="hand2",
+            font=("Segoe UI", 8, "bold"),
+            command=self._export_csv,
+        ).pack(side="right", padx=12, pady=6)
+
+        # Table area
+        tbl_frame = tk.Frame(self, bg=_PANEL,
+                             highlightthickness=1, highlightbackground=_BORDER)
+        tbl_frame.pack(fill="both", expand=True, padx=16, pady=12)
+        tbl_frame.rowconfigure(0, weight=1)
+        tbl_frame.columnconfigure(0, weight=1)
+
+        s = ttk.Style()
+        s.configure("Voids.Treeview",
+                    rowheight=30, font=("Segoe UI", 9),
+                    background=_PANEL, fieldbackground=_PANEL, foreground=_TEXT)
+        s.configure("Voids.Treeview.Heading",
+                    font=("Segoe UI", 9, "bold"),
+                    background=_SB, foreground="#FFFFFF", relief="flat")
+        s.map("Voids.Treeview",
+              background=[("selected", _RED)],
+              foreground=[("selected", "#FFFFFF")])
+
+        cols = [c[0] for c in self._COLS]
+        self._tbl = ttk.Treeview(tbl_frame, columns=cols, show="headings",
+                                  style="Voids.Treeview")
+        self._tbl.grid(row=0, column=0, sticky="nsew")
+
+        ysb = ttk.Scrollbar(tbl_frame, orient="vertical", command=self._tbl.yview)
+        ysb.grid(row=0, column=1, sticky="ns")
+        self._tbl.configure(yscrollcommand=ysb.set)
+
+        xsb = ttk.Scrollbar(tbl_frame, orient="horizontal", command=self._tbl.xview)
+        xsb.grid(row=1, column=0, sticky="ew")
+        self._tbl.configure(xscrollcommand=xsb.set)
+
+        for cid, heading, width, anchor in self._COLS:
+            self._tbl.heading(cid, text=heading, anchor="center")
+            self._tbl.column(cid, width=width, minwidth=60, anchor=anchor,
+                              stretch=(anchor == "w"))
+
+        self._empty_lbl = tk.Label(tbl_frame, text="No voided orders found.",
+                                    bg=_PANEL, fg=_MUTED,
+                                    font=("Segoe UI", 11, "italic"))
+
+        # Footer
+        foot = tk.Frame(self, bg=_BG)
+        foot.pack(fill="x", padx=16, pady=(0, 12))
+        self._count_lbl = tk.Label(foot, text="", bg=_BG, fg=_MUTED,
+                                    font=("Segoe UI", 9))
+        self._count_lbl.pack(side="left")
+        tk.Button(foot, text="Close", bg=THEME["panel2"], fg=_TEXT,
+                  bd=0, padx=14, pady=7, cursor="hand2",
+                  font=("Segoe UI", 9),
+                  command=self.destroy).pack(side="right")
+
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self._rows_cache: list[dict] = []
+        self._refresh()
+
+    def _date_filter(self) -> str:
+        p = self._period.get()
+        if p == "today":
+            return "DATE(vr.created_at, 'localtime') = DATE('now', 'localtime')"
+        if p == "week":
+            return "DATE(vr.created_at, 'localtime') >= DATE('now', 'localtime', '-6 days')"
+        return "strftime('%Y-%m', vr.created_at, 'localtime') = strftime('%Y-%m', 'now', 'localtime')"
+
+    def _refresh(self):
+        for iid in self._tbl.get_children():
+            self._tbl.delete(iid)
+
+        period_label = {p[1]: p[0] for p in self._PERIODS}.get(self._period.get(), "")
+        # Update header title
+        for w in self.winfo_children():
+            if isinstance(w, tk.Frame) and w.cget("bg") == _SB:
+                for child in w.winfo_children():
+                    if isinstance(child, tk.Label):
+                        child.configure(text=f"Voided Orders — {period_label}")
+                break
+
+        rows = self._fetch()
+        self._rows_cache = rows
+
+        if not rows:
+            self._empty_lbl.place(relx=0.5, rely=0.5, anchor="center")
+        else:
+            self._empty_lbl.place_forget()
+
+        for i, r in enumerate(rows):
+            bg_tag = "odd" if i % 2 else "even"
+            self._tbl.insert("", tk.END, tags=(bg_tag,), values=(
+                f"#{r['order_id']}",
+                r["cashier"],
+                r["items"],
+                money(r["total"]),
+                str(r["void_time"])[:16],
+                r["reason"] or "—",
+            ))
+
+        self._tbl.tag_configure("odd",  background=_PANEL)
+        self._tbl.tag_configure("even", background="#FAFAF8")
+
+        n = len(rows)
+        self._count_lbl.configure(text=f"{n} voided order{'s' if n != 1 else ''}")
+
+    def _fetch(self) -> list[dict]:
+        df = self._date_filter()
+        try:
+            raw = self.db.fetchall(
+                f"""
+                SELECT vr.original_order_id AS order_id,
+                       MAX(vr.voided_by_username) AS cashier,
+                       MAX(vr.created_at)         AS void_time,
+                       COALESCE(GROUP_CONCAT(DISTINCT NULLIF(vr.reason, '')), '') AS reason,
+                       COALESCE(o.total, 0)        AS total,
+                       (SELECT GROUP_CONCAT(COALESCE(p.name, '?'), ', ')
+                        FROM order_items oi
+                        LEFT JOIN products p ON p.id = oi.product_id
+                        WHERE oi.order_id = vr.original_order_id) AS items
+                FROM void_records vr
+                JOIN orders o ON o.id = vr.original_order_id
+                WHERE {df}
+                GROUP BY vr.original_order_id
+                ORDER BY void_time DESC;
+                """
+            )
+            return [dict(r) for r in raw]
+        except Exception:
+            return []
+
+    def _export_csv(self):
+        rows = self._rows_cache
+        if not rows:
+            messagebox.showinfo("Export", "No data to export.", parent=self)
+            return
+        try:
+            from tkinter import filedialog
+            path = filedialog.asksaveasfilename(
+                parent=self,
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv")],
+                initialfile=f"voided_orders_{self._period.get()}.csv",
+                title="Save CSV",
+            )
+            if not path:
+                return
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["Order ID", "Cashier", "Items", "Total", "Time of Void", "Reason"])
+                for r in rows:
+                    w.writerow([
+                        f"#{r['order_id']}", r["cashier"], r["items"],
+                        money(r["total"]), str(r["void_time"])[:16],
+                        r["reason"] or "",
+                    ])
+            messagebox.showinfo("Export", f"Saved to:\n{path}", parent=self)
+        except Exception as e:
+            messagebox.showerror("Export Error", str(e), parent=self)

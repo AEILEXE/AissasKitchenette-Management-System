@@ -21,6 +21,11 @@ from app.utils import money
 from app.ml.recommender import Recommender
 
 
+# Module-level image cache — persists for the entire app lifetime so images
+# are never garbage-collected even when POSView instances are recreated.
+_GLOBAL_IMG_CACHE: dict = {}
+
+
 def _row_get(r, key: str, default=None):
     try:
         v = r[key]
@@ -71,8 +76,10 @@ class POSView(tk.Frame):
         self._prod_resize_after: int | None = None
         self._prod_canvas_w: int = 0
         self._cart_resize_after: int | None = None
+        self._last_wm_state: str = "normal"
+        self._load_gen: int = 0
 
-        self._img_cache: dict[str, tk.PhotoImage] = {}
+        self._img_cache = _GLOBAL_IMG_CACHE  # shared, never GC'd
 
         self._batch_products: list[Any] = []
         self._batch_idx: int = 0
@@ -112,9 +119,10 @@ class POSView(tk.Frame):
 
         self._build()
         self._building = False
+        self._preload_folder_images_async()   # warm cache before first card render
         self._after(50, self._refresh_categories)
         self._after(100, self._refresh_products)
-        self._refresh_drafts_panel()
+        self._after(200, self._refresh_drafts_panel)  # defer — not needed immediately
         self._refresh_cart()
         self.after_idle(self._debounced_relayout)
 
@@ -260,7 +268,7 @@ class POSView(tk.Frame):
         self._restore_placeholder(self._search_entry, "Search Products")
 
     # ── Image helpers ─────────────────────────────────────────────────────────
-    _IMG_SIZE = 56   # product card image size (px)
+    _IMG_SIZE = 70   # product card image size (px)
 
     def _load_default_image(self) -> object:
         key = "__default__"
@@ -390,6 +398,48 @@ class POSView(tk.Frame):
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _preload_folder_images_async(self) -> None:
+        """Scan product_images/ on disk and warm the cache without needing DB data.
+        Called immediately at startup so images are ready before cards render."""
+        def _worker() -> None:
+            try:
+                if not PRODUCT_IMAGES_DIR.exists():
+                    return
+                for f in PRODUCT_IMAGES_DIR.iterdir():
+                    if self._destroyed:
+                        return
+                    if not f.is_file() or f.suffix.lower() not in {
+                        ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
+                    }:
+                        continue
+                    rel = f"product_images/{f.name}"
+                    key = f"img::{rel}"
+                    if key in self._img_cache:
+                        continue
+                    try:
+                        from PIL import Image, ImageTk as _ITk
+                        img = Image.open(f).convert("RGBA")
+                        _resample = getattr(Image, "Resampling", Image).LANCZOS
+                        img_r = img.resize((self._IMG_SIZE, self._IMG_SIZE), _resample)
+
+                        def _create(img_resized=img_r, k=key) -> None:
+                            if self._destroyed or k in self._img_cache:
+                                return
+                            try:
+                                from PIL import ImageTk as _ITk2
+                                self._img_cache[k] = _ITk2.PhotoImage(img_resized)
+                            except Exception:
+                                pass
+
+                        if not self._destroyed:
+                            self.after(0, _create)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     # ── UI Build ──────────────────────────────────────────────────────────────
     def _build(self):
         style = ttk.Style()
@@ -464,7 +514,7 @@ class POSView(tk.Frame):
         prod_panel.rowconfigure(0, weight=1)
         prod_panel.columnconfigure(0, weight=1)
 
-        self.prod_canvas = tk.Canvas(prod_panel, bg=THEME["panel"], highlightthickness=0)
+        self.prod_canvas = tk.Canvas(prod_panel, bg="#e6ddbd", highlightthickness=0)
         self.prod_canvas.grid(row=0, column=0, sticky="nsew")
 
         prod_sb = ttk.Scrollbar(prod_panel, orient="vertical", command=self.prod_canvas.yview,
@@ -472,7 +522,7 @@ class POSView(tk.Frame):
         prod_sb.grid(row=0, column=1, sticky="ns")
         self.prod_canvas.configure(yscrollcommand=prod_sb.set)
 
-        self.prod_inner = tk.Frame(self.prod_canvas, bg=THEME["panel"])
+        self.prod_inner = tk.Frame(self.prod_canvas, bg="#e6ddbd")
         self._prod_window_id = self.prod_canvas.create_window((0, 0), window=self.prod_inner, anchor="nw")
         self.prod_inner.bind(
             "<Configure>",
@@ -574,7 +624,7 @@ class POSView(tk.Frame):
         tk.Label(total_row, text="TOTAL", bg=_total_bg, fg="white",
                  font=("Segoe UI", 11, "bold"), pady=9).pack(side="left", padx=_tv_pad)
         self._lbl_total_val = tk.Label(total_row, text="₱0.00",
-                                       bg=_total_bg, fg=THEME["success"],
+                                       bg=_total_bg, fg="#00c853",
                                        font=("Segoe UI", 16, "bold"))
         self._lbl_total_val.pack(side="right", padx=_tv_pad)
 
@@ -630,6 +680,34 @@ class POSView(tk.Frame):
 
         _pad = 10
 
+        # ── PAY NOW — packed bottom-first so it is always visible ─────────────
+        self._btn_pay_now = tk.Button(col2, text="Pay Now",
+                                      command=self._pay_now,
+                                      bg=THEME.get("brown_dark", "#8E0000"), fg="white",
+                                      activebackground=THEME.get("brown", "#6b4a3a"),
+                                      activeforeground="white",
+                                      bd=0, pady=14, cursor="hand2",
+                                      font=("Segoe UI", 13, "bold"))
+        self._btn_pay_now.pack(side="bottom", fill="x", padx=_pad, pady=(6, _pad))
+
+        tk.Frame(col2, bg=THEME["border"], height=1).pack(side="bottom", fill="x", padx=_pad, pady=(4, 0))
+
+        # ── DISCOUNT + SAVE DRAFT — above Pay Now ─────────────────────────────
+        mid_btns = tk.Frame(col2, bg=THEME["panel"])
+        mid_btns.pack(side="bottom", fill="x", padx=_pad, pady=(4, 2))
+        mid_btns.columnconfigure(0, weight=1, uniform="mb")
+        mid_btns.columnconfigure(1, weight=1, uniform="mb")
+
+        tk.Button(mid_btns, text="Discount", command=self._add_discount,
+                  bg=THEME["panel2"], fg=THEME["text"], bd=0, padx=6, pady=8,
+                  cursor="hand2", font=("Segoe UI", 9, "bold"),
+                  ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+
+        tk.Button(mid_btns, text="Save Draft", command=self._save_draft,
+                  bg=THEME["panel2"], fg=THEME["muted"], bd=0, padx=6, pady=8,
+                  cursor="hand2", font=("Segoe UI", 9),
+                  ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+
         # ── ORDER TYPE ────────────────────────────────────────────────────────
         tk.Frame(col2, bg=THEME["border"], height=1).pack(fill="x")
         ot_hdr = tk.Frame(col2, bg=THEME.get("brown_dark", "#8E0000"))
@@ -659,15 +737,15 @@ class POSView(tk.Frame):
 
         btn_dine = tk.Button(ot_btns, text="Dine In",
                              bg=THEME.get("brown_dark", "#8E0000"), fg="white",
-                             bd=0, pady=7, cursor="hand2",
-                             font=("Segoe UI", 9, "bold"),
+                             bd=0, pady=10, cursor="hand2",
+                             font=("Segoe UI", 11, "bold"),
                              command=lambda: _on_ot("DINE_IN"))
         btn_dine.grid(row=0, column=0, sticky="ew", padx=(0, 3))
 
         btn_take = tk.Button(ot_btns, text="Take Out",
                              bg=THEME["panel2"], fg=THEME["text"],
-                             bd=0, pady=7, cursor="hand2",
-                             font=("Segoe UI", 9, "bold"),
+                             bd=0, pady=10, cursor="hand2",
+                             font=("Segoe UI", 11, "bold"),
                              command=lambda: _on_ot("TAKE_OUT"))
         btn_take.grid(row=0, column=1, sticky="ew", padx=(3, 0))
 
@@ -770,16 +848,18 @@ class POSView(tk.Frame):
         self.var_payment.trace_add("write", _update_change_lbl)
         self._update_change_lbl_fn = _update_change_lbl
 
-        # ── COMPACT KEYPAD ────────────────────────────────────────────────────
+        # ── COMPACT KEYPAD (expands to fill remaining space) ─────────────────
         tk.Frame(col2, bg=THEME["border"], height=1).pack(fill="x", padx=_pad)
         _kp = tk.Frame(col2, bg=THEME["panel"])
-        _kp.pack(fill="x", padx=_pad, pady=(6, 6))
+        _kp.pack(fill="both", expand=True, padx=_pad, pady=(6, 6))
         _kp_rows = [
             ("7", "8", "9"),
             ("4", "5", "6"),
             ("1", "2", "3"),
             ("0", ".", "CLEAR"),
         ]
+        for _ri in range(len(_kp_rows)):
+            _kp.rowconfigure(_ri, weight=1)
         for _ri, _keys in enumerate(_kp_rows):
             for _ci, _key in enumerate(_keys):
                 _kp.columnconfigure(_ci, weight=1, uniform="kp")
@@ -791,37 +871,9 @@ class POSView(tk.Frame):
                     fg=THEME["text"] if is_special else "white",
                     activebackground=THEME.get("beige", "#FFF3E0"),
                     activeforeground=THEME["text"],
-                    bd=0, padx=4, pady=6, cursor="hand2",
-                    font=("Segoe UI", 10, "bold"),
+                    bd=0, padx=6, pady=10, cursor="hand2",
+                    font=("Segoe UI", 13, "bold"),
                 ).grid(row=_ri, column=_ci, sticky="nsew", padx=2, pady=2)
-
-        # ── DISCOUNT + SAVE DRAFT ─────────────────────────────────────────────
-        mid_btns = tk.Frame(col2, bg=THEME["panel"])
-        mid_btns.pack(fill="x", padx=_pad, pady=(4, 2))
-        mid_btns.columnconfigure(0, weight=1, uniform="mb")
-        mid_btns.columnconfigure(1, weight=1, uniform="mb")
-
-        tk.Button(mid_btns, text="Discount", command=self._add_discount,
-                  bg=THEME["panel2"], fg=THEME["text"], bd=0, padx=6, pady=8,
-                  cursor="hand2", font=("Segoe UI", 9, "bold"),
-                  ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
-
-        tk.Button(mid_btns, text="Save Draft", command=self._save_draft,
-                  bg=THEME["panel2"], fg=THEME["muted"], bd=0, padx=6, pady=8,
-                  cursor="hand2", font=("Segoe UI", 9),
-                  ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
-
-        # ── PAY NOW ───────────────────────────────────────────────────────────
-        tk.Frame(col2, bg=THEME["border"], height=1).pack(fill="x", padx=_pad, pady=(4, 0))
-
-        self._btn_pay_now = tk.Button(col2, text="Pay Now",
-                                      command=self._pay_now,
-                                      bg=THEME.get("brown_dark", "#8E0000"), fg="white",
-                                      activebackground=THEME.get("brown", "#6b4a3a"),
-                                      activeforeground="white",
-                                      bd=0, pady=14, cursor="hand2",
-                                      font=("Segoe UI", 13, "bold"))
-        self._btn_pay_now.pack(fill="x", padx=_pad, pady=(6, _pad))
 
     # ── Keypad ────────────────────────────────────────────────────────────────
     def _keypad_press(self, key: str) -> None:
@@ -868,8 +920,28 @@ class POSView(tk.Frame):
             self.prod_canvas.itemconfigure(self._prod_window_id, width=ew)
         except Exception:
             pass
+
+        old_w = self._prod_canvas_w
         self._prod_canvas_w = ew
-        self._debounced_relayout()
+
+        # Detect window state change (maximize / restore)
+        try:
+            new_state = self.winfo_toplevel().state()
+        except Exception:
+            new_state = self._last_wm_state
+        state_changed = new_state != self._last_wm_state
+        self._last_wm_state = new_state
+
+        # If only the WM state changed but canvas width is identical, skip relayout
+        if state_changed and ew == old_w:
+            return
+
+        if state_changed:
+            # Maximize/restore: skip the 150 ms debounce — use 30 ms instead
+            self._cancel_after(self._prod_resize_after)
+            self._prod_resize_after = self._after(30, self._relayout_products)
+        else:
+            self._debounced_relayout()
 
     def _draft_mousewheel(self, e):
         try:
@@ -963,7 +1035,7 @@ class POSView(tk.Frame):
                 width=14,
                 height=2,
                 cursor="hand2",
-                font=("Segoe UI", 8, "bold"),
+                font=("Segoe UI", 10, "bold"),
                 relief="flat",
                 wraplength=100,
                 justify="center",
@@ -984,6 +1056,7 @@ class POSView(tk.Frame):
         self._set_active_category_btn(name)
         self._all_products_cache = []
         self._all_products_cache_cat = ""
+        self._load_gen += 1  # discard any in-flight background load for old category
         self._refresh_products()
 
     # ── Products ──────────────────────────────────────────────────────────────
@@ -994,20 +1067,58 @@ class POSView(tk.Frame):
         self._search_after = self._after(self._SEARCH_DEBOUNCE_MS, self._refresh_products)
 
     def _load_products_for_category(self) -> None:
+        """Fetch products from DB in a background thread; continue on main thread."""
         cat_name = self._selected_category or "All"
-        try:
-            if cat_name == "All":
-                self._all_products_cache = self.prod_dao.list_all_active()
-            else:
-                c = self.cat_dao.get_by_name(cat_name)
-                self._all_products_cache = (
-                    self.prod_dao.list_by_category(int(c["category_id"])) if c else []
-                )
-            self._all_products_cache_cat = cat_name
-        except Exception as e:
-            messagebox.showerror("DB Error", str(e))
-            self._all_products_cache = []
-        self._preload_images_async()
+        self._load_gen += 1
+        gen = self._load_gen
+
+        def _worker() -> None:
+            err_msg: str | None = None
+            rows = []
+            thread_db = Database(self.db.db_path)
+            try:
+                thread_db.connect()
+                t_cat_dao = CategoryDAO(thread_db)
+                t_prod_dao = ProductDAO(thread_db)
+                if cat_name == "All":
+                    rows = t_prod_dao.list_all_active()
+                else:
+                    c = t_cat_dao.get_by_name(cat_name)
+                    rows = (
+                        t_prod_dao.list_by_category(int(c["category_id"])) if c else []
+                    )
+            except Exception as exc:
+                err_msg = str(exc)
+                rows = []
+            finally:
+                thread_db.disconnect()
+
+            def _apply() -> None:
+                if self._destroyed or gen != self._load_gen:
+                    return
+                self._all_products_cache = rows
+                self._all_products_cache_cat = cat_name
+                if err_msg:
+                    messagebox.showerror("DB Error", err_msg)
+                self._preload_images_async()
+                search_text = ""
+                try:
+                    if self._search_entry and self._search_entry.winfo_exists():
+                        search_text = self.search_var.get().strip()
+                        if search_text in (
+                            "Search…", "Search products…",
+                            "Search products...", "Search Products",
+                        ):
+                            search_text = ""
+                except Exception:
+                    pass
+                self._products_cache = self._filter_products(search_text)
+                self._start_batch_load()
+
+            if not self._destroyed:
+                self.after(0, _apply)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _filter_products(self, search_text: str = ""):
         q = (search_text or "").strip().lower()
@@ -1016,11 +1127,12 @@ class POSView(tk.Frame):
         return [r for r in self._all_products_cache if q in str(r["name"]).lower()]
 
     def _calc_product_cols(self) -> int:
-        """Return column count based on canvas width. More compact tiling."""
+        """Return column count based on canvas width (canvas ≈ 50% of window width).
+        Breakpoints mirror the window-width spec: 600/900/1200/1200+ px."""
         w = getattr(self, "_prod_canvas_w", 0)
         if w >= 600:
             return 5
-        if w >= 460:
+        if w >= 450:
             return 4
         if w >= 300:
             return 3
@@ -1030,14 +1142,28 @@ class POSView(tk.Frame):
         if self._destroyed or self._building or not self.winfo_exists():
             return
         self._cancel_after(self._prod_resize_after)
-        self._prod_resize_after = self._after(160, self._relayout_products)
+        self._prod_resize_after = self._after(150, self._relayout_products)
 
     def _refresh_products(self):
         if self._destroyed or self._building or not self.winfo_exists():
             return
         self._search_after = None
         if not self._all_products_cache:
+            # Show loading label immediately on main thread; worker fills cards when done
+            try:
+                for w in self.prod_inner.winfo_children():
+                    w.destroy()
+            except Exception:
+                pass
+            self._product_card_widgets = []
+            self._loading_lbl = None
+            tk.Label(
+                self.prod_inner, text="Loading menu…",
+                bg=self._CARD_BG, fg=THEME["muted"],
+                font=("Segoe UI", 12),
+            ).pack(pady=40)
             self._load_products_for_category()
+            return
         search_text = self.search_var.get().strip()
         if search_text in ("Search…", "Search products…", "Search products...", "Search Products"):
             search_text = ""
@@ -1061,12 +1187,12 @@ class POSView(tk.Frame):
         if not self._products_cache:
             tk.Label(self.prod_inner,
                      text="No items found. Clear search or seed products.",
-                     bg=THEME["panel"], fg=THEME["muted"],
+                     bg=self._CARD_BG, fg=THEME["muted"],
                      font=("Segoe UI", 12, "bold")).pack(pady=40)
             return
 
         self._loading_lbl = tk.Label(self.prod_inner, text="Loading menu…",
-                                     bg=THEME["panel"], fg=THEME["muted"],
+                                     bg=self._CARD_BG, fg=THEME["muted"],
                                      font=("Segoe UI", 12))
         self._loading_lbl.pack(pady=40)
 
@@ -1113,7 +1239,7 @@ class POSView(tk.Frame):
                     sticky="nsew", padx=4, pady=4,
                 )
             for r in range((end + cols - 1) // cols):
-                self.prod_inner.rowconfigure(r, weight=0, uniform="prodrow", minsize=160)
+                self.prod_inner.rowconfigure(r, weight=0, uniform="prodrow", minsize=180)
             try:
                 self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
             except Exception:
@@ -1132,6 +1258,14 @@ class POSView(tk.Frame):
                 self.prod_canvas.itemconfigure(self._prod_window_id, width=actual_w)
         except Exception:
             pass
+        # Skip full re-grid when nothing has changed — avoids the brief flicker
+        # caused by Tkinter ungridding then re-placing every card widget.
+        new_cols = max(2, min(5, self._calc_product_cols()))
+        last_cols = getattr(self, "_last_relayout_cols", -1)
+        last_count = getattr(self, "_last_relayout_count", -1)
+        n_cards = len(self._product_card_widgets)
+        if new_cols == last_cols and n_cards == last_count and not rebuild_cards:
+            return
         self._do_product_grid_layout()
 
     def _do_product_grid_layout(self) -> None:
@@ -1148,6 +1282,11 @@ class POSView(tk.Frame):
         cols = self._calc_product_cols()
         cols = max(2, min(5, cols))
 
+        # Reset old row configs to prevent phantom blank rows when product count decreases
+        prev_rows = getattr(self, "_last_relayout_rows", 0)
+        for r in range(prev_rows):
+            self.prod_inner.rowconfigure(r, weight=0, uniform="", minsize=0)
+
         # Reset old column configs
         for i in range(6):
             self.prod_inner.columnconfigure(i, weight=0, uniform="")
@@ -1160,27 +1299,34 @@ class POSView(tk.Frame):
             card.grid(row=row, column=col, sticky="nsew", padx=4, pady=4)
 
         # Enforce uniform row height so all cards align regardless of text length
-        for r in range((len(cards) + cols - 1) // cols):
-            self.prod_inner.rowconfigure(r, weight=0, uniform="prodrow", minsize=160)
+        new_rows = (len(cards) + cols - 1) // cols
+        for r in range(new_rows):
+            self.prod_inner.rowconfigure(r, weight=0, uniform="prodrow", minsize=180)
 
         self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
 
-    # ── Product card — minimal white tile with left accent border ────────────
+        # Track for skip-on-no-change optimisation in _relayout_products
+        self._last_relayout_cols = cols
+        self._last_relayout_count = len(cards)
+        self._last_relayout_rows = new_rows
+
+    # ── Product card — beige tile with left accent border ────────────────────
+    _CARD_BG = "#e6ddbd"   # beige card background — prevents any black flash
+
     def _product_card(self, parent: tk.Widget, r) -> tk.Frame:
         pid   = int(r["product_id"])
         name  = str(r["name"])
         price = float(r["price"])
         desc  = str(_row_get(r, "description", "") or "").strip()
 
-        # Outer wrapper: white card with soft border
         card = tk.Frame(
             parent,
-            bg=THEME["panel"],
+            bg=self._CARD_BG,
             highlightthickness=1,
             highlightbackground=THEME["border"],
+            highlightcolor=THEME["border"],   # prevent default black active highlight
             cursor="hand2",
         )
-        # Column 0 = 4 px accent bar | Column 1 = content
         card.columnconfigure(1, weight=1)
 
         def _bind_click(w: tk.Widget):
@@ -1196,9 +1342,9 @@ class POSView(tk.Frame):
 
         # ── Image ─────────────────────────────────────────────────────────────
         img_size = self._IMG_SIZE
-        img_frame = tk.Frame(card, bg=THEME["panel"],
+        img_frame = tk.Frame(card, bg=self._CARD_BG,
                              width=img_size, height=img_size, cursor="hand2")
-        img_frame.grid(row=0, column=1, pady=(7, 2), padx=(6, 4))
+        img_frame.grid(row=0, column=1, pady=(8, 3), padx=(8, 6))
         img_frame.grid_propagate(False)
         _bind_click(img_frame)
 
@@ -1206,25 +1352,24 @@ class POSView(tk.Frame):
         photo = self._load_image(img_rel)
         if photo:
             lbl_img = tk.Label(img_frame, image=photo,
-                               bg=THEME["panel"], cursor="hand2")
+                               bg=self._CARD_BG, cursor="hand2")
             lbl_img.image = photo
             lbl_img.place(relx=0.5, rely=0.5, anchor="center")
             _bind_click(lbl_img)
         else:
             lbl_no = tk.Label(img_frame, text="🍽",
-                              bg=THEME["panel"], fg=THEME["muted"],
-                              font=("Segoe UI", 18), cursor="hand2")
+                              bg=self._CARD_BG, fg=THEME["muted"],
+                              font=("Segoe UI", 24), cursor="hand2")
             lbl_no.place(relx=0.5, rely=0.5, anchor="center")
             _bind_click(lbl_no)
 
         # ── Product name ──────────────────────────────────────────────────────
         name_lbl = tk.Label(
             card, text=name,
-            bg=THEME["panel"], fg=THEME["text"],
-            font=("Segoe UI", 8, "bold"),
+            bg=self._CARD_BG, fg=THEME["text"],
+            font=("Segoe UI", 9, "bold"),
             anchor="center", justify="center",
-            wraplength=100, cursor="hand2",
-            height=2,
+            wraplength=120, cursor="hand2",
         )
         name_lbl.grid(row=1, column=1, sticky="ew", padx=(4, 6), pady=(0, 1))
         _bind_click(name_lbl)
@@ -1232,29 +1377,33 @@ class POSView(tk.Frame):
             self._add_tooltip(name_lbl, name)
 
         # ── Description (one line, muted) ─────────────────────────────────────
-        desc_show = (desc[:30] + "…") if len(desc) > 30 else (desc if desc else "No description available")
+        desc_show = desc if desc else "No description available"
         desc_lbl = tk.Label(
             card, text=desc_show,
-            bg=THEME["panel"], fg=THEME["muted"],
+            bg=self._CARD_BG, fg=THEME["muted"],
             font=("Segoe UI", 7),
             anchor="center", justify="center",
-            wraplength=100, cursor="hand2",
+            wraplength=120, cursor="hand2",
         )
         desc_lbl.grid(row=2, column=1, sticky="ew", padx=(4, 6), pady=(0, 1))
         _bind_click(desc_lbl)
-        if desc and len(desc) > 30:
-            self._add_tooltip(desc_lbl, desc)
 
-        # ── Price + Stock badge row ───────────────────────────────────────────
-        price_row = tk.Frame(card, bg=THEME["panel"], cursor="hand2")
-        price_row.grid(row=3, column=1, sticky="ew", padx=(4, 6), pady=(0, 5))
+        def _on_card_resize(event, _n=name_lbl, _d=desc_lbl):
+            wrap = max(30, event.width - 16)
+            _n.configure(wraplength=wrap)
+            _d.configure(wraplength=wrap)
+        card.bind("<Configure>", _on_card_resize)
+
+        # ── Price row ─────────────────────────────────────────────────────────
+        price_row = tk.Frame(card, bg=self._CARD_BG, cursor="hand2")
+        price_row.grid(row=3, column=1, sticky="ew", padx=(4, 6), pady=(0, 6))
         price_row.columnconfigure(0, weight=1)
         _bind_click(price_row)
 
         price_lbl = tk.Label(
             price_row, text=money(price),
-            bg=THEME["panel"], fg=THEME["accent"],
-            font=("Segoe UI", 9, "bold"),
+            bg=self._CARD_BG, fg=THEME["accent"],
+            font=("Segoe UI", 10, "bold"),
             anchor="center", cursor="hand2",
         )
         price_lbl.grid(row=0, column=0, sticky="ew")
@@ -1439,11 +1588,11 @@ class POSView(tk.Frame):
         if text:
             self.discount_lbl.configure(text=text)
             if not self._discount_visible:
-                self.discount_lbl.grid(row=0, column=1, sticky="e")
+                self.discount_lbl.pack(anchor="e", padx=8, pady=(2, 0))
                 self._discount_visible = True
         else:
             if self._discount_visible:
-                self.discount_lbl.grid_forget()
+                self.discount_lbl.pack_forget()
                 self._discount_visible = False
 
     def _refresh_cart(self):
@@ -1583,11 +1732,11 @@ class POSView(tk.Frame):
             hdr2 = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
             hdr2.pack(fill="x", padx=14, pady=(4, 2))
             tk.Label(hdr2, text="Suggested Items", bg=THEME["panel"], fg=THEME["muted"],
-                     font=("Segoe UI", 9, "bold")).pack(side="left")
+                     font=("Segoe UI", 10, "bold")).pack(side="left")
             tk.Label(self._suggestions_frame,
                      text="No suggestions yet — complete more sales",
                      bg=THEME["panel"], fg=THEME["muted"],
-                     font=("Segoe UI", 8, "italic")).pack(anchor="w", padx=14, pady=(0, 4))
+                     font=("Segoe UI", 9, "italic")).pack(anchor="w", padx=14, pady=(0, 4))
             if not self._suggestions_frame.winfo_ismapped():
                 self._suggestions_frame.grid()
             return
@@ -1600,7 +1749,7 @@ class POSView(tk.Frame):
         hdr3 = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
         hdr3.pack(fill="x", padx=14, pady=(4, 2))
         tk.Label(hdr3, text="Suggested Items", bg=THEME["panel"], fg=THEME["muted"],
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
+                 font=("Segoe UI", 10, "bold")).pack(side="left")
 
         valid_items: list[tuple[int, str, float]] = []
         for pid in suggested_ids:
@@ -1640,8 +1789,8 @@ class POSView(tk.Frame):
                     self._add_to_cart(p, n, pr)
                 btn = tk.Button(btn_row, text=f"+ {display}", command=_add,
                                 bg=THEME.get("beige", "#FFF3E0"), fg=THEME["brown"],
-                                bd=1, relief="solid", padx=4, pady=4, cursor="hand2",
-                                font=("Segoe UI", 8), wraplength=100, justify="center")
+                                bd=1, relief="solid", padx=5, pady=6, cursor="hand2",
+                                font=("Segoe UI", 9), wraplength=100, justify="center")
                 btn.grid(row=0, column=col_i, sticky="ew",
                          padx=(0, 4) if col_i < len(chunk) - 1 else (0, 0))
                 if len(name) > 14:
@@ -1653,11 +1802,11 @@ class POSView(tk.Frame):
             hdr_empty = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
             hdr_empty.pack(fill="x", padx=14, pady=(4, 2))
             tk.Label(hdr_empty, text="Suggested Items", bg=THEME["panel"], fg=THEME["muted"],
-                     font=("Segoe UI", 9, "bold")).pack(side="left")
+                     font=("Segoe UI", 10, "bold")).pack(side="left")
             tk.Label(self._suggestions_frame,
                      text="No suggestions yet — complete more sales",
                      bg=THEME["panel"], fg=THEME["muted"],
-                     font=("Segoe UI", 8, "italic")).pack(anchor="w", padx=14, pady=(0, 4))
+                     font=("Segoe UI", 9, "italic")).pack(anchor="w", padx=14, pady=(0, 4))
 
         if not self._suggestions_frame.winfo_ismapped():
             self._suggestions_frame.grid()

@@ -399,22 +399,22 @@ class InventoryRawMaterialsView(tk.Frame):
                   font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
 
         # Selection-dependent buttons (stored for state management)
-        self._btn_edit = tk.Button(left, text="✏ Edit", command=self._edit_material,
+        self._btn_edit = tk.Button(left, text="Edit", command=self._edit_material,
                                    bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
                                    relief="flat", cursor="hand2", font=("Segoe UI", 9))
         self._btn_edit.pack(side="left", padx=2)
 
-        self._btn_add_stock = tk.Button(left, text="＋ Add Stock", command=self._add_stock,
+        self._btn_add_stock = tk.Button(left, text="Add Stock", command=self._add_stock,
                                         bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
                                         relief="flat", cursor="hand2", font=("Segoe UI", 9))
         self._btn_add_stock.pack(side="left", padx=2)
 
-        self._btn_deduct = tk.Button(left, text="－ Deduct", command=self._deduct_stock,
+        self._btn_deduct = tk.Button(left, text="Deduct", command=self._deduct_stock,
                                      bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
                                      relief="flat", cursor="hand2", font=("Segoe UI", 9))
         self._btn_deduct.pack(side="left", padx=2)
 
-        self._btn_history = tk.Button(left, text="📋 History", command=self._view_history,
+        self._btn_history = tk.Button(left, text="History", command=self._view_history,
                                       bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
                                       relief="flat", cursor="hand2", font=("Segoe UI", 9))
         self._btn_history.pack(side="left", padx=2)
@@ -433,7 +433,7 @@ class InventoryRawMaterialsView(tk.Frame):
                                      font=("Segoe UI", 9))
         self._toggle_btn.pack(side="left", padx=2)
 
-        self._btn_delete = tk.Button(right, text="🗑 Delete", command=self._delete_material,
+        self._btn_delete = tk.Button(right, text="Delete", command=self._delete_material,
                                      bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
                                      relief="flat", cursor="hand2", font=("Segoe UI", 9))
         self._btn_delete.pack(side="left", padx=2)
@@ -442,12 +442,12 @@ class InventoryRawMaterialsView(tk.Frame):
         util = tk.Frame(toolbar, bg=THEME["panel"])
         util.pack(side="right", padx=8, pady=6)
 
-        tk.Button(util, text="↑ Sort FIFO", command=self._sort_by_expiry,
+        tk.Button(util, text="Sort FIFO", command=self._sort_by_expiry,
                   bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
                   relief="flat", cursor="hand2",
                   font=("Segoe UI", 9)).pack(side="left", padx=2)
 
-        tk.Button(util, text="↺ Refresh", command=self.refresh_materials,
+        tk.Button(util, text="Refresh", command=self.refresh_materials,
                   bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
                   relief="flat", cursor="hand2",
                   font=("Segoe UI", 9)).pack(side="left", padx=2)

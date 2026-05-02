@@ -46,27 +46,32 @@ from app.ui.app_window import AppWindow
 
 def _set_window_icon(root: tk.Tk) -> None:
     """
-    Set the window/taskbar icon.
-    - Prefers logo.ico (multi-size, best Windows support).
-    - Falls back to iconphoto() via Pillow if only logo.png is present.
-    - Silently skips if neither is found or Pillow is missing.
+    Set the window/taskbar icon using logo dark.png.
+    iconphoto(True, ...) propagates the icon to all child windows/dialogs.
+    Falls back to logo.ico then logo.png if dark variant is unavailable.
     """
+    # Primary: logo dark.png via Pillow (applies to main window AND all dialogs)
+    logo_dark = ASSETS_DIR / "logo dark.png"
+    for candidate in (logo_dark, LOGO_PATH):
+        if not candidate.exists():
+            continue
+        try:
+            from PIL import Image, ImageTk
+            img = Image.open(candidate).convert("RGBA")
+            _resample = getattr(Image, "Resampling", Image).LANCZOS
+            img = img.resize((32, 32), _resample)
+            photo = ImageTk.PhotoImage(img)
+            root.iconphoto(True, photo)   # True = default for all future windows
+            root._icon_ref = photo  # type: ignore[attr-defined]  # prevent GC
+            return
+        except Exception:
+            continue
+
+    # Final fallback: .ico file (no Pillow needed, Windows only, no dialog propagation)
     ico_path = ASSETS_DIR / "logo.ico"
     try:
         if ico_path.exists():
             root.iconbitmap(default=str(ico_path))
-            return
-    except Exception:
-        pass
-
-    try:
-        if LOGO_PATH.exists():
-            from PIL import Image, ImageTk
-            img = Image.open(LOGO_PATH).convert("RGBA")
-            img = img.resize((32, 32), Image.LANCZOS)
-            photo = ImageTk.PhotoImage(img)
-            root.iconphoto(True, photo)
-            root._icon_ref = photo  # type: ignore[attr-defined]  # prevent GC
     except Exception:
         pass
 
