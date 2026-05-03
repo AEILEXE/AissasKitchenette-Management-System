@@ -720,7 +720,14 @@ class InventoryRawMaterialsView(tk.Frame):
                                        r["quantity"], "Initial Stock", "")
             self.refresh_materials()
         except Exception as exc:
-            messagebox.showerror("Error", f"Could not add material:\n{exc}")
+            if "UNIQUE" in str(exc).upper():
+                messagebox.showwarning(
+                    "Duplicate Name",
+                    f"A material named \"{r['name']}\" already exists.\n"
+                    "Please use a different name.",
+                )
+            else:
+                messagebox.showerror("Error", f"Could not add material:\n{exc}")
 
     def _edit_material(self):
         mid = self._selected_id()
@@ -746,7 +753,14 @@ class InventoryRawMaterialsView(tk.Frame):
             )
             self.refresh_materials()
         except Exception as exc:
-            messagebox.showerror("Error", f"Could not update material:\n{exc}")
+            if "UNIQUE" in str(exc).upper():
+                messagebox.showwarning(
+                    "Duplicate Name",
+                    f"A material named \"{r['name']}\" already exists.\n"
+                    "Please use a different name.",
+                )
+            else:
+                messagebox.showerror("Error", f"Could not update material:\n{exc}")
 
     def _toggle_active(self):
         mid = self._selected_id()

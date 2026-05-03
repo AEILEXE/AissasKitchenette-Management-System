@@ -50,6 +50,7 @@ class ReportsView(tk.Frame):
         self._active_tab: str = "reports"
         self._tab_btns: dict[str, tk.Button] = {}
         self._content: tk.Frame | None = None
+        self._tab_frames: dict[str, tk.Frame] = {}   # cached tab content
         self._build()
 
     # ── Top navigation ────────────────────────────────────────────────────────
@@ -101,31 +102,49 @@ class ReportsView(tk.Frame):
                                font=("Segoe UI", 9))
 
     def refresh(self):
+        # Force-rebuild only the active tab so stale data is never shown
+        self._tab_frames.pop(self._active_tab, None)
         self._show_tab(self._active_tab)
 
     def _show_tab(self, key: str):
         self._active_tab = key
         self._update_tab_style()
-        if self._content:
-            for w in self._content.winfo_children():
-                w.destroy()
-        if key == "sales":
-            self._build_sales_tab()
-        elif key == "top_sellers":
-            self._build_top_sellers_tab()
-        elif key == "raw_materials":
-            self._build_raw_materials_tab()
-        else:
-            self._build_reports_tab()
+        if not self._content:
+            return
 
-    def _build_sales_tab(self):
+        # Hide every cached tab frame
+        for frame in self._tab_frames.values():
+            if frame.winfo_exists():
+                frame.pack_forget()
+
+        # Return cached frame if it exists
+        cached = self._tab_frames.get(key)
+        if cached and cached.winfo_exists():
+            cached.pack(fill="both", expand=True)
+            return
+
+        # Build fresh tab content inside a wrapper frame
+        tab_frame = tk.Frame(self._content, bg=_BG)
+        tab_frame.pack(fill="both", expand=True)
+        self._tab_frames[key] = tab_frame
+
+        if key == "sales":
+            self._build_sales_tab(tab_frame)
+        elif key == "top_sellers":
+            self._build_top_sellers_tab(tab_frame)
+        elif key == "raw_materials":
+            self._build_raw_materials_tab(tab_frame)
+        else:
+            self._build_reports_tab(tab_frame)
+
+    def _build_sales_tab(self, parent: tk.Frame):
         from app.ui.inventory_sales_view import InventorySalesView
-        InventorySalesView(self._content, self.db, self.auth).pack(fill="both", expand=True)
+        InventorySalesView(parent, self.db, self.auth).pack(fill="both", expand=True)
 
     # ── Overview tab ──────────────────────────────────────────────────────────
 
-    def _build_reports_tab(self):
-        outer = tk.Frame(self._content, bg=_BG)
+    def _build_reports_tab(self, parent: tk.Frame):
+        outer = tk.Frame(parent, bg=_BG)
         outer.pack(fill="both", expand=True)
         outer.rowconfigure(0, weight=1)
         outer.columnconfigure(0, weight=1)
@@ -273,8 +292,8 @@ class ReportsView(tk.Frame):
 
     # ── Top Sellers tab ───────────────────────────────────────────────────────
 
-    def _build_top_sellers_tab(self):
-        outer = tk.Frame(self._content, bg=_BG)
+    def _build_top_sellers_tab(self, parent: tk.Frame):
+        outer = tk.Frame(parent, bg=_BG)
         outer.pack(fill="both", expand=True)
         outer.rowconfigure(1, weight=1)
         outer.columnconfigure(0, weight=1)
@@ -546,8 +565,8 @@ class ReportsView(tk.Frame):
 
     # ── Raw Materials Movement Report tab ─────────────────────────────────────
 
-    def _build_raw_materials_tab(self):
-        outer = tk.Frame(self._content, bg=_BG)
+    def _build_raw_materials_tab(self, parent: tk.Frame):
+        outer = tk.Frame(parent, bg=_BG)
         outer.pack(fill="both", expand=True)
         outer.rowconfigure(1, weight=1)
         outer.columnconfigure(0, weight=1)

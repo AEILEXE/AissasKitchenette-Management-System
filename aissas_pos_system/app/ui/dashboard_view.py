@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import datetime as _dt
 import io
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -102,17 +103,93 @@ class DashboardView(tk.Frame):
         sb.grid(row=0, column=1, sticky="ns")
         canvas.configure(yscrollcommand=sb.set)
 
-        wrap = tk.Frame(canvas, bg=_BG)
-        win  = canvas.create_window((0, 0), window=wrap, anchor="nw")
-        wrap.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        self._wrap = tk.Frame(canvas, bg=_BG)
+        win  = canvas.create_window((0, 0), window=self._wrap, anchor="nw")
+        self._wrap.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
         _bind_mw(canvas)
 
-        self._populate(wrap)
+        # Show loading indicator immediately — data loads in background
+        tk.Label(
+            self._wrap, text="Loading dashboard…",
+            bg=_BG, fg=_MUTED,
+            font=("Segoe UI", 13),
+        ).pack(pady=80)
+        self.after(0, self._load_data_async)
+
+    # ── Async data loading ────────────────────────────────────────────────
+
+    def _load_data_async(self) -> None:
+        """Fetch all dashboard data in a daemon thread; populate UI on completion."""
+        db_path = self.db.db_path
+
+        def _worker() -> None:
+            from app.db.database import Database as _DB
+            from app.db.dao import OrderDAO as _ODAO
+            data: dict = {}
+            t_db = _DB(db_path)
+            try:
+                t_db.connect()
+                t_orders = _ODAO(t_db)
+                data["today_row"]   = t_orders.summary_today() or {}
+                data["pending_cnt"] = t_orders.count_by_status("Pending")
+                try:
+                    data["weekly_row"] = t_orders.summary_month() or {}
+                except Exception:
+                    data["weekly_row"] = {}
+                try:
+                    void_row = t_db.fetchone(
+                        "SELECT COUNT(*) AS c FROM void_records "
+                        "WHERE DATE(created_at) = DATE('now','localtime');"
+                    )
+                    data["void_count"] = int(_safe(void_row, "c", 0))
+                except Exception:
+                    data["void_count"] = 0
+                try:
+                    data["low_prods"] = t_db.fetchall(
+                        "SELECT name, stock FROM products "
+                        "WHERE active=1 AND low_stock > 0 AND stock <= low_stock "
+                        "ORDER BY stock;", ()
+                    )
+                except Exception:
+                    data["low_prods"] = []
+                try:
+                    data["low_mats"] = t_db.fetchall(
+                        "SELECT name, material_type, quantity, unit FROM raw_materials "
+                        "WHERE active=1 AND quantity <= low_stock ORDER BY quantity;", ()
+                    )
+                except Exception:
+                    data["low_mats"] = []
+                try:
+                    data["top_sellers"] = t_orders.best_sellers_today(limit=8)
+                except Exception:
+                    data["top_sellers"] = []
+                try:
+                    data["recent"] = t_orders.list_recent(limit=10)
+                except Exception:
+                    data["recent"] = []
+            except Exception:
+                pass
+            finally:
+                t_db.disconnect()
+            try:
+                if self.winfo_exists():
+                    self.after(0, lambda: self._on_data_loaded(data))
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_data_loaded(self, data: dict) -> None:
+        if not self.winfo_exists():
+            return
+        for w in self._wrap.winfo_children():
+            w.destroy()
+        self._populate(self._wrap, data)
 
     # ── Main populate ─────────────────────────────────────────────────────
 
-    def _populate(self, wrap: tk.Frame):
+    def _populate(self, wrap: tk.Frame, data: dict):
         PAD = 24
 
         # ── Page header ───────────────────────────────────────────────────
@@ -148,38 +225,18 @@ class DashboardView(tk.Frame):
         )
         refresh_btn.grid(row=0, column=1, rowspan=2, sticky="e", padx=(10, 0))
 
-        # ── Data fetch ────────────────────────────────────────────────────
-        today_row   = self.orders.summary_today() or {}
+        # ── Data (pre-fetched asynchronously) ────────────────────────────
+        today_row   = data.get("today_row", {}) or {}
         today_sales = float(_safe(today_row, "total_sales", 0))
         today_count = int(_safe(today_row, "order_count", 0))
-        pending_cnt = self.orders.count_by_status("Pending")
+        pending_cnt = int(data.get("pending_cnt", 0))
 
-        try:
-            weekly_row   = self.orders.summary_month() or {}
-            weekly_sales = float(_safe(weekly_row, "total_sales", 0))
-        except Exception:
-            weekly_sales = 0.0
+        weekly_row   = data.get("weekly_row", {}) or {}
+        weekly_sales = float(_safe(weekly_row, "total_sales", 0))
 
-        try:
-            void_today = self.db.fetchone(
-                "SELECT COUNT(*) AS c FROM void_records WHERE DATE(created_at) = DATE('now','localtime');"
-            )
-            void_count = int(_safe(void_today, "c", 0))
-        except Exception:
-            void_count = 0
-
-        try:
-            low_prods = self.db.fetchall(
-                "SELECT name, stock FROM products WHERE active=1 AND low_stock > 0 AND stock <= low_stock ORDER BY stock;", ())
-        except Exception:
-            low_prods = []
-
-        try:
-            low_mats = self.db.fetchall(
-                "SELECT name, material_type, quantity, unit FROM raw_materials "
-                "WHERE active=1 AND quantity <= low_stock ORDER BY quantity;", ())
-        except Exception:
-            low_mats = []
+        void_count = int(data.get("void_count", 0))
+        low_prods  = list(data.get("low_prods", []))
+        low_mats   = list(data.get("low_mats", []))
 
         # ── KPI Cards row ─────────────────────────────────────────────────
         self._section_header(wrap, "Today's Performance", PAD, top_pady=(20, 8))
@@ -256,19 +313,11 @@ class DashboardView(tk.Frame):
             self._kpi_card(row2, col, title, val, sub, accent, icon, None)
 
         # ── Top Sellers ───────────────────────────────────────────────────
-        top_sellers = []
-        try:
-            top_sellers = self.orders.best_sellers_today(limit=8)
-        except Exception:
-            pass
+        top_sellers = list(data.get("top_sellers", []))
         self._build_top_sellers(wrap, top_sellers, PAD)
 
         # ── Recent Transactions ───────────────────────────────────────────
-        recent = []
-        try:
-            recent = self.orders.list_recent(limit=10)
-        except Exception:
-            pass
+        recent = list(data.get("recent", []))
         self._build_recent_transactions(wrap, recent, PAD)
 
         # ── Low stock detail tables ───────────────────────────────────────
@@ -615,10 +664,21 @@ class DashboardView(tk.Frame):
     # ── Refresh ───────────────────────────────────────────────────────────
 
     def _refresh(self):
-        for w in self.winfo_children():
-            w.destroy()
         _apply_dash_style()
-        self._build()
+        wrap = getattr(self, "_wrap", None)
+        if wrap is None or not wrap.winfo_exists():
+            for w in self.winfo_children():
+                w.destroy()
+            self._build()
+            return
+        for w in wrap.winfo_children():
+            w.destroy()
+        tk.Label(
+            wrap, text="Refreshing…",
+            bg=_BG, fg=_MUTED,
+            font=("Segoe UI", 13),
+        ).pack(pady=80)
+        self.after(0, self._load_data_async)
 
 
 # ── Voided Orders Popup ───────────────────────────────────────────────────────

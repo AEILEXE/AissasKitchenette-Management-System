@@ -107,6 +107,13 @@ class POSView(tk.Frame):
         self._lbl_total_val: tk.Label | None = None
         self._cart_row_refs: dict[int, dict[str, tk.Label]] = {}
 
+        # Cart widget pool — widgets are never destroyed, only shown/hidden in-place
+        self._cart_row_pool: list[dict] = []
+        self._cart_hdr_name: tk.Label | None = None
+        self._cart_hdr_qty: tk.Label | None = None
+        self._cart_hdr_sub: tk.Label | None = None
+        self._cart_empty_lbl: tk.Label | None = None
+
         # Category grid layout tracking
         self._cat_grid_frame: tk.Frame | None = None
         self._cat_grid_after: int | None = None
@@ -122,11 +129,10 @@ class POSView(tk.Frame):
         self._build()
         self._building = False
         self._preload_folder_images_async()   # warm cache before first card render
-        self._after(50, self._refresh_categories)
-        self._after(100, self._refresh_products)
+        self._refresh_categories()            # sync: buttons exist before frame is shown
+        self._after(0, self._refresh_products)   # start DB fetch immediately, not 100ms later
         self._after(200, self._refresh_drafts_panel)  # defer — not needed immediately
         self._refresh_cart()
-        self.after_idle(self._debounced_relayout)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
     def destroy(self) -> None:
@@ -527,11 +533,7 @@ class POSView(tk.Frame):
 
         self.prod_inner = tk.Frame(self.prod_canvas, bg="#e6ddbd")
         self._prod_window_id = self.prod_canvas.create_window((0, 0), window=self.prod_inner, anchor="nw")
-        self.prod_inner.bind(
-            "<Configure>",
-            lambda _e: self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all")),
-            add="+",
-        )
+        # scroll region is updated via after_idle in _update_prod_scroll_region after each layout pass
         self.prod_canvas.bind("<Configure>", self._on_prod_canvas_configure, add="+")
         self.prod_canvas.bind("<Map>", self._on_prod_canvas_map, add="+")
         self.prod_inner.bind("<Map>", self._on_prod_canvas_map, add="+")
@@ -574,6 +576,7 @@ class POSView(tk.Frame):
             add="+",
         )
         self._bind_canvas_scroll(self.cart_canvas)
+        self._init_cart_pool()
 
         # ── ML SUGGESTIONS (row=2) ────────────────────────────────────────────
         self._suggestions_frame = tk.Frame(col1, bg=THEME["panel"])
@@ -928,13 +931,15 @@ class POSView(tk.Frame):
             pass
 
         ew: int = int(getattr(e, "width", 0))
-        try:
-            self.prod_canvas.itemconfigure(self._prod_window_id, width=ew)
-        except Exception:
-            pass
-
         old_w = self._prod_canvas_w
         self._prod_canvas_w = ew
+
+        # Only resize inner frame when width actually changed — avoids redundant layout on height-only resize
+        if ew != old_w and ew > 0:
+            try:
+                self.prod_canvas.itemconfigure(self._prod_window_id, width=ew)
+            except Exception:
+                pass
 
         # Detect window state change (maximize / restore)
         try:
@@ -979,7 +984,11 @@ class POSView(tk.Frame):
             return
         self._cat_grid_width = new_w
         self._cancel_after(self._cat_grid_after)
-        self._cat_grid_after = self._after(80, self._relayout_cat_grid)
+        # First layout (no prior columns): fire before next paint so buttons are
+        # already placed when the frame first becomes visible.  Subsequent resize
+        # events keep the 80ms debounce to avoid thrashing during drag-resize.
+        is_initial = not getattr(self, "_cat_last_cols", None)
+        self._cat_grid_after = self._after(0 if is_initial else 80, self._relayout_cat_grid)
 
     def _relayout_cat_grid(self) -> None:
         """Place all category buttons into a uniform grid that wraps based on frame width."""
@@ -1004,6 +1013,11 @@ class POSView(tk.Frame):
         btn_char_w = 14  # fixed width in characters
         btn_px_est = btn_char_w * 7 + 24  # ~122px per button
         cols = max(4, min(8, frame_w // max(btn_px_est, 60)))
+
+        # Skip if column count hasn't changed — avoids re-gridding every button on slight resize
+        if cols == getattr(self, "_cat_last_cols", -1):
+            return
+        self._cat_last_cols = cols
 
         # Clear old grid config
         for c in range(10):
@@ -1070,7 +1084,7 @@ class POSView(tk.Frame):
             self._selected_category if self._selected_category in self._cat_buttons else "All"
         )
         self._cancel_after(self._cat_grid_after)
-        self._cat_grid_after = self._after(60, self._relayout_cat_grid)
+        self._cat_grid_after = self._after(0, self._relayout_cat_grid)
 
     def _on_category_click(self, name: str) -> None:
         # Update the button highlight immediately so UI feels instant.
@@ -1304,14 +1318,12 @@ class POSView(tk.Frame):
                 )
             for r in range((end + cols - 1) // cols):
                 self.prod_inner.rowconfigure(r, weight=0, minsize=0)
-            try:
-                self.prod_inner.update_idletasks()
-                self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
-            except Exception:
-                pass
 
         if self._batch_idx < len(self._batch_products):
             self._batch_after = self._after(10, self._render_product_batch)
+        else:
+            # All batches done — update scroll region once (after geometry settles)
+            self.after_idle(self._update_prod_scroll_region)
 
     def _relayout_products(self, rebuild_cards: bool = False) -> None:
         if self._destroyed or self._building or not self.winfo_exists():
@@ -1368,17 +1380,40 @@ class POSView(tk.Frame):
         for r in range(new_rows):
             self.prod_inner.rowconfigure(r, weight=0, minsize=0)
 
-        # update_idletasks ensures geometry is computed before bbox
-        try:
-            self.prod_inner.update_idletasks()
-            self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
-        except Exception:
-            pass
+        # Defer wraplength updates so card grid positions are committed first.
+        # Applying wraplength inline triggers per-label text reflow which cascades
+        # height changes up through every card frame — visible as cards "settling"
+        # during resize.  after_idle fires in the same idle cycle (before next paint)
+        # but AFTER Tkinter has processed all queued geometry from the grid calls above.
+        card_w = max(80, (self._prod_canvas_w - (cols + 1) * 8) // cols)
+        wrap = max(60, card_w - 28)
+        snapshot = list(cards)
+
+        def _apply_wrap(w=wrap, cc=snapshot):
+            for card in cc:
+                refs = getattr(card, "_pool_refs", None)
+                if refs:
+                    try:
+                        refs["name_lbl"].configure(wraplength=w)
+                        refs["desc_lbl"].configure(wraplength=w)
+                    except Exception:
+                        pass
+            self._update_prod_scroll_region()
+
+        self.after_idle(_apply_wrap)
 
         # Track for skip-on-no-change optimisation in _relayout_products
         self._last_relayout_cols = cols
         self._last_relayout_count = len(cards)
         self._last_relayout_rows = new_rows
+
+    def _update_prod_scroll_region(self) -> None:
+        """Update product canvas scroll region — called via after_idle so geometry is settled."""
+        try:
+            if self.prod_canvas.winfo_exists():
+                self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
+        except Exception:
+            pass
 
     # ── Product card — beige tile with left accent border ────────────────────
     _CARD_BG = "#e6ddbd"   # beige card background — prevents any black flash
@@ -1463,11 +1498,7 @@ class POSView(tk.Frame):
         desc_lbl.grid(row=2, column=1, sticky="ew", padx=(4, 6), pady=(0, 1))
         _bind_click(desc_lbl)
 
-        def _on_card_resize(event, _n=name_lbl, _d=desc_lbl):
-            wrap = max(30, event.width - 16)
-            _n.configure(wraplength=wrap)
-            _d.configure(wraplength=wrap)
-        card.bind("<Configure>", _on_card_resize)
+        # wraplength is set once per layout pass in _do_product_grid_layout — no per-card binding needed
 
         # ── Price ─────────────────────────────────────────────────────────────
         price_row = tk.Frame(card, bg=self._CARD_BG, cursor="hand2")
@@ -1536,6 +1567,63 @@ class POSView(tk.Frame):
         refs["name_lbl"].unbind("<Motion>")
         if len(name) > 32:
             self._add_tooltip(refs["name_lbl"], name)
+
+    # ── Cart widget pool ──────────────────────────────────────────────────────
+
+    def _init_cart_pool(self) -> None:
+        """Build persistent cart header/empty label once after cart_tbl is created."""
+        self.cart_tbl.columnconfigure(0, weight=1, minsize=130)
+        self.cart_tbl.columnconfigure(1, weight=0, minsize=22)
+        self.cart_tbl.columnconfigure(2, weight=0, minsize=26)
+        self.cart_tbl.columnconfigure(3, weight=0, minsize=22)
+        self.cart_tbl.columnconfigure(4, weight=0, minsize=64)
+        self.cart_tbl.columnconfigure(5, weight=0, minsize=28)
+
+        self._cart_empty_lbl = tk.Label(
+            self.cart_tbl, text="No items",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+        )
+        self._cart_hdr_name = tk.Label(
+            self.cart_tbl, text="Item",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", 9, "bold"),
+        )
+        self._cart_hdr_qty = tk.Label(
+            self.cart_tbl, text="Qty",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", 9, "bold"), anchor="center",
+        )
+        self._cart_hdr_sub = tk.Label(
+            self.cart_tbl, text="Subtotal",
+            bg=THEME["panel2"], fg=THEME["muted"],
+            font=("Segoe UI", 9, "bold"), anchor="e",
+        )
+
+    def _get_cart_row(self, pool_idx: int) -> "dict[str, tk.Widget]":
+        """Return (or create) a persistent cart row at zero-based pool index."""
+        if pool_idx < len(self._cart_row_pool):
+            return self._cart_row_pool[pool_idx]
+        row: dict[str, tk.Widget] = {
+            "name_lbl":   tk.Label(self.cart_tbl, bg=THEME["panel2"], fg=THEME["text"],
+                                   anchor="w", font=("Segoe UI", 9)),
+            "minus_btn":  tk.Button(self.cart_tbl, text="−",
+                                    bg=THEME["panel"], fg=THEME["text"],
+                                    bd=0, width=2, cursor="hand2"),
+            "qty_lbl":    tk.Label(self.cart_tbl, bg=THEME["panel2"], fg=THEME["text"],
+                                   width=3, anchor="center"),
+            "plus_btn":   tk.Button(self.cart_tbl, text="+",
+                                    bg=THEME["panel"], fg=THEME["text"],
+                                    bd=0, width=2, cursor="hand2"),
+            "sub_lbl":    tk.Label(self.cart_tbl, bg=THEME["panel2"], fg=THEME["text"],
+                                   anchor="e"),
+            "remove_btn": tk.Button(self.cart_tbl, text="✕",
+                                    bg=THEME["danger"], fg="white",
+                                    bd=0, width=3, padx=2, pady=1,
+                                    cursor="hand2", font=("Segoe UI", 9, "bold")),
+        }
+        self._cart_row_pool.append(row)
+        return row
 
     # ── Cart canvas dynamic sizing ────────────────────────────────────────────
     _CART_MAX_H = 300
@@ -1722,27 +1810,29 @@ class POSView(tk.Frame):
                 self._discount_visible = False
 
     def _refresh_cart(self):
+        """Refresh cart display using a persistent widget pool — no widget destruction."""
         self._cart_row_refs = {}
-        for w in self.cart_tbl.winfo_children():
-            w.destroy()
-
-        self.cart_tbl.columnconfigure(0, weight=1, minsize=130)
-        self.cart_tbl.columnconfigure(1, weight=0, minsize=22)
-        self.cart_tbl.columnconfigure(2, weight=0, minsize=26)
-        self.cart_tbl.columnconfigure(3, weight=0, minsize=22)
-        self.cart_tbl.columnconfigure(4, weight=0, minsize=64)
-        self.cart_tbl.columnconfigure(5, weight=0, minsize=28)
 
         if not self.cart:
+            # Hide header and all pool rows; show "No items"
+            if self._cart_hdr_name:
+                self._cart_hdr_name.grid_remove()
+            if self._cart_hdr_qty:
+                self._cart_hdr_qty.grid_remove()
+            if self._cart_hdr_sub:
+                self._cart_hdr_sub.grid_remove()
+            for pr in self._cart_row_pool:
+                for w in pr.values():
+                    w.grid_remove()
+            if self._cart_empty_lbl:
+                self._cart_empty_lbl.grid(row=0, column=0, columnspan=6, pady=4)
+
             self._set_discount_next_to_total(None)
             try:
                 self.cart_canvas.yview_moveto(0)
                 self.cart_canvas.configure(scrollregion=(0, 0, 0, 0))
             except Exception:
                 pass
-            tk.Label(self.cart_tbl, text="No items",
-                     bg=THEME["panel2"], fg=THEME["muted"],
-                     font=("Segoe UI", 9)).grid(row=0, column=0, columnspan=6, pady=4)
             self.total_lbl.configure(text="₱0.00")
             if self._lbl_subtotal_val:
                 self._lbl_subtotal_val.configure(text="₱0.00")
@@ -1755,47 +1845,40 @@ class POSView(tk.Frame):
             self._after(20, self._resize_cart_canvas)
             return
 
-        tk.Label(self.cart_tbl, text="Item",
-                 bg=THEME["panel2"], fg=THEME["muted"],
-                 font=("Segoe UI", 9, "bold"),
-                 ).grid(row=0, column=0, sticky="w", padx=(10, 2), pady=(4, 2))
-        tk.Label(self.cart_tbl, text="Qty",
-                 bg=THEME["panel2"], fg=THEME["muted"],
-                 font=("Segoe UI", 9, "bold"), anchor="center",
-                 ).grid(row=0, column=1, columnspan=3, sticky="ew", pady=(4, 2))
-        tk.Label(self.cart_tbl, text="Subtotal",
-                 bg=THEME["panel2"], fg=THEME["muted"],
-                 font=("Segoe UI", 9, "bold"), anchor="e",
-                 ).grid(row=0, column=4, sticky="ew", padx=(4, 4), pady=(4, 2))
+        # Items present — hide empty label, show persistent header
+        if self._cart_empty_lbl:
+            self._cart_empty_lbl.grid_remove()
+        if self._cart_hdr_name:
+            self._cart_hdr_name.grid(row=0, column=0, sticky="w", padx=(10, 2), pady=(4, 2))
+        if self._cart_hdr_qty:
+            self._cart_hdr_qty.grid(row=0, column=1, columnspan=3, sticky="ew", pady=(4, 2))
+        if self._cart_hdr_sub:
+            self._cart_hdr_sub.grid(row=0, column=4, sticky="ew", padx=(4, 4), pady=(4, 2))
 
+        # Update pool rows in-place (no widget creation/destruction)
         row_i = 1
         for pid, (name, price, qty, _note) in self.cart.items():
+            pr = self._get_cart_row(row_i - 1)
             name_txt = _truncate_text(name, max_len=22)
-            tk.Label(self.cart_tbl, text=name_txt,
-                     bg=THEME["panel2"], fg=THEME["text"], anchor="w",
-                     font=("Segoe UI", 9),
-                     ).grid(row=row_i, column=0, sticky="ew", padx=(10, 2), pady=2)
-            tk.Button(self.cart_tbl, text="−",
-                      command=lambda p=pid: self._change_qty(p, -1),
-                      bg=THEME["panel"], fg=THEME["text"], bd=0, width=2, cursor="hand2",
-                      ).grid(row=row_i, column=1, padx=2, pady=2)
-            qty_lbl = tk.Label(self.cart_tbl, text=str(qty),
-                               bg=THEME["panel2"], fg=THEME["text"], width=3, anchor="center")
-            qty_lbl.grid(row=row_i, column=2, padx=2, pady=2)
-            tk.Button(self.cart_tbl, text="+",
-                      command=lambda p=pid: self._change_qty(p, 1),
-                      bg=THEME["panel"], fg=THEME["text"], bd=0, width=2, cursor="hand2",
-                      ).grid(row=row_i, column=3, padx=2, pady=2)
-            sub_lbl = tk.Label(self.cart_tbl, text=money(qty * price),
-                               bg=THEME["panel2"], fg=THEME["text"], anchor="e")
-            sub_lbl.grid(row=row_i, column=4, sticky="e", padx=(4, 4), pady=2)
-            tk.Button(self.cart_tbl, text="✕",
-                      command=lambda p=pid: self._remove_from_cart(p),
-                      bg=THEME["danger"], fg="white", bd=0, width=3, padx=2, pady=1,
-                      cursor="hand2", font=("Segoe UI", 9, "bold"),
-                      ).grid(row=row_i, column=5, padx=(4, 10), pady=2, sticky="e")
-            self._cart_row_refs[pid] = {"qty_lbl": qty_lbl, "sub_lbl": sub_lbl}
+            pr["name_lbl"].configure(text=name_txt)
+            pr["name_lbl"].grid(row=row_i, column=0, sticky="ew", padx=(10, 2), pady=2)
+            pr["minus_btn"].configure(command=lambda p=pid: self._change_qty(p, -1))
+            pr["minus_btn"].grid(row=row_i, column=1, padx=2, pady=2)
+            pr["qty_lbl"].configure(text=str(qty))
+            pr["qty_lbl"].grid(row=row_i, column=2, padx=2, pady=2)
+            pr["plus_btn"].configure(command=lambda p=pid: self._change_qty(p, 1))
+            pr["plus_btn"].grid(row=row_i, column=3, padx=2, pady=2)
+            pr["sub_lbl"].configure(text=money(qty * price))
+            pr["sub_lbl"].grid(row=row_i, column=4, sticky="e", padx=(4, 4), pady=2)
+            pr["remove_btn"].configure(command=lambda p=pid: self._remove_from_cart(p))
+            pr["remove_btn"].grid(row=row_i, column=5, padx=(4, 10), pady=2, sticky="e")
+            self._cart_row_refs[pid] = {"qty_lbl": pr["qty_lbl"], "sub_lbl": pr["sub_lbl"]}
             row_i += 1
+
+        # Hide unused pool rows (pool grows, never shrinks)
+        for i in range(row_i - 1, len(self._cart_row_pool)):
+            for w in self._cart_row_pool[i].values():
+                w.grid_remove()
 
         subtotal, discount, _tax, total = self._calc_totals()
         self.total_lbl.configure(text=money(total))
@@ -1840,12 +1923,10 @@ class POSView(tk.Frame):
         if self._suggestions_frame is None:
             return
 
-        for w in self._suggestions_frame.winfo_children():
-            w.destroy()
-
         if not self.cart:
             if self._suggestions_frame.winfo_ismapped():
                 self._suggestions_frame.grid_remove()
+            self._last_suggest_ids: list = []
             return
 
         cart_ids = list(self.cart.keys())
@@ -1853,6 +1934,18 @@ class POSView(tk.Frame):
             suggested_ids = self.recommender.suggest(cart_ids, top_n=5)
         except Exception:
             suggested_ids = []
+
+        # Skip full rebuild when suggestions are identical to the last render
+        last = getattr(self, "_last_suggest_ids", None)
+        if last is not None and last == suggested_ids:
+            if not self._suggestions_frame.winfo_ismapped():
+                self._suggestions_frame.grid()
+            return
+        self._last_suggest_ids = suggested_ids
+
+        # Clear previous suggestion widgets before rebuilding
+        for w in self._suggestions_frame.winfo_children():
+            w.destroy()
 
         if not suggested_ids:
             hdr2 = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
@@ -1921,18 +2014,6 @@ class POSView(tk.Frame):
                          padx=(0, 4) if col_i < len(chunk) - 1 else (0, 0))
                 if len(name) > 14:
                     self._add_tooltip(btn, name)
-
-        if rendered == 0:
-            for w in self._suggestions_frame.winfo_children():
-                w.destroy()
-            hdr_empty = tk.Frame(self._suggestions_frame, bg=THEME["panel"])
-            hdr_empty.pack(fill="x", padx=14, pady=(4, 2))
-            tk.Label(hdr_empty, text="Suggested Items", bg=THEME["panel"], fg=THEME["muted"],
-                     font=("Segoe UI", 10, "bold")).pack(side="left")
-            tk.Label(self._suggestions_frame,
-                     text="No suggestions yet — complete more sales",
-                     bg=THEME["panel"], fg=THEME["muted"],
-                     font=("Segoe UI", 9, "italic")).pack(anchor="w", padx=14, pady=(0, 4))
 
         if not self._suggestions_frame.winfo_ismapped():
             self._suggestions_frame.grid()

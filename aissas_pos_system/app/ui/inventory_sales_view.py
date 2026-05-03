@@ -312,9 +312,9 @@ class InventorySalesView(tk.Frame):
         # which prevents the bar chart and pie chart from overlapping and handles
         # rotated x-axis labels without needing manual tight_layout adjustments.
         if has_pie:
-            fig = Figure(figsize=(12, 8), dpi=80, constrained_layout=True)
+            fig = Figure(figsize=(12, 10), dpi=80, constrained_layout=True)
             fig.patch.set_facecolor("#FAFAFA")
-            gs     = GridSpec(2, 1, figure=fig, height_ratios=[6, 3.5])
+            gs     = GridSpec(2, 1, figure=fig, height_ratios=[3, 2])
             ax     = fig.add_subplot(gs[0])
             ax_pie = fig.add_subplot(gs[1])
         else:

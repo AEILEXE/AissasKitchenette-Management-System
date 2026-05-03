@@ -102,16 +102,14 @@ class AppWindow:
     _CANVAS_BG = "#e6ddbd"   # beige — matches POS canvas; used to mask all view transitions
 
     def _clear_content(self) -> None:
-        # Paint all containers beige BEFORE destroying the current view so the OS
-        # never sees an undrawn gap; flush pending layout events before destruction.
-        # update() is intentionally avoided here — it processes all pending events
-        # including user input, which can cause re-entrancy and intermediate repaints
-        # that produce a visible black/white flash during tab switches.
+        # Paint containers beige so any momentary gap shows warm background, not black.
+        # Do NOT call update_idletasks() here — that forces a mid-transition render that
+        # makes the beige visually flash between screens. The bg paint is queued and
+        # Tkinter will composite it with the new view in the same render cycle.
         try:
             self.root.configure(bg=self._CANVAS_BG)
             self.root_frame.configure(bg=self._CANVAS_BG)
             self.content.configure(bg=self._CANVAS_BG)
-            self.root.update_idletasks()
         except Exception:
             pass
         if self._current_view is not None:
@@ -351,12 +349,12 @@ class AppWindow:
             self.content.configure(bg=self._CANVAS_BG)
 
     def on_login_success(self) -> None:
+        # Destroy login view FIRST so the nav never packs on top of a still-visible
+        # login frame (which causes a geometry-shift flash before login is removed).
+        self._show_loading_screen()
         self._show_shell(True)
         self._build_nav()
         self._show_welcome()
-        # Show loading screen immediately so the UI responds right away,
-        # then defer the heavy view creation to the next event-loop tick.
-        self._show_loading_screen()
         self.root.after(30, self._finish_login_navigation)
 
     def _show_loading_screen(self) -> None:
