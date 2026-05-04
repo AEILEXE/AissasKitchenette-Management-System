@@ -159,6 +159,15 @@ def main() -> None:
     root.title(f"{APP_NAME} v{APP_VERSION}")
     root.minsize(1024, 650)
     root.configure(bg="#e6ddbd")   # permanent beige root bg — any exposed gap matches canvas
+    # Start maximized before any UI is built so the first layout pass
+    # commits at full size — no resize snap, no partial-width flash.
+    try:
+        root.state("zoomed")
+    except Exception:
+        try:
+            root.attributes("-zoomed", True)
+        except Exception:
+            pass
 
     _set_window_icon(root)
 

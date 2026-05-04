@@ -101,6 +101,7 @@ class POSView(tk.Frame):
 
         self.var_amount_paid: tk.StringVar | None = None
         self._amount_entry: tk.Entry | None = None
+        self._keypad_target: tk.StringVar | None = None   # active field the keypad writes to
         self._lbl_subtotal_val: tk.Label | None = None
         self._lbl_discount_row: tk.Frame | None = None
         self._lbl_discount_name: tk.Label | None = None
@@ -467,9 +468,9 @@ class POSView(tk.Frame):
         body = tk.Frame(self, bg=THEME["bg"])
         body.pack(fill="both", expand=True, padx=12, pady=(8, 12))
         body.rowconfigure(0, weight=1)
-        body.columnconfigure(0, weight=5, minsize=400)   # Products   — 50% of extra space
-        body.columnconfigure(1, weight=3, minsize=350)   # Order      — 30% of extra space
-        body.columnconfigure(2, weight=2, minsize=280)   # Payment    — 20% of extra space
+        body.columnconfigure(0, weight=5, minsize=200)   # Products   — 50% of extra space
+        body.columnconfigure(1, weight=3, minsize=180)   # Order      — 30% of extra space
+        body.columnconfigure(2, weight=2, minsize=160)   # Payment    — 20% of extra space
 
         try:
             self._global_click_id = self.winfo_toplevel().bind("<Button-1>", self._on_global_click, add="+")
@@ -766,11 +767,14 @@ class POSView(tk.Frame):
                                       font=("Segoe UI", 8, "bold"))
         self._lbl_table_no.pack(anchor="w", pady=(0, 2))
         self.var_table_number = tk.StringVar()
-        tk.Entry(tbl_outer, textvariable=self.var_table_number,
+        _tbl_entry = tk.Entry(tbl_outer, textvariable=self.var_table_number,
                  bg=THEME["panel2"], fg=THEME["text"], bd=0,
                  font=("Segoe UI", 11, "bold"), justify="center",
                  insertbackground="#3d2b1f", insertwidth=2,
-                 ).pack(fill="x", ipady=7)
+                 )
+        _tbl_entry.pack(fill="x", ipady=7)
+        _tbl_entry.bind("<FocusIn>",  lambda _e: setattr(self, "_keypad_target", self.var_table_number), add="+")
+        _tbl_entry.bind("<Key>", self._on_amount_key, add="+")
 
         # ── PAYMENT METHOD ────────────────────────────────────────────────────
         tk.Frame(col2, bg=THEME["border"], height=1).pack(fill="x", padx=_pad)
@@ -824,6 +828,7 @@ class POSView(tk.Frame):
         )
         self._amount_entry.pack(fill="x", padx=_pad, ipady=7)
         self._amount_entry.bind("<Key>", self._on_amount_key)
+        self._amount_entry.bind("<FocusIn>",  lambda _e: setattr(self, "_keypad_target", self.var_amount_paid), add="+")
 
         self._change_lbl = tk.Label(col2, text="", bg=THEME["panel"], fg=THEME["muted"],
                                     font=("Segoe UI", 8, "bold"), anchor="w")
@@ -873,7 +878,7 @@ class POSView(tk.Frame):
             for _ci, _key in enumerate(_keys):
                 _kp.columnconfigure(_ci, weight=1, uniform="kp")
                 is_special = _key in (".", "CLEAR")
-                tk.Button(
+                _btn = tk.Button(
                     _kp, text=_key,
                     command=lambda k=_key: self._keypad_press(k),
                     bg=THEME["panel2"] if is_special else THEME.get("brown", "#6b4a3a"),
@@ -882,29 +887,38 @@ class POSView(tk.Frame):
                     activeforeground=THEME["text"],
                     bd=0, padx=6, pady=10, cursor="hand2",
                     font=("Segoe UI", 13, "bold"),
-                ).grid(row=_ri, column=_ci, sticky="nsew", padx=2, pady=2)
+                )
+                _btn.grid(row=_ri, column=_ci, sticky="nsew", padx=2, pady=2)
+                # Prevent keypad buttons from stealing focus from the active
+                # entry — without this, clicking a button fires FocusOut on
+                # the entry, clears _keypad_target, and the keypad always
+                # falls back to var_amount_paid regardless of which field
+                # the user clicked last.
+                _btn.configure(takefocus=0)
 
     # ── Keypad ────────────────────────────────────────────────────────────────
     def _keypad_press(self, key: str) -> None:
-        if self.var_amount_paid is None:
+        # Write to whichever field is currently focused; fall back to amount paid
+        target = self._keypad_target or self.var_amount_paid
+        if target is None:
             return
-        current = self.var_amount_paid.get().strip()
+        current = target.get().strip()
         if key == "CLEAR" or key == "C":
-            self.var_amount_paid.set("")
+            target.set("")
             return
         if key == "←":
-            self.var_amount_paid.set(current[:-1])
+            target.set(current[:-1])
             return
         if key == ".":
             if "." in current:
                 return
-            self.var_amount_paid.set((current or "0") + ".")
+            target.set((current or "0") + ".")
             return
         if key.isdigit():
             if current == "0":
-                self.var_amount_paid.set(key)
+                target.set(key)
             else:
-                self.var_amount_paid.set(current + key)
+                target.set(current + key)
 
     def _on_amount_key(self, event: tk.Event) -> str:
         """Route keyboard input on the amount-paid entry through the keypad logic."""
@@ -970,14 +984,16 @@ class POSView(tk.Frame):
     def _on_cat_grid_configure(self, event=None) -> None:
         if self._destroyed or self._building:
             return
-        new_w = self._cat_grid_frame.winfo_width() if self._cat_grid_frame else 0
+        # Use event dimensions when available — winfo_width() can return 1 during
+        # minimize/restore transitions, which causes a spurious re-layout at width=1
+        # followed by a second layout at the real width, producing double-rendered rows.
+        new_w = int(getattr(event, "width", 0)) or (
+            self._cat_grid_frame.winfo_width() if self._cat_grid_frame else 0
+        )
         if new_w < 10 or new_w == self._cat_grid_width:
             return
         self._cat_grid_width = new_w
         self._cancel_after(self._cat_grid_after)
-        # First layout (no prior columns): fire before next paint so buttons are
-        # already placed when the frame first becomes visible.  Subsequent resize
-        # events keep the 80ms debounce to avoid thrashing during drag-resize.
         is_initial = not getattr(self, "_cat_last_cols", None)
         self._cat_grid_after = self._after(0 if is_initial else 80, self._relayout_cat_grid)
 
@@ -1417,7 +1433,6 @@ class POSView(tk.Frame):
                 if refs:
                     try:
                         refs["name_lbl"].configure(wraplength=w)
-                        refs["desc_lbl"].configure(wraplength=w)
                     except Exception:
                         pass
             self._update_prod_scroll_region()
@@ -1508,23 +1523,9 @@ class POSView(tk.Frame):
         if len(name) > 32:
             self._add_tooltip(name_lbl, name)
 
-        # ── Description ───────────────────────────────────────────────────────
-        desc_show = desc if desc else "No description available"
-        desc_lbl = tk.Label(
-            card, text=desc_show,
-            bg=self._CARD_BG, fg=THEME["muted"],
-            font=("Segoe UI", 7),
-            anchor="center", justify="center",
-            wraplength=120, cursor="hand2",
-        )
-        desc_lbl.grid(row=2, column=1, sticky="ew", padx=(4, 6), pady=(0, 1))
-        _bind_click(desc_lbl)
-
-        # wraplength is set once per layout pass in _do_product_grid_layout — no per-card binding needed
-
         # ── Price ─────────────────────────────────────────────────────────────
         price_row = tk.Frame(card, bg=self._CARD_BG, cursor="hand2")
-        price_row.grid(row=3, column=1, sticky="ew", padx=(4, 6), pady=(0, 6))
+        price_row.grid(row=2, column=1, sticky="ew", padx=(4, 6), pady=(0, 6))
         price_row.columnconfigure(0, weight=1)
         _bind_click(price_row)
 
@@ -1542,7 +1543,6 @@ class POSView(tk.Frame):
             "image_rel": img_rel,
             "img_lbl":   img_lbl,
             "name_lbl":  name_lbl,
-            "desc_lbl":  desc_lbl,
             "price_lbl": price_lbl,
             "clickables": clickables,
         }
@@ -1569,7 +1569,6 @@ class POSView(tk.Frame):
 
         # Update text labels
         refs["name_lbl"].configure(text=name)
-        refs["desc_lbl"].configure(text=desc if desc else "No description available")
         refs["price_lbl"].configure(text=money(price))
 
         # Update image only when changed
@@ -2692,6 +2691,7 @@ class ConfirmOrderDialog(tk.Toplevel):
         self.auth = auth
         self.svc = POSService(db)
 
+        self.parent_pos = parent
         self.cart = dict(cart)
         self.discount_mode = discount_mode
         self.discount_value = discount_value
@@ -2901,6 +2901,8 @@ class ConfirmOrderDialog(tk.Toplevel):
                              insertbackground="#3d2b1f", insertwidth=2,
                              font=("Segoe UI", f(10)))
         ent_table.pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 6))
+        ent_table.bind("<FocusIn>",  lambda _e: setattr(self.parent_pos, "_keypad_target", self.var_table_number), add="+")
+        ent_table.bind("<Key>", self.parent_pos._on_amount_key, add="+")
         ent_table.focus_set()
         _update_ot_buttons()
 
@@ -2923,10 +2925,13 @@ class ConfirmOrderDialog(tk.Toplevel):
         amt_frame.columnconfigure(1, weight=1)
         tk.Label(amt_frame, text="₱", bg=THEME["panel2"], fg=THEME["muted"],
                  font=("Segoe UI", f(10))).grid(row=0, column=0, padx=(8, 2), sticky="ns")
-        tk.Entry(amt_frame, textvariable=self.var_amount_paid,
+        _amt_ent = tk.Entry(amt_frame, textvariable=self.var_amount_paid,
                  bd=0, bg=THEME["panel2"], fg=THEME["text"],
                  insertbackground="#3d2b1f", insertwidth=2,
-                 font=("Segoe UI", f(10))).grid(row=0, column=1, sticky="ew", ipady=sp(8), padx=(0, 4))
+                 font=("Segoe UI", f(10)))
+        _amt_ent.grid(row=0, column=1, sticky="ew", ipady=sp(8), padx=(0, 4))
+        _amt_ent.bind("<FocusIn>",  lambda _e: setattr(self.parent_pos, "_keypad_target", self.var_amount_paid), add="+")
+        _amt_ent.bind("<Key>", self.parent_pos._on_amount_key, add="+")
 
         self._change_lbl = tk.Label(right, text="", bg=THEME["panel"], fg=THEME["muted"],
                                     font=("Segoe UI", f(9), "bold"), anchor="w")

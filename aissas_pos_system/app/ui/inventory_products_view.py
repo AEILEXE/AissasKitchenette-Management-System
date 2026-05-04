@@ -189,7 +189,7 @@ class InventoryProductsView(tk.Frame):
         tbl_card.rowconfigure(0, weight=1)
         tbl_card.columnconfigure(0, weight=1)
 
-        cols = ("name", "category", "description", "price", "available", "action")
+        cols = ("name", "category", "price", "available", "action")
         self.tbl = ttk.Treeview(
             tbl_card, columns=cols, show="headings",
             style="Prod.Treeview",
@@ -204,7 +204,6 @@ class InventoryProductsView(tk.Frame):
         col_cfg = [
             ("name",        "Name",         ui_scale.s(180),  "w",      True),
             ("category",    "Category",     ui_scale.s(120),  "w",      False),
-            ("description", "Description",  ui_scale.s(260),  "w",      True),
             ("price",       "Price",        ui_scale.s(100),  "e",      False),
             ("available",   "Status",       ui_scale.s(90),   "center", False),
             ("action",      "",             ui_scale.s(60),   "center", False),
@@ -268,7 +267,7 @@ class InventoryProductsView(tk.Frame):
             self._prod_sort["reverse"] = False
         rev = self._prod_sort["reverse"]
         ind = " ▲" if not rev else " ▼"
-        _labels = {"name": "Name", "category": "Category", "description": "Description",
+        _labels = {"name": "Name", "category": "Category",
                    "price": "Price", "available": "Status", "action": ""}
         for cid, hdr in _labels.items():
             self.tbl.heading(cid, text=(hdr + ind) if cid == col else hdr,
@@ -315,7 +314,6 @@ class InventoryProductsView(tk.Frame):
             _key = {
                 "name":      lambda r: str(r.get("name") or "").lower(),
                 "category":  lambda r: str(r.get("category") or "").lower(),
-                "description": lambda r: str(r.get("description") or "").lower(),
                 "price":     lambda r: float(r.get("price") or 0),
                 "available": lambda r: int(r.get("active") or 0),
             }
@@ -332,7 +330,7 @@ class InventoryProductsView(tk.Frame):
                 "", tk.END,
                 iid=str(pid),
                 values=(
-                    str(r["name"]), str(r["category"]), str(r["description"] or ""),
+                    str(r["name"]), str(r["category"]),
                     money(r["price"]),
                     status_text,
                     "Edit ›",
@@ -536,22 +534,9 @@ class ProductEditor(tk.Toplevel):
             insertbackground="#3d2b1f", insertwidth=2,
         ).grid(row=5, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 8), ipady=sp(8))
 
-        # ── Description ───────────────────────────────────────────────────────
-        tk.Label(
-            box, text="Description",
-            bg=THEME["panel"], fg=THEME["muted"],
-            font=("Segoe UI", f(9)),
-        ).grid(row=6, column=0, sticky="w", padx=14)
-        self._desc_text = tk.Text(
-            box, height=4, bd=0,
-            bg=THEME["panel2"], fg=THEME["text"],
-            font=("Segoe UI", f(9)),
-        )
-        self._desc_text.grid(row=7, column=0, columnspan=2, sticky="ew", padx=14, pady=(4, 10))
-
         # ── Category row ──────────────────────────────────────────────────────
         cat_row = tk.Frame(box, bg=THEME["panel"])
-        cat_row.grid(row=8, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 10))
+        cat_row.grid(row=6, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 10))
         cat_row.columnconfigure(1, weight=1)
 
         tk.Label(
@@ -630,9 +615,6 @@ class ProductEditor(tk.Toplevel):
         self.var_low.set(str(r["low_stock"]))
         self.var_active.set(int(r["active"]))
         self.var_category.set(r["category"] or "")
-
-        self._desc_text.delete("1.0", "end")
-        self._desc_text.insert("1.0", r["description"] or "")
 
         # Show image preview for existing product
         if img_path:
@@ -746,7 +728,6 @@ class ProductEditor(tk.Toplevel):
             messagebox.showerror("Name", "Product name is required.")
             return
 
-        desc       = self._desc_text.get("1.0", "end").strip()
         image_path = self.var_image.get().strip()
 
         # Image is required when creating a new product
@@ -771,12 +752,12 @@ class ProductEditor(tk.Toplevel):
 
         if self.product_id:
             self.products.update(
-                self.product_id, cat_id, name, desc, "", image_path,
+                self.product_id, cat_id, name, "", "", image_path,
                 price, stock, low, int(self.var_active.get()),
             )
         else:
             self.products.create(
-                cat_id, name, desc, "", image_path,
+                cat_id, name, "", "", image_path,
                 price, stock, low, int(self.var_active.get()),
             )
 

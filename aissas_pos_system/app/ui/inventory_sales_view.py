@@ -315,6 +315,7 @@ class InventorySalesView(tk.Frame):
         charts_container = tk.Frame(self.canvas_frame, bg="white")
         charts_container.pack(fill="both", expand=True)
         charts_container.rowconfigure(0, weight=1)
+        charts_container.grid_propagate(False)
 
         # ── Bar chart figure ──────────────────────────────────────────────────
         fig_bar = Figure(figsize=(7, 4.5), dpi=80, constrained_layout=True)
@@ -392,7 +393,7 @@ class InventorySalesView(tk.Frame):
                 pass
 
         canvas_bar = FigureCanvasTkAgg(fig_bar, master=charts_container)
-        canvas_bar.draw()
+        canvas_bar.draw_idle()
 
         if has_pie:
             # ── Pie chart figure (separate, side-by-side with bar chart) ─────
@@ -435,7 +436,7 @@ class InventorySalesView(tk.Frame):
             ax_pie.set_aspect('equal')
 
             canvas_pie = FigureCanvasTkAgg(fig_pie, master=charts_container)
-            canvas_pie.draw()
+            canvas_pie.draw_idle()
 
             # Equal-weight side-by-side columns inside the fresh container
             charts_container.columnconfigure(0, weight=1, uniform="charts")
@@ -443,7 +444,7 @@ class InventorySalesView(tk.Frame):
             canvas_bar.get_tk_widget().grid(row=0, column=0, sticky="nsew")
             canvas_pie.get_tk_widget().grid(row=0, column=1, sticky="nsew")
         else:
-            charts_container.columnconfigure(0, weight=1)
+            charts_container.columnconfigure(0, weight=1, uniform="charts")
             canvas_bar.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
         try:

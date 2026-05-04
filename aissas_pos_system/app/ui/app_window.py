@@ -62,6 +62,7 @@ class AppWindow:
         self._current_view: Optional[tk.Widget] = None
         self._view_cache: dict[str, tk.Widget] = {}
         self._resize_pending: bool = False
+        self._wm_state: str = "normal"
 
         self.root.configure(bg=THEME["bg"])
         ui_styles.apply_global_styles()
@@ -393,23 +394,50 @@ class AppWindow:
         self._set_view(LoginView, self.auth_service, self.on_login_success)
 
     def _on_root_configure(self, event: tk.Event) -> None:
-        """Batch background colour updates — single commit per resize burst."""
-        if event.widget is self.root and not self._resize_pending:
+        """Batch background colour updates — single commit per resize burst.
+        Skips intermediate Configure events fired during minimize/maximize
+        animation so the background is only repainted once the window settles."""
+        if event.widget is not self.root:
+            return
+        try:
+            new_state = self.root.state()
+        except Exception:
+            new_state = self._wm_state
+        if new_state != self._wm_state:
+            self._wm_state = new_state
+            self._resize_pending = False
+        if not self._resize_pending:
             self._resize_pending = True
             self.root.after_idle(self._commit_root_layout)
 
     def _commit_root_layout(self) -> None:
-        self._resize_pending = False
+        # Skip repaint while window is iconified — nothing is visible anyway.
+        try:
+            if self.root.state() == "iconic":
+                self._resize_pending = False
+                return
+        except Exception:
+            pass
         try:
             self.root.configure(bg=self._CANVAS_BG)
             self.root_frame.configure(bg=self._CANVAS_BG)
             self.content.configure(bg=self._CANVAS_BG)
         except Exception:
             pass
+        finally:
+            self._resize_pending = False
 
     def on_login_success(self) -> None:
-        # Destroy login view FIRST so the nav never packs on top of a still-visible
-        # login frame (which causes a geometry-shift flash before login is removed).
+        # Maximise the window BEFORE building the nav and navigating so the
+        # layout commits at full size in one pass — eliminates the visible
+        # "compact → wide" snap that happens when geometry settles after login.
+        try:
+            self.root.state("zoomed")
+        except Exception:
+            try:
+                self.root.attributes("-zoomed", True)
+            except Exception:
+                pass
         self._show_loading_screen()
         self._show_shell(True)
         self._build_nav()
