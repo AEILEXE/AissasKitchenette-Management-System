@@ -77,6 +77,7 @@ class POSView(tk.Frame):
         self._loading_lbl: tk.Label | None = None  # unified overlay tracker
         self._prod_resize_after: int | None = None
         self._prod_canvas_w: int = 0
+        self._layout_scheduled: bool = False
         self._cart_resize_after: int | None = None
         self._last_wm_state: str = "normal"
         self._load_gen: int = 0
@@ -923,7 +924,7 @@ class POSView(tk.Frame):
 
     # ── Canvas resize ─────────────────────────────────────────────────────────
     def _on_prod_canvas_configure(self, e: object) -> None:
-        # Set backgrounds FIRST before any layout — prevents black flash during resize/maximize
+        # Set backgrounds FIRST — prevents any flash on resize/maximize
         try:
             self.prod_canvas.configure(bg=self._CARD_BG)
             self.prod_inner.configure(bg=self._CARD_BG)
@@ -931,34 +932,24 @@ class POSView(tk.Frame):
             pass
 
         ew: int = int(getattr(e, "width", 0))
+        if ew <= 0:
+            return
+
         old_w = self._prod_canvas_w
         self._prod_canvas_w = ew
 
-        # Only resize inner frame when width actually changed — avoids redundant layout on height-only resize
-        if ew != old_w and ew > 0:
+        # Sync inner window width whenever canvas width changes
+        if ew != old_w:
             try:
                 self.prod_canvas.itemconfigure(self._prod_window_id, width=ew)
             except Exception:
                 pass
 
-        # Detect window state change (maximize / restore)
-        try:
-            new_state = self.winfo_toplevel().state()
-        except Exception:
-            new_state = self._last_wm_state
-        state_changed = new_state != self._last_wm_state
-        self._last_wm_state = new_state
-
-        # If only the WM state changed but canvas width is identical, skip relayout
-        if state_changed and ew == old_w:
-            return
-
-        if state_changed:
-            # Maximize/restore: skip the 150 ms debounce — use 30 ms instead
-            self._cancel_after(self._prod_resize_after)
-            self._prod_resize_after = self._after(30, self._relayout_products)
-        else:
-            self._debounced_relayout()
+        # Layout commit gate: coalesce all Configure events in a burst into
+        # a single after_idle pass — no artificial delay, no intermediate repaints.
+        if not self._layout_scheduled:
+            self._layout_scheduled = True
+            self.after_idle(self._commit_layout)
 
     def _on_prod_canvas_map(self, _event: object = None) -> None:
         """Fire when the canvas becomes visible — pre-paint beige before any items are drawn."""
@@ -1185,8 +1176,30 @@ class POSView(tk.Frame):
     def _debounced_relayout(self) -> None:
         if self._destroyed or self._building or not self.winfo_exists():
             return
-        self._cancel_after(self._prod_resize_after)
-        self._prod_resize_after = self._after(150, self._relayout_products)
+        if not self._layout_scheduled:
+            self._layout_scheduled = True
+            self.after_idle(self._commit_layout)
+
+    def _commit_layout(self) -> None:
+        """Single layout commit fired once per idle cycle after a resize burst."""
+        self._layout_scheduled = False
+        if self._destroyed or self._building or not self.winfo_exists():
+            return
+        # Read the settled canvas width before doing any layout work
+        try:
+            actual_w = self.prod_canvas.winfo_width()
+            if actual_w > 1:
+                self._prod_canvas_w = actual_w
+                self.prod_canvas.itemconfigure(self._prod_window_id, width=actual_w)
+        except Exception:
+            pass
+        self._relayout_products()
+        # Commit scroll region once, after layout is settled
+        try:
+            if self.prod_canvas.winfo_exists():
+                self.prod_canvas.configure(scrollregion=self.prod_canvas.bbox("all"))
+        except Exception:
+            pass
 
     def _refresh_products(self):
         if self._destroyed or self._building or not self.winfo_exists():
@@ -1385,8 +1398,17 @@ class POSView(tk.Frame):
         # height changes up through every card frame — visible as cards "settling"
         # during resize.  after_idle fires in the same idle cycle (before next paint)
         # but AFTER Tkinter has processed all queued geometry from the grid calls above.
-        card_w = max(80, (self._prod_canvas_w - (cols + 1) * 8) // cols)
-        wrap = max(60, card_w - 28)
+        #
+        # Cache the computed wrap value — only recompute when canvas width changes
+        # by more than 10 px or the column count changes, to avoid per-pixel thrashing.
+        last_wrap_w    = getattr(self, "_last_wrap_canvas_w", -1)
+        last_wrap_cols = getattr(self, "_last_wrap_cols", -1)
+        if abs(self._prod_canvas_w - last_wrap_w) > 10 or cols != last_wrap_cols:
+            self._last_wrap_canvas_w = self._prod_canvas_w
+            self._last_wrap_cols     = cols
+            card_w = max(80, (self._prod_canvas_w - (cols + 1) * 8) // cols)
+            self._cached_wrap = max(60, card_w - 28)
+        wrap = getattr(self, "_cached_wrap", 120)
         snapshot = list(cards)
 
         def _apply_wrap(w=wrap, cc=snapshot):

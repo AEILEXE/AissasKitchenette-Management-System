@@ -269,6 +269,8 @@ class InventorySalesView(tk.Frame):
     # ──────────────────────────────────────────────────────────────────────────
 
     def _draw_graph(self, data):
+        # Destroy every previous chart widget before rendering new ones.
+        # This guarantees at most one bar canvas and one pie canvas exist at any time.
         for widget in self.canvas_frame.winfo_children():
             widget.destroy()
 
@@ -283,7 +285,6 @@ class InventorySalesView(tk.Frame):
 
         from matplotlib.figure import Figure  # deferred — avoids freeze on first tab open
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg  # noqa: F811
-        from matplotlib.gridspec import GridSpec
         import numpy as _np
 
         labels = [item[0] for item in data]
@@ -308,20 +309,17 @@ class InventorySalesView(tk.Frame):
 
         has_pie = bool(category_data)
 
-        # constrained_layout=True lets matplotlib compute all padding automatically,
-        # which prevents the bar chart and pie chart from overlapping and handles
-        # rotated x-axis labels without needing manual tight_layout adjustments.
-        if has_pie:
-            fig = Figure(figsize=(12, 10), dpi=80, constrained_layout=True)
-            fig.patch.set_facecolor("#FAFAFA")
-            gs     = GridSpec(2, 1, figure=fig, height_ratios=[3, 2])
-            ax     = fig.add_subplot(gs[0])
-            ax_pie = fig.add_subplot(gs[1])
-        else:
-            fig = Figure(figsize=(12, 5), dpi=80, constrained_layout=True)
-            fig.patch.set_facecolor("#FAFAFA")
-            ax     = fig.add_subplot(111)
-            ax_pie = None
+        # Fresh container every render — no residual grid/pack config carries over.
+        # canvas_frame always uses pack for this single child; chart canvases use
+        # grid inside charts_container so the geometry manager is never mixed.
+        charts_container = tk.Frame(self.canvas_frame, bg="white")
+        charts_container.pack(fill="both", expand=True)
+        charts_container.rowconfigure(0, weight=1)
+
+        # ── Bar chart figure ──────────────────────────────────────────────────
+        fig_bar = Figure(figsize=(7, 4.5), dpi=80, constrained_layout=True)
+        fig_bar.patch.set_facecolor("#FAFAFA")
+        ax = fig_bar.add_subplot(111)
 
         # ── Bar chart ─────────────────────────────────────────────────────────
         n_bars = len(labels)
@@ -372,7 +370,7 @@ class InventorySalesView(tk.Frame):
             if event.inaxes != ax:
                 annot.set_visible(False)
                 try:
-                    fig.canvas.draw_idle()
+                    fig_bar.canvas.draw_idle()
                 except Exception:
                     pass
                 return
@@ -383,53 +381,76 @@ class InventorySalesView(tk.Frame):
                     annot.set_text(f"{lbl}\n₱{val:,.2f}")
                     annot.set_visible(True)
                     try:
-                        fig.canvas.draw_idle()
+                        fig_bar.canvas.draw_idle()
                     except Exception:
                         pass
                     return
             annot.set_visible(False)
             try:
-                fig.canvas.draw_idle()
+                fig_bar.canvas.draw_idle()
             except Exception:
                 pass
 
-        # ── Pie chart (category breakdown) ────────────────────────────────────
-        if ax_pie is not None and category_data:
+        canvas_bar = FigureCanvasTkAgg(fig_bar, master=charts_container)
+        canvas_bar.draw()
+
+        if has_pie:
+            # ── Pie chart figure (separate, side-by-side with bar chart) ─────
+            fig_pie = Figure(figsize=(5.5, 4.5), dpi=80, constrained_layout=True)
+            fig_pie.patch.set_facecolor("#FAFAFA")
+            ax_pie = fig_pie.add_subplot(111)
+
             pie_labels = list(category_data.keys())
             pie_vals   = list(category_data.values())
-            total_rev  = sum(pie_vals)
             pie_colors = [
                 "#8c6e3b", "#c4975a", "#e8b87a", "#a07855",
                 "#d4a96a", "#6b4b2a", "#b8905c", "#9a7040",
             ][:len(pie_vals)]
-            wedges, texts, autotexts = ax_pie.pie(
-                pie_vals, labels=pie_labels, colors=pie_colors,
-                autopct=lambda p: f"{p:.1f}%" if p > 4 else "",
+            # Use legend() for category names — prevents overlapping text
+            # when there are many slices; autopct stays on the wedge interior.
+            wedges, _, autotexts = ax_pie.pie(
+                pie_vals,
+                colors=pie_colors,
+                autopct=lambda p: f"{p:.1f}%" if p > 5 else "",
                 startangle=90,
-                pctdistance=0.72,    # inside wedge — white bold text
-                labeldistance=1.15,  # category names just outside the ring
-                wedgeprops=dict(linewidth=0.5, edgecolor="white"),
+                pctdistance=0.85,
+                wedgeprops=dict(linewidth=1.5, edgecolor="white"),
             )
-            for t in texts:
-                t.set_fontsize(9)
-                t.set_color("#3d2b1f")
-                t.set_fontweight("bold")
             for at in autotexts:
                 at.set_fontsize(8)
                 at.set_color("white")
                 at.set_fontweight("bold")
+            ax_pie.legend(
+                wedges, pie_labels,
+                loc="lower center",
+                bbox_to_anchor=(0.5, -0.08),
+                ncol=min(4, len(pie_labels)),
+                fontsize=8,
+                frameon=False,
+                handlelength=1.0,
+            )
             ax_pie.set_title("Revenue by Category", fontsize=11,
                              color="#3d2b1f", fontweight="bold", pad=12)
             ax_pie.set_facecolor("#FAFAFA")
+            ax_pie.set_aspect('equal')
 
-        canvas = FigureCanvasTkAgg(fig, master=self.canvas_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
+            canvas_pie = FigureCanvasTkAgg(fig_pie, master=charts_container)
+            canvas_pie.draw()
+
+            # Equal-weight side-by-side columns inside the fresh container
+            charts_container.columnconfigure(0, weight=1, uniform="charts")
+            charts_container.columnconfigure(1, weight=1, uniform="charts")
+            canvas_bar.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+            canvas_pie.get_tk_widget().grid(row=0, column=1, sticky="nsew")
+        else:
+            charts_container.columnconfigure(0, weight=1)
+            canvas_bar.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
         try:
-            canvas.mpl_connect("motion_notify_event", _on_hover)
+            canvas_bar.mpl_connect("motion_notify_event", _on_hover)
         except Exception:
             pass
-        self.canvas_figure = fig
+        self.canvas_figure = fig_bar
 
     # ──────────────────────────────────────────────────────────────────────────
     # Export (unchanged logic)

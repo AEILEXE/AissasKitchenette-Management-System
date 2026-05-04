@@ -14,7 +14,7 @@ from app.db.database import Database
 from app.db.dao import UserDAO, RolePermissionDAO
 from app.services.auth_service import AuthService
 from app.constants import (
-    ROLES, ROLE_ADMIN,
+    ROLES, ROLE_ADMIN, ROLE_MANAGER, ROLE_CASHIER, ROLE_INVENTORY,
     ALL_PERMISSION_KEYS, PERMISSION_LABELS,
 )
 from app.ui import ui_scale

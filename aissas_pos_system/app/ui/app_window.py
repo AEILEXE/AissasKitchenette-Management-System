@@ -60,6 +60,8 @@ class AppWindow:
         self.db = db
         self.auth_service = auth_service
         self._current_view: Optional[tk.Widget] = None
+        self._view_cache: dict[str, tk.Widget] = {}
+        self._resize_pending: bool = False
 
         self.root.configure(bg=THEME["bg"])
         ui_styles.apply_global_styles()
@@ -102,18 +104,26 @@ class AppWindow:
     _CANVAS_BG = "#e6ddbd"   # beige — matches POS canvas; used to mask all view transitions
 
     def _clear_content(self) -> None:
-        # Paint containers beige so any momentary gap shows warm background, not black.
+        # Paint containers beige so any momentary gap shows the warm background.
         # Do NOT call update_idletasks() here — that forces a mid-transition render that
-        # makes the beige visually flash between screens. The bg paint is queued and
-        # Tkinter will composite it with the new view in the same render cycle.
+        # makes the beige visually flash between screens.
         try:
             self.root.configure(bg=self._CANVAS_BG)
             self.root_frame.configure(bg=self._CANVAS_BG)
             self.content.configure(bg=self._CANVAS_BG)
         except Exception:
             pass
-        if self._current_view is not None:
-            self._current_view.destroy()
+        v = self._current_view
+        if v is not None:
+            try:
+                if not v.winfo_exists():
+                    pass  # already destroyed
+                elif v in self._view_cache.values():
+                    v.pack_forget()   # cached view: hide, preserve state
+                else:
+                    v.destroy()       # transient view (login, loading): destroy
+            except Exception:
+                pass
         self._current_view = None
 
     def _set_view(self, cls: Type[tk.Frame], *args: Any) -> None:
@@ -121,6 +131,46 @@ class AppWindow:
         view = cls(self.content, *args)
         view.pack(fill=tk.BOTH, expand=True)
         self._current_view = view
+
+    def _evict_all_cached_views(self) -> None:
+        """Destroy every cached view and clear the cache — called on logout."""
+        for v in list(self._view_cache.values()):
+            try:
+                if v.winfo_exists():
+                    v.destroy()
+            except Exception:
+                pass
+        self._view_cache.clear()
+        self._current_view = None  # prevent _clear_content from double-destroying
+
+    def _show_cached_view(
+        self,
+        key: str,
+        factory,
+        refresh_fn=None,
+    ) -> tk.Widget:
+        """Show a cached view (lazy-create on first visit). Hides the current view first.
+
+        Cached views are never destroyed on navigation — only pack_forgotten and
+        re-packed. This eliminates the destroy/recreate overhead and preserves state
+        (e.g. POS cart). refresh_fn(view) is called when re-showing an existing view.
+        """
+        self._clear_content()
+        cached = self._view_cache.get(key)
+        if cached is not None and cached.winfo_exists():
+            cached.pack(fill=tk.BOTH, expand=True)
+            self._current_view = cached
+            if refresh_fn is not None:
+                try:
+                    refresh_fn(cached)
+                except Exception:
+                    pass
+            return cached
+        view = factory()
+        view.pack(fill=tk.BOTH, expand=True)
+        self._view_cache[key] = view
+        self._current_view = view
+        return view
 
     def _clear_nav(self) -> None:
         for w in self.nav.winfo_children():
@@ -339,14 +389,23 @@ class AppWindow:
     def show_login(self) -> None:
         self.auth_service.logout()
         self._show_shell(False)
+        self._evict_all_cached_views()
         self._set_view(LoginView, self.auth_service, self.on_login_success)
 
     def _on_root_configure(self, event: tk.Event) -> None:
-        """Keep all container backgrounds matching the canvas beige on every resize/maximize."""
-        if event.widget is self.root:
+        """Batch background colour updates — single commit per resize burst."""
+        if event.widget is self.root and not self._resize_pending:
+            self._resize_pending = True
+            self.root.after_idle(self._commit_root_layout)
+
+    def _commit_root_layout(self) -> None:
+        self._resize_pending = False
+        try:
             self.root.configure(bg=self._CANVAS_BG)
             self.root_frame.configure(bg=self._CANVAS_BG)
             self.content.configure(bg=self._CANVAS_BG)
+        except Exception:
+            pass
 
     def on_login_success(self) -> None:
         # Destroy login view FIRST so the nav never packs on top of a still-visible
@@ -399,28 +458,34 @@ class AppWindow:
         if self._active_nav_key == "pos" and self._current_view is not None:
             return  # Already on POS — preserve cart state
         self._set_active_nav("pos")
-        self._set_view(POSView, self.db, self.auth_service)
+        self._show_cached_view(
+            "pos",
+            lambda: POSView(self.content, self.db, self.auth_service),
+        )
 
     def show_transactions(self) -> None:
         if self._active_nav_key == "tx" and self._current_view is not None:
             return
         self._set_active_nav("tx")
-        self._set_view(TransactionsView, self.db, self.auth_service)
+        self._show_cached_view(
+            "tx",
+            lambda: TransactionsView(self.content, self.db, self.auth_service),
+            refresh_fn=lambda v: v.refresh() if hasattr(v, "refresh") else None,
+        )
 
     def show_dashboard(self) -> None:
         if self._active_nav_key == "dash" and self._current_view is not None:
             return
         self._set_active_nav("dash")
-        self._clear_content()
-        view = DashboardView(
-            self.content,
-            self.db,
-            self.auth_service,
-            go_transactions_cb=self.show_transactions,
-            go_pos_cb=self.show_pos,
+        self._show_cached_view(
+            "dash",
+            lambda: DashboardView(
+                self.content, self.db, self.auth_service,
+                go_transactions_cb=self.show_transactions,
+                go_pos_cb=self.show_pos,
+            ),
+            refresh_fn=lambda v: v._refresh() if hasattr(v, "_refresh") else None,
         )
-        view.pack(fill=tk.BOTH, expand=True)
-        self._current_view = view
 
     def show_inventory(self) -> None:
         if not (self.auth_service.has_permission(P_INV_VIEW) or
@@ -430,8 +495,13 @@ class AppWindow:
         if self._active_nav_key == "inv" and self._current_view is not None:
             return
         self._set_active_nav("inv")
-        self._set_view(InventoryShellView, self.db, self.auth_service,
-                       self.show_transactions, self.show_pos, self._force_show_reports)
+        self._show_cached_view(
+            "inv",
+            lambda: InventoryShellView(
+                self.content, self.db, self.auth_service,
+                self.show_transactions, self.show_pos, self._force_show_reports,
+            ),
+        )
 
     def show_reports(self) -> None:
         if not self.auth_service.has_permission(P_REPORTS):
@@ -443,7 +513,11 @@ class AppWindow:
                 self._current_view.refresh()
             return
         self._set_active_nav("reports")
-        self._set_view(ReportsView, self.db, self.auth_service)
+        self._show_cached_view(
+            "reports",
+            lambda: ReportsView(self.content, self.db, self.auth_service),
+            refresh_fn=lambda v: v.refresh() if hasattr(v, "refresh") else None,
+        )
 
     def _force_show_reports(self) -> None:
         """Navigate to Reports, bypassing the same-tab guard (e.g. from Inventory)."""
@@ -458,7 +532,10 @@ class AppWindow:
             messagebox.showerror("Access denied", "No permission to manage database backup.")
             return
         self._set_active_nav("backup")
-        self._set_view(BackupView, self.db, self.auth_service)
+        self._show_cached_view(
+            "backup",
+            lambda: BackupView(self.content, self.db, self.auth_service),
+        )
 
     def logout(self) -> None:
         self.show_login()
@@ -488,7 +565,21 @@ class AppWindow:
 
     def _refresh_current_view(self) -> None:
         key = self._active_nav_key
-        # Force re-render by clearing the active key first, then navigate
+        # Evict the cached view for this key so it's fully rebuilt (e.g. after zoom)
+        if key in self._view_cache:
+            try:
+                old = self._view_cache.pop(key)
+                if old.winfo_exists():
+                    old.destroy()
+            except Exception:
+                pass
+        if self._current_view is not None:
+            try:
+                if self._current_view.winfo_exists():
+                    self._current_view.destroy()
+            except Exception:
+                pass
+        self._current_view = None
         self._active_nav_key = None
         if key == "pos":
             self.show_pos()

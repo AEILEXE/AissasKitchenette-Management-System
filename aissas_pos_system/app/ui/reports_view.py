@@ -170,7 +170,8 @@ class ReportsView(tk.Frame):
 
         # KPI cards
         kpi_row = tk.Frame(body, bg=_BG)
-        kpi_row.pack(fill="x", padx=20, pady=(16, 12))
+        kpi_row.pack(fill="x", padx=24, pady=(16, 8))
+        kpi_row.rowconfigure(0, weight=1)
 
         kpi_data = self._fetch_kpis()
         kpi_cards = [
@@ -180,10 +181,12 @@ class ReportsView(tk.Frame):
             ("Avg. Order",    _money(kpi_data["avg_order"]),   _GREEN),
         ]
         for i, (label, val, accent) in enumerate(kpi_cards):
-            card = tk.Frame(kpi_row, bg=_PANEL,
+            kpi_row.columnconfigure(i, weight=1, uniform="kpi")
+            outer_cell = tk.Frame(kpi_row, bg=_BG)
+            outer_cell.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 10, 0))
+            card = tk.Frame(outer_cell, bg=_PANEL,
                             highlightthickness=1, highlightbackground=_BORDER)
-            card.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 10, 0))
-            kpi_row.columnconfigure(i, weight=1)
+            card.pack(fill="both", expand=True)
             tk.Frame(card, bg=accent, height=4).pack(fill="x")
             tk.Label(card, text=label, bg=_PANEL, fg=_MUTED,
                      font=("Segoe UI", 9), anchor="w").pack(anchor="w", padx=14, pady=(10, 2))
@@ -192,7 +195,7 @@ class ReportsView(tk.Frame):
 
         def _section_hdr(text: str):
             row = tk.Frame(body, bg=_BG)
-            row.pack(fill="x", padx=20, pady=(14, 4))
+            row.pack(fill="x", padx=24, pady=(14, 4))
             tk.Label(row, text=text.upper(), bg=_BG, fg=_MUTED,
                      font=("Segoe UI", 8, "bold")).pack(side="left")
             tk.Frame(row, bg=_BORDER, height=1).pack(
@@ -220,7 +223,7 @@ class ReportsView(tk.Frame):
         _section_hdr("Inventory Alerts — Products")
         prod_card = tk.Frame(body, bg=_PANEL,
                              highlightthickness=1, highlightbackground=_BORDER)
-        prod_card.pack(fill="x", padx=20, pady=(0, 4))
+        prod_card.pack(fill="x", padx=24, pady=(0, 4))
         tk.Frame(prod_card, bg=THEME["danger"], height=3).pack(fill="x")
 
         low_prods = self._fetch_low_stock_products()
@@ -237,7 +240,7 @@ class ReportsView(tk.Frame):
         _section_hdr("Inventory Alerts — Raw Materials")
         mat_card = tk.Frame(body, bg=_PANEL,
                             highlightthickness=1, highlightbackground=_BORDER)
-        mat_card.pack(fill="x", padx=20, pady=(0, 4))
+        mat_card.pack(fill="x", padx=24, pady=(0, 4))
         tk.Frame(mat_card, bg=THEME["warning"], height=3).pack(fill="x")
 
         low_mats = self._fetch_low_stock_materials()
@@ -254,7 +257,7 @@ class ReportsView(tk.Frame):
         _section_hdr("Top Selling Products — All Time")
         top_card = tk.Frame(body, bg=_PANEL,
                             highlightthickness=1, highlightbackground=_BORDER)
-        top_card.pack(fill="x", padx=20, pady=(0, 4))
+        top_card.pack(fill="x", padx=24, pady=(0, 4))
         tk.Frame(top_card, bg=_SLATE, height=3).pack(fill="x")
 
         top_prods = self._fetch_top_products_alltime()
@@ -304,7 +307,7 @@ class ReportsView(tk.Frame):
         # Filter bar
         bar = tk.Frame(outer, bg=_FILTER_BG,
                        highlightthickness=1, highlightbackground=_BORDER)
-        bar.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 0))
+        bar.grid(row=0, column=0, sticky="ew", padx=24, pady=(12, 0))
 
         tk.Label(bar, text="Period:", bg=_FILTER_BG, fg=_LABEL_FG,
                  font=("Segoe UI", 9)).pack(side="left", padx=(12, 6), pady=8)
@@ -366,7 +369,7 @@ class ReportsView(tk.Frame):
         # Table
         tbl_frame = tk.Frame(outer, bg=_PANEL,
                              highlightthickness=1, highlightbackground=_BORDER)
-        tbl_frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=12)
+        tbl_frame.grid(row=1, column=0, sticky="nsew", padx=24, pady=12)
         tbl_frame.rowconfigure(0, weight=1)
         tbl_frame.columnconfigure(0, weight=1)
 
@@ -413,7 +416,7 @@ class ReportsView(tk.Frame):
 
         # Footer bar
         foot = tk.Frame(outer, bg=_BG)
-        foot.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 12))
+        foot.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 12))
         count_lbl = tk.Label(foot, text="", bg=_BG, fg=_MUTED, font=("Segoe UI", 9))
         count_lbl.pack(side="left")
 
@@ -577,7 +580,7 @@ class ReportsView(tk.Frame):
         # Filter bar
         bar = tk.Frame(outer, bg=_FILTER_BG,
                        highlightthickness=1, highlightbackground=_BORDER)
-        bar.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 0))
+        bar.grid(row=0, column=0, sticky="ew", padx=24, pady=(12, 0))
 
         # Date period
         tk.Label(bar, text="Period:", bg=_FILTER_BG, fg=_LABEL_FG,
@@ -656,7 +659,7 @@ class ReportsView(tk.Frame):
         # Table
         tbl_frame = tk.Frame(outer, bg=_PANEL,
                              highlightthickness=1, highlightbackground=_BORDER)
-        tbl_frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=12)
+        tbl_frame.grid(row=1, column=0, sticky="nsew", padx=24, pady=12)
         tbl_frame.rowconfigure(0, weight=1)
         tbl_frame.columnconfigure(0, weight=1)
 
@@ -705,7 +708,7 @@ class ReportsView(tk.Frame):
 
         # Footer
         foot = tk.Frame(outer, bg=_BG)
-        foot.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 12))
+        foot.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 12))
         count_lbl = tk.Label(foot, text="", bg=_BG, fg=_MUTED, font=("Segoe UI", 9))
         count_lbl.pack(side="left")
 
