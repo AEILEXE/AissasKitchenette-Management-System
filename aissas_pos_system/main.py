@@ -19,6 +19,13 @@ if _is_frozen():
     _mpl_dir = os.path.join(os.path.dirname(_writable), "mpl_config")
     os.makedirs(_mpl_dir, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", _mpl_dir)
+    # Tell matplotlib where its bundled data files live inside _MEIPASS.
+    # Without this it throws FileNotFoundError on matplotlibrc and all
+    # charts in the Reports view fail silently.
+    os.environ.setdefault(
+        "MATPLOTLIBDATA",
+        os.path.join(sys._MEIPASS, "matplotlib", "mpl-data"),
+    )
 
     # Write a startup log next to the EXE so crashes are diagnosable.
     # console=False hides all stderr in packaged mode; the log captures it.
