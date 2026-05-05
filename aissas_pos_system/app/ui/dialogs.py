@@ -368,13 +368,15 @@ class EWalletDialog(tk.Toplevel):
     """
 
     def __init__(self, parent: tk.Widget, order_id: int, total: float,
-                 payment_method: str = "GCash / E-Wallet"):
+                 payment_method: str = "GCash / E-Wallet", db=None):
         super().__init__(parent)
         self.title("E-Wallet / GCash Payment")
         self.configure(bg=THEME["panel"])
         self.resizable(False, False)
         self.grab_set()
 
+        self._db = db
+        self._order_id = order_id  # used to exclude this order from duplicate check
         self.result: Optional[str] = None
 
         from app.utils import money as _money
@@ -464,11 +466,31 @@ class EWalletDialog(tk.Toplevel):
             pass
 
     def _confirm(self) -> None:
+        from tkinter import messagebox as _mb
         ref = (self.ref_var.get() or "").strip()
         if not ref:
-            from tkinter import messagebox as _mb
             _mb.showwarning("Reference Required", "Please enter a reference number.", parent=self)
             return
+
+        from app.validators import validate_reference_no, REFERENCE_ERROR_MSG
+        if not validate_reference_no(ref):
+            _mb.showerror("Invalid Reference", REFERENCE_ERROR_MSG, parent=self)
+            return
+
+        if self._db is not None:
+            try:
+                from app.db.dao import OrderDAO as _ODAO
+                if _ODAO(self._db).reference_exists(ref, exclude_order_id=self._order_id):
+                    _mb.showerror(
+                        "Duplicate Reference",
+                        f"Reference number '{ref}' is already used by another transaction.\n"
+                        "Please enter a different reference number.",
+                        parent=self,
+                    )
+                    return
+            except Exception:
+                pass  # DB check failure must never block the user
+
         self.result = ref
         self.destroy()
 

@@ -43,6 +43,8 @@ def _money(v):
 
 
 class ReportsView(tk.Frame):
+    _POLL_INTERVAL_MS = 5000  # check for new data every 5 s
+
     def __init__(self, parent, db: Database, auth: AuthService):
         super().__init__(parent, bg=_BG)
         self.db   = db
@@ -51,7 +53,11 @@ class ReportsView(tk.Frame):
         self._tab_btns: dict[str, tk.Button] = {}
         self._content: tk.Frame | None = None
         self._tab_frames: dict[str, tk.Frame] = {}   # cached tab content
+        self._poll_after: int | None = None
+        self._poll_version: int = -1
         self._build()
+        self._start_polling()
+        self.bind("<Destroy>", lambda _e: self._cancel_poll())
 
     # ── Top navigation ────────────────────────────────────────────────────────
     def _build(self):
@@ -103,8 +109,38 @@ class ReportsView(tk.Frame):
 
     def refresh(self):
         # Force-rebuild only the active tab so stale data is never shown
-        self._tab_frames.pop(self._active_tab, None)
+        old = self._tab_frames.pop(self._active_tab, None)
+        if old and old.winfo_exists():
+            old.destroy()
         self._show_tab(self._active_tab)
+
+    # ── Polling (cross-device auto-refresh) ──────────────────────────────────
+
+    def _start_polling(self) -> None:
+        self._cancel_poll()
+        self._poll_after = self.after(self._POLL_INTERVAL_MS, self._poll_tick)
+
+    def _cancel_poll(self) -> None:
+        if self._poll_after is not None:
+            try:
+                self.after_cancel(self._poll_after)
+            except Exception:
+                pass
+            self._poll_after = None
+
+    def _poll_tick(self) -> None:
+        self._poll_after = None
+        try:
+            if not self.winfo_exists():
+                return
+            if self.winfo_ismapped():
+                v = self.db.get_data_version()
+                if v != self._poll_version:
+                    self._poll_version = v
+                    self.refresh()  # synchronous; re-arm below after it returns
+        except Exception:
+            pass
+        self._poll_after = self.after(self._POLL_INTERVAL_MS, self._poll_tick)
 
     def _show_tab(self, key: str):
         self._active_tab = key

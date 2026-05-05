@@ -521,11 +521,34 @@ class OrderDAO:
             (int(order_id),),
         )
 
+    def reference_exists(
+        self, reference_no: str, exclude_order_id: int | None = None
+    ) -> bool:
+        """Return True if reference_no is already stored in another order."""
+        ref = (reference_no or "").strip()
+        if not ref:
+            return False
+        if exclude_order_id is not None:
+            r = self.db.fetchone(
+                "SELECT id FROM orders WHERE reference_no=? AND id<>?;",
+                (ref, int(exclude_order_id)),
+            )
+        else:
+            r = self.db.fetchone(
+                "SELECT id FROM orders WHERE reference_no=?;",
+                (ref,),
+            )
+        return r is not None
+
     def resolve_pending(self, order_id: int, reference_no: str, amount_paid: float) -> None:
-        """Transition order from Pending to Completed."""
+        """
+        Transition order from Pending to Completed.
+        Always sets amount_paid = total (e-wallet exact amount) and change_due = 0.
+        The amount_paid parameter is kept for API compatibility but total is used.
+        """
         try:
             order = self.db.fetchone(
-                "SELECT status FROM orders WHERE id=?;",
+                "SELECT status, total FROM orders WHERE id=?;",
                 (int(order_id),),
             )
             if order is None:
@@ -536,19 +559,22 @@ class OrderDAO:
                     f"(current status: {order['status']})."
                 )
 
+            total = float(order["total"] or 0.0)
             self.db.execute_no_commit(
                 """
                 UPDATE orders
                 SET reference_no=?,
                     amount_paid=?,
                     cash_received=?,
+                    change_due=0,
                     status='Completed',
                     end_datetime=datetime('now','localtime')
                 WHERE id=? AND status='Pending';
                 """,
-                (reference_no.strip(), float(amount_paid), float(amount_paid), int(order_id)),
+                (reference_no.strip(), total, total, int(order_id)),
             )
             self.db.commit()
+            self.db.increment_data_version()
         except Exception:
             self.db.rollback()
             raise
@@ -591,6 +617,7 @@ class OrderDAO:
                 (int(order_id),),
             )
             self.db.commit()
+            self.db.increment_data_version()
         except Exception:
             self.db.rollback()
             raise
@@ -653,6 +680,7 @@ class OrderDAO:
                 (int(order_id), int(voided_by_user_id), str(voided_by_username), str(reason)),
             )
             self.db.commit()
+            self.db.increment_data_version()
         except Exception:
             self.db.rollback()
             raise
@@ -724,6 +752,7 @@ class OrderDAO:
                 (int(order_id), int(item_id), int(voided_by_user_id), str(voided_by_username), str(reason)),
             )
             self.db.commit()
+            self.db.increment_data_version()
         except Exception:
             self.db.rollback()
             raise

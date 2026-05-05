@@ -774,7 +774,6 @@ class POSView(tk.Frame):
                  )
         _tbl_entry.pack(fill="x", ipady=7)
         _tbl_entry.bind("<FocusIn>",  lambda _e: setattr(self, "_keypad_target", self.var_table_number), add="+")
-        _tbl_entry.bind("<Key>", self._on_amount_key, add="+")
 
         # ── PAYMENT METHOD ────────────────────────────────────────────────────
         tk.Frame(col2, bg=THEME["border"], height=1).pack(fill="x", padx=_pad)
@@ -2240,14 +2239,13 @@ class POSView(tk.Frame):
             return
 
         self._product_stock.clear()
-        ref_no = f"TXN-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         try:
             order_id = self.svc.create_order(
                 cashier_id=cashier_id,
                 customer_name=table_number,
                 payment_method=payment,
                 status=status,
-                reference_no=ref_no,
+                reference_no="",  # set by resolve_pending for Bank/E-Wallet; blank for Cash
                 items=items,
                 subtotal=subtotal,
                 discount=discount,
@@ -2319,7 +2317,7 @@ class POSView(tk.Frame):
         reference number.  Shows the order total — no amount re-entry needed.
         Resolves to Completed on the spot; skipping leaves it as Pending."""
         from app.ui.dialogs import EWalletDialog
-        dlg = EWalletDialog(self, order_id=order_id, total=total)
+        dlg = EWalletDialog(self, order_id=order_id, total=total, db=self.db)
         self.wait_window(dlg)
 
         if dlg.result:
@@ -2408,11 +2406,13 @@ class ReceiptPreviewDialog(tk.Toplevel):
         super().__init__(parent)
         self.order_data = order_data
         self.items = items
+        self._closed = False
 
         self.title("Receipt")
         self.configure(bg=self._BG)
         self.transient(parent)
-        self.grab_set()
+        # No grab_set — receipt is a safe info window; clicking elsewhere closes it
+        self.wm_attributes("-topmost", True)
         self.resizable(False, False)
 
         sw = self.winfo_screenwidth()
@@ -2423,7 +2423,45 @@ class ReceiptPreviewDialog(tk.Toplevel):
         self.geometry(f"{w}x{h}+{x}+{y}")
 
         self._build(w, h)
-        self.bind("<Escape>", lambda _e: self.destroy())
+        self.bind("<Escape>", lambda _e: self._close())
+        self.protocol("WM_DELETE_WINDOW", self._close)
+        # Arm click-outside after 300 ms so the click that opened the dialog
+        # is not treated as an outside click.
+        self.after(300, self._arm_outside_click)
+
+    # ── close / click-outside ─────────────────────────────────────────────────
+
+    def _close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+    def _arm_outside_click(self) -> None:
+        try:
+            if self._closed or not self.winfo_exists():
+                return
+        except Exception:
+            return
+        self.bind_all("<ButtonPress-1>", self._on_global_click, add="+")
+
+    def _on_global_click(self, event: tk.Event) -> None:
+        if self._closed:
+            return
+        try:
+            if not self.winfo_exists():
+                return
+            me = str(self)
+            target = str(event.widget)
+            # Click is inside this dialog or any of its children — ignore
+            if target == me or target.startswith(me + "."):
+                return
+            self._close()
+        except Exception:
+            pass
 
     # ── helpers ───────────────────────────────────────────────────────────────
     @staticmethod
@@ -2902,7 +2940,6 @@ class ConfirmOrderDialog(tk.Toplevel):
                              font=("Segoe UI", f(10)))
         ent_table.pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 6))
         ent_table.bind("<FocusIn>",  lambda _e: setattr(self.parent_pos, "_keypad_target", self.var_table_number), add="+")
-        ent_table.bind("<Key>", self.parent_pos._on_amount_key, add="+")
         ent_table.focus_set()
         _update_ot_buttons()
 

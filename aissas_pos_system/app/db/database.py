@@ -87,6 +87,24 @@ class Database:
         assert self.conn is not None, "Database not connected"
         self.conn.rollback()
 
+    def get_data_version(self) -> int:
+        """Return the current data_version counter from app_meta (0 if not set)."""
+        try:
+            r = self.fetchone("SELECT value FROM app_meta WHERE key='data_version';")
+            return int(r["value"]) if r else 0
+        except Exception:
+            return 0
+
+    def increment_data_version(self) -> None:
+        """Atomically increment data_version in app_meta. Never raises."""
+        try:
+            self.execute(
+                "INSERT INTO app_meta(key, value) VALUES('data_version','1') "
+                "ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT);"
+            )
+        except Exception:
+            pass
+
     def fetchone(self, sql: str, params: Iterable[Any] = ()) -> Optional[sqlite3.Row]:
         """Fetch single row."""
         assert self.conn is not None, "Database not connected"
@@ -303,6 +321,31 @@ class Database:
                 )
             except Exception:
                 pass
+
+        # =====================================================================
+        # UNIQUE INDEX — prevent duplicate e-wallet reference numbers
+        # Partial index: only covers non-empty, digit-only reference_no values
+        # so blank Cash references never conflict.
+        # =====================================================================
+        self._add_unique_reference_index()
+
+    def _add_unique_reference_index(self) -> None:
+        """
+        Create a partial unique index on orders.reference_no.
+        Only covers non-empty, digit-only values so blank Cash references
+        never collide and TXN-* codes from old data are ignored.
+        Safe to call multiple times (IF NOT EXISTS).
+        """
+        try:
+            assert self.conn is not None
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_reference_no_unique "
+                "ON orders(reference_no) "
+                "WHERE reference_no <> '' AND reference_no GLOB '[0-9]*';"
+            )
+            self.conn.commit()
+        except Exception:
+            pass
 
     def _seed_default_role_permissions(self) -> None:
         """Populate role_permissions with hardcoded defaults (runs once on fresh DB)."""

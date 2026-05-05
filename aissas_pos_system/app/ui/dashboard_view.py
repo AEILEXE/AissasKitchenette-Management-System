@@ -75,6 +75,8 @@ def _apply_dash_style() -> None:
 
 
 class DashboardView(tk.Frame):
+    _POLL_INTERVAL_MS = 3000
+
     def __init__(self, parent, db: Database, auth: AuthService, **callbacks):
         super().__init__(parent, bg=_BG)
         self.db   = db
@@ -86,8 +88,13 @@ class DashboardView(tk.Frame):
         self.products = ProductDAO(db)
         self.drafts   = DraftDAO(db)
 
+        self._poll_after: int | None = None
+        self._poll_version: int = -1
+
         _apply_dash_style()
         self._build()
+        self._start_polling()
+        self.bind("<Destroy>", lambda _e: self._cancel_poll())
 
     # ── Scrollable shell ──────────────────────────────────────────────────
 
@@ -168,8 +175,10 @@ class DashboardView(tk.Frame):
                     data["recent"] = t_orders.list_recent(limit=10)
                 except Exception:
                     data["recent"] = []
-            except Exception:
-                pass
+            except Exception as exc:
+                import traceback
+                traceback.print_exc()
+                data["_load_error"] = str(exc)
             finally:
                 t_db.disconnect()
             try:
@@ -181,11 +190,48 @@ class DashboardView(tk.Frame):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_data_loaded(self, data: dict) -> None:
-        if not self.winfo_exists():
-            return
-        for w in self._wrap.winfo_children():
-            w.destroy()
-        self._populate(self._wrap, data)
+        # Always re-arm the poll after data loads, regardless of success/failure
+        self._start_polling()
+        try:
+            if not self.winfo_exists():
+                return
+            wrap = getattr(self, "_wrap", None)
+            if wrap is None or not wrap.winfo_exists():
+                return
+            for w in wrap.winfo_children():
+                w.destroy()
+            self._populate(wrap, data)
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            # Show safe error state instead of leaving dashboard blank
+            try:
+                wrap = getattr(self, "_wrap", None)
+                if wrap and wrap.winfo_exists():
+                    for w in wrap.winfo_children():
+                        try:
+                            w.destroy()
+                        except Exception:
+                            pass
+                    err_frame = tk.Frame(wrap, bg=_BG)
+                    err_frame.pack(fill="x", padx=24, pady=60)
+                    tk.Label(
+                        err_frame,
+                        text=f"Dashboard failed to load:\n{exc}",
+                        bg=_BG, fg=THEME["danger"],
+                        font=("Segoe UI", 10),
+                        wraplength=500,
+                        justify="left",
+                    ).pack()
+                    tk.Button(
+                        err_frame, text="↺  Retry",
+                        command=self._refresh,
+                        bg=_RED, fg="white", bd=0,
+                        padx=16, pady=7, cursor="hand2",
+                        font=("Segoe UI", 9, "bold"),
+                    ).pack(pady=(12, 0))
+            except Exception:
+                pass
 
     # ── Main populate ─────────────────────────────────────────────────────
 
@@ -293,24 +339,25 @@ class DashboardView(tk.Frame):
             font=("Segoe UI", 8, "bold"),
         ).pack(side="right", padx=14, pady=10)
 
-        # ── Low Stock alert cards ─────────────────────────────────────────
-        self._section_header(wrap, "Inventory Alerts", PAD, top_pady=(0, 8))
+        # ── Low Stock alert cards (only shown when alerts exist) ─────────
+        if low_prods or low_mats:
+            self._section_header(wrap, "Inventory Alerts", PAD, top_pady=(0, 8))
 
-        row2 = tk.Frame(wrap, bg=_BG)
-        row2.pack(fill="x", padx=PAD, pady=(0, 20))
-        for i in range(2):
-            row2.columnconfigure(i, weight=1, uniform="low")
+            row2 = tk.Frame(wrap, bg=_BG)
+            row2.pack(fill="x", padx=PAD, pady=(0, 20))
+            for i in range(2):
+                row2.columnconfigure(i, weight=1, uniform="low")
 
-        low_data = [
-            ("Low Stock Products",
-             str(len(low_prods)), "products below threshold",
-             _RED, "\U0001f4e6"),
-            ("Low Stock Raw Materials",
-             str(len(low_mats)), "materials below threshold",
-             THEME["warning"], "\U0001f9c2"),
-        ]
-        for col, (title, val, sub, accent, icon) in enumerate(low_data):
-            self._kpi_card(row2, col, title, val, sub, accent, icon, None)
+            low_data = [
+                ("Low Stock Products",
+                 str(len(low_prods)), "products below threshold",
+                 _RED, "\U0001f4e6"),
+                ("Low Stock Raw Materials",
+                 str(len(low_mats)), "materials below threshold",
+                 THEME["warning"], "\U0001f9c2"),
+            ]
+            for col, (title, val, sub, accent, icon) in enumerate(low_data):
+                self._kpi_card(row2, col, title, val, sub, accent, icon, None)
 
         # ── Top Sellers ───────────────────────────────────────────────────
         top_sellers = list(data.get("top_sellers", []))
@@ -660,6 +707,35 @@ class DashboardView(tk.Frame):
 
     def _open_voids_popup(self):
         VoidsPopup(self, self.db)
+
+    # ── Polling ───────────────────────────────────────────────────────────
+
+    def _start_polling(self) -> None:
+        self._cancel_poll()
+        self._poll_after = self.after(self._POLL_INTERVAL_MS, self._poll_tick)
+
+    def _cancel_poll(self) -> None:
+        if self._poll_after is not None:
+            try:
+                self.after_cancel(self._poll_after)
+            except Exception:
+                pass
+            self._poll_after = None
+
+    def _poll_tick(self) -> None:
+        self._poll_after = None
+        if not self.winfo_exists():
+            return
+        if self.winfo_ismapped():
+            try:
+                v = self.db.get_data_version()
+                if v != self._poll_version:
+                    self._poll_version = v
+                    self._refresh()
+                    return  # _refresh re-arms itself via _load_data_async
+            except Exception:
+                pass
+        self._poll_after = self.after(self._POLL_INTERVAL_MS, self._poll_tick)
 
     # ── Refresh ───────────────────────────────────────────────────────────
 

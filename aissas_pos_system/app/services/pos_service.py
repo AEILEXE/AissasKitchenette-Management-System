@@ -124,11 +124,13 @@ class POSService:
                     float(change_due),
                 ),
             )
-            receipt_id   = f"RCP-{receipt_stamp}-{order_id}"
-            reference_no_auto = f"TXN-{datetime.now().strftime('%Y%m%d')}-{order_id:04d}"
+            receipt_id = f"RCP-{receipt_stamp}-{order_id}"
+            # Only set receipt_id — do NOT overwrite the caller-supplied reference_no.
+            # Bank/E-Wallet orders are created with reference_no='' and have it set
+            # later by resolve_pending once the user provides the transaction ref.
             self.db.execute_no_commit(
-                "UPDATE orders SET receipt_id=?, reference_no=? WHERE id=?;",
-                (receipt_id, reference_no_auto, int(order_id)),
+                "UPDATE orders SET receipt_id=? WHERE id=?;",
+                (receipt_id, int(order_id)),
             )
             for it in items:
                 qty        = int(it["qty"])
@@ -172,6 +174,7 @@ class POSService:
             # Single commit: order + all items + all product stock updates are atomic.
             # If anything above threw, the except block rolls everything back.
             self.db.commit()
+            self.db.increment_data_version()
             return order_id
         except Exception:
             self.db.rollback()
@@ -302,6 +305,7 @@ class POSService:
                 )
 
             self.db.commit()
+            self.db.increment_data_version()
             return void_receipt_id
         except Exception:
             self.db.rollback()
@@ -379,6 +383,7 @@ class POSService:
             )
 
             self.db.commit()
+            self.db.increment_data_version()
             return void_receipt_id
         except Exception:
             self.db.rollback()

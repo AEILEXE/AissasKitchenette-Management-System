@@ -186,6 +186,8 @@ class DatePickerDialog(tk.Toplevel):
 # ── TRANSACTIONS VIEW ─────────────────────────────────────────────────────────
 
 class TransactionsView(tk.Frame):
+    _POLL_INTERVAL_MS = 3000  # poll every 3 seconds
+
     def __init__(self, parent: tk.Frame, db: Database, auth: AuthService):
         super().__init__(parent, bg=THEME["bg"])
         self.db   = db
@@ -203,6 +205,9 @@ class TransactionsView(tk.Frame):
         self._tx_sort: dict = {"col": None, "reverse": False}
         self._tx_rows_cache: list = []
 
+        self._poll_after: int | None = None
+        self._poll_version: int = -1
+
         # entry refs for placeholder restore
         self.ent_search: tk.Entry | None = None
         self.ent_from:   tk.Entry | None = None
@@ -210,6 +215,37 @@ class TransactionsView(tk.Frame):
 
         self._build()
         self.refresh()
+        self._start_polling()
+        self.bind("<Destroy>", lambda _e: self._cancel_poll())
+
+    # ── polling ───────────────────────────────────────────────────────────────
+
+    def _start_polling(self) -> None:
+        self._cancel_poll()
+        self._poll_after = self.after(self._POLL_INTERVAL_MS, self._poll_tick)
+
+    def _cancel_poll(self) -> None:
+        if self._poll_after is not None:
+            try:
+                self.after_cancel(self._poll_after)
+            except Exception:
+                pass
+            self._poll_after = None
+
+    def _poll_tick(self) -> None:
+        self._poll_after = None
+        if not self.winfo_exists():
+            return
+        # Only refresh when this view is actually visible
+        if self.winfo_ismapped():
+            try:
+                v = self.db.get_data_version()
+                if v != self._poll_version:
+                    self._poll_version = v
+                    self.refresh()
+            except Exception:
+                pass
+        self._poll_after = self.after(self._POLL_INTERVAL_MS, self._poll_tick)
 
     # ── placeholder helpers ───────────────────────────────────────────────────
 
@@ -1267,21 +1303,47 @@ class ResolveDialog(tk.Toplevel):
             messagebox.showerror("Reference", "Reference number is required.")
             return
 
+        from app.validators import validate_reference_no, REFERENCE_ERROR_MSG
+        if not validate_reference_no(ref):
+            messagebox.showerror("Invalid Reference", REFERENCE_ERROR_MSG)
+            return
+
+        if self.orders.reference_exists(ref, exclude_order_id=self.order_id):
+            messagebox.showerror(
+                "Duplicate Reference",
+                f"Reference number '{ref}' is already used by another transaction.\n"
+                "Please enter a different reference number.",
+            )
+            return
+
         data = self.orders.get_order(self.order_id)
         if not data:
             messagebox.showerror("Error", "Order not found.")
             return
 
-        paid = float(data["amount_paid"]) if data["amount_paid"] else float(data["total"])
-        self.orders.resolve_pending(self.order_id, ref, paid)
-
-        # Auto-generate receipt immediately after resolving
+        total = float(data["total"] or 0.0)
         try:
+            self.orders.resolve_pending(self.order_id, ref, total)
+        except Exception as exc:
+            messagebox.showerror("Resolve Failed", f"Could not resolve order:\n{exc}")
+            return
+
+        # Re-fetch fresh data after resolve so receipt shows Completed status
+        try:
+            fresh = self.orders.get_order(self.order_id)
+            raw_order = self.db.fetchone(
+                "SELECT * FROM orders WHERE id=?;", (int(self.order_id),)
+            )
             items = self.orders.get_order_items(self.order_id)
-            order_dict = {k: data[k] for k in data.keys()}
-            items_list = [{k: item[k] for k in item.keys()} for item in items]
-            receipt_path = ReceiptService.generate_receipt(order_dict, items_list)
-            ReceiptService.open_file(receipt_path)
+            if fresh:
+                order_dict = {k: fresh[k] for k in fresh.keys()}
+                if raw_order:
+                    for k in raw_order.keys():
+                        if raw_order[k] is not None:
+                            order_dict[k] = raw_order[k]
+                items_list = [{k: item[k] for k in item.keys()} for item in items]
+                receipt_path = ReceiptService.generate_receipt(order_dict, items_list)
+                ReceiptService.open_file(receipt_path)
         except Exception:
             pass  # Receipt failure must not block the resolve flow
 
