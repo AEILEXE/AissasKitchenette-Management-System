@@ -6,7 +6,7 @@ REM ── Single source of truth for version ───────────�
 REM    Keep in sync with: version_info.txt  (filevers/prodvers/FileVersion/ProductVersion)
 REM                       app/config.py     (APP_VERSION)
 REM                       installer.iss     (#ifndef MyAppVersion fallback)
-set APP_VERSION=2.0.0
+set APP_VERSION=2.2.0
 
 echo.
 echo ================================================================
