@@ -102,11 +102,15 @@ class ReceiptService:
         order_id  = order_data.get("order_id", "—")
         start_dt  = str(order_data.get("start_dt", "—"))
         end_dt    = str(order_data.get("end_dt", ""))
-        customer  = str(order_data.get("customer_name", "—"))
         cashier   = str(order_data.get("cashier_username", "") or "Unknown").strip() or "Unknown"
         payment   = str(order_data.get("payment_method", "—"))
         status    = str(order_data.get("status", "—"))
         reference = str(order_data.get("reference_no", "") or "").strip()
+        _ot = str(order_data.get("order_type", "DINE_IN") or "DINE_IN").strip().upper()
+        _tbl = str(order_data.get("table_number", "") or "").strip()
+        if not _tbl:
+            _tbl = str(order_data.get("customer_name", "—") or "—").strip() or "—"
+        loc_label = "Order No." if _ot == "TAKE_OUT" else "Table No."
 
         subtotal_v = float(order_data.get("subtotal") or 0.0)
         discount_v = float(order_data.get("discount") or 0.0)
@@ -206,7 +210,7 @@ class ReceiptService:
         draw_row("Date:", start_dt[:19] if len(start_dt) > 19 else start_dt)
         if end_dt and end_dt not in ("None", "—", ""):
             draw_row("Completed:", end_dt[:19] if len(end_dt) > 19 else end_dt)
-        draw_row("Customer:", customer)
+        draw_row(f"{loc_label}:", _tbl)
         draw_row("Cashier:", cashier)
         draw_row("Payment:", payment)
         if payment == "Bank/E-Wallet" and reference:
