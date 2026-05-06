@@ -137,20 +137,12 @@ class POSService:
                 unit_price = float(it["unit_price"])
                 product_id = int(it["product_id"])
 
-                # Verify stock inside the transaction before committing.
-                # Raises ValueError (→ rollback) when requested qty exceeds available stock.
                 row = self.db.fetchone(
-                    "SELECT name, stock FROM products WHERE id=? AND active=1;",
+                    "SELECT name FROM products WHERE id=? AND active=1;",
                     (product_id,),
                 )
                 if row is None:
                     raise ValueError(f"Product (id={product_id}) is no longer available.")
-                available = int(row["stock"])
-                if qty > available:
-                    raise ValueError(
-                        f"Insufficient stock for '{row['name']}': "
-                        f"requested {qty}, only {available} available."
-                    )
 
                 self.db.execute_no_commit(
                     """
@@ -159,16 +151,6 @@ class POSService:
                     """,
                     (order_id, product_id, qty, unit_price,
                      str(it.get("note", "")), qty * unit_price),
-                )
-
-                # Deduct product stock in the same transaction.
-                # Both Completed and Pending orders deduct stock immediately
-                # (pending = item is being prepared, so stock is reserved).
-                # MAX(0,...) is a last-resort safety net; the check above already
-                # guarantees qty <= available at this point.
-                self.db.execute_no_commit(
-                    "UPDATE products SET stock = MAX(0, stock - ?) WHERE id=?;",
-                    (qty, product_id),
                 )
 
             # Single commit: order + all items + all product stock updates are atomic.
@@ -278,8 +260,6 @@ class POSService:
             if int(item["voided"] or 0) == 1:
                 raise ValueError("The selected item has already been voided.")
 
-            self._restore_stock(item["product_id"], int(item["qty"]))
-
             self.db.execute_no_commit(
                 "UPDATE order_items SET voided=1 WHERE id=? AND voided=0;",
                 (order_item_id,),
@@ -347,9 +327,6 @@ class POSService:
             )
             if not items:
                 raise ValueError("There are no active items left to void in this transaction.")
-
-            for item in items:
-                self._restore_stock(item["product_id"], int(item["qty"]))
 
             self.db.execute_no_commit(
                 "UPDATE order_items SET voided=1 WHERE order_id=? AND voided=0;",

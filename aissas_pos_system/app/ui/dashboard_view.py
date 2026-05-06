@@ -152,14 +152,7 @@ class DashboardView(tk.Frame):
                     data["void_count"] = int(_safe(void_row, "c", 0))
                 except Exception:
                     data["void_count"] = 0
-                try:
-                    data["low_prods"] = t_db.fetchall(
-                        "SELECT name, stock FROM products "
-                        "WHERE active=1 AND low_stock > 0 AND stock <= low_stock "
-                        "ORDER BY stock;", ()
-                    )
-                except Exception:
-                    data["low_prods"] = []
+                data["low_prods"] = []
                 try:
                     data["low_mats"] = t_db.fetchall(
                         "SELECT name, material_type, quantity, unit FROM raw_materials "
@@ -339,25 +332,18 @@ class DashboardView(tk.Frame):
             font=("Segoe UI", 8, "bold"),
         ).pack(side="right", padx=14, pady=10)
 
-        # ── Low Stock alert cards (only shown when alerts exist) ─────────
-        if low_prods or low_mats:
+        # ── Low Stock alert cards (raw materials only) ───────────────────
+        if low_mats:
             self._section_header(wrap, "Inventory Alerts", PAD, top_pady=(0, 8))
 
             row2 = tk.Frame(wrap, bg=_BG)
             row2.pack(fill="x", padx=PAD, pady=(0, 20))
-            for i in range(2):
-                row2.columnconfigure(i, weight=1, uniform="low")
+            row2.columnconfigure(0, weight=1, uniform="low")
 
-            low_data = [
-                ("Low Stock Products",
-                 str(len(low_prods)), "products below threshold",
-                 _RED, "\U0001f4e6"),
-                ("Low Stock Raw Materials",
-                 str(len(low_mats)), "materials below threshold",
-                 THEME["warning"], "\U0001f9c2"),
-            ]
-            for col, (title, val, sub, accent, icon) in enumerate(low_data):
-                self._kpi_card(row2, col, title, val, sub, accent, icon, None)
+            self._kpi_card(row2, 0,
+                           "Low Stock Raw Materials",
+                           str(len(low_mats)), "materials below threshold",
+                           THEME["warning"], "\U0001f9c2", None)
 
         # ── Top Sellers ───────────────────────────────────────────────────
         top_sellers = list(data.get("top_sellers", []))
@@ -368,17 +354,6 @@ class DashboardView(tk.Frame):
         self._build_recent_transactions(wrap, recent, PAD)
 
         # ── Low stock detail tables ───────────────────────────────────────
-        if low_prods:
-            self._section_header(wrap, "⚠  Low Stock Products", PAD, top_pady=(4, 8))
-            self._detail_table(
-                wrap,
-                ("Product", "Current Stock"),
-                [(r["name"], r["stock"]) for r in low_prods],
-                col_widths=(320, 140),
-                anchors=("w", "center"),
-                PAD=PAD,
-            )
-
         if low_mats:
             self._section_header(wrap, "⚠  Low Stock Raw Materials", PAD, top_pady=(4, 8))
             self._detail_table(

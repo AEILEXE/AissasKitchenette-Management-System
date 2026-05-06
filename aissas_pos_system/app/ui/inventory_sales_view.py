@@ -221,10 +221,14 @@ class InventorySalesView(tk.Frame):
     # ──────────────────────────────────────────────────────────────────────────
 
     def _get_sales_data(self):
+        from datetime import date as _date
         view_type = self.var_view_type.get()
         rows = self.order_dao.list_orders(status="Completed")
         if not rows:
             return [], 0.0, 0
+
+        now = datetime.now()
+        current_year_month = now.strftime("%Y-%m")
 
         sales_dict: dict[str, float] = {}
         total_sales = 0.0
@@ -237,7 +241,12 @@ class InventorySalesView(tk.Frame):
                 dt     = datetime.fromisoformat(dt_str) if isinstance(dt_str, str) else dt_str
 
                 if view_type == "Daily":
-                    key = dt.strftime("%Y-%m-%d")
+                    # Only include orders from the current month
+                    if dt.strftime("%Y-%m") != current_year_month:
+                        total_sales += total
+                        order_count += 1
+                        continue
+                    key = dt.strftime("%d")  # day of month as label
                 elif view_type == "Weekly":
                     key = dt.strftime("%Y-W%W")
                 elif view_type == "Monthly":
@@ -252,6 +261,9 @@ class InventorySalesView(tk.Frame):
                 continue
 
         sorted_keys = sorted(sales_dict.keys())
+        if view_type == "Daily":
+            # Use readable labels: "01", "02", ... up to end of month
+            return [(k, sales_dict[k]) for k in sorted_keys], total_sales, order_count
         return [(k, sales_dict[k]) for k in sorted_keys], total_sales, order_count
 
     def _refresh_data(self):

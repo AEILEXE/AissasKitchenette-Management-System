@@ -1713,18 +1713,6 @@ class POSView(tk.Frame):
         return 0
 
     def _add_to_cart(self, pid: int, name: str, price: float):
-        live_stock = self._get_live_stock(pid)
-        current_qty = self.cart[pid][2] if pid in self.cart else 0
-        if live_stock <= 0:
-            messagebox.showwarning("Out of Stock", f"'{name}' is out of stock.")
-            return
-        if current_qty >= live_stock:
-            messagebox.showwarning(
-                "Stock Limit",
-                f"Only {live_stock} unit(s) of '{name}' available.\n"
-                f"You already have {current_qty} in the cart.",
-            )
-            return
         if pid in self.cart:
             n, p, qty, note = self.cart[pid]
             self.cart[pid] = (n, p, qty + 1, note)
@@ -2180,13 +2168,21 @@ class POSView(tk.Frame):
             return
 
         table_number = self.var_table_number.get().strip()
+        order_type = self.var_order_type.get()
+
         if not table_number:
-            order_type = self.var_order_type.get()
             lbl = "Table No." if order_type == "DINE_IN" else "Order No."
             messagebox.showerror(lbl, f"{lbl} is required before checkout.")
             return
 
-        order_type = self.var_order_type.get()
+        if order_type == "DINE_IN":
+            try:
+                _tbl_int = int(table_number)
+                if not table_number.lstrip("-").isdigit() or _tbl_int < 1 or _tbl_int > 20:
+                    raise ValueError
+            except (ValueError, TypeError):
+                messagebox.showerror("Table Number", "Table number must be from 1 to 20 only.")
+                return
 
         _disc_labels = {"PWD": "PWD", "SENIOR": "SENIOR", "SPECIAL": "SPECIAL",
                         "amount": "AMOUNT", "percent": "PERCENT", "NONE": "NONE"}
@@ -2218,23 +2214,18 @@ class POSView(tk.Frame):
         items = [{"product_id": pid, "qty": qty, "unit_price": price, "note": note}
                  for pid, (_name, price, qty, note) in self.cart.items()]
 
-        # Pre-checkout stock validation: fail fast with a clear message before DB write
-        stock_errors: list[str] = []
+        # Pre-checkout: verify all products still exist and are active
+        unavail_errors: list[str] = []
         for pid, (_name, _price, qty, _note) in self.cart.items():
             r = self.db.fetchone(
-                "SELECT name, stock, active FROM products WHERE id=?;", (pid,)
+                "SELECT name, active FROM products WHERE id=?;", (pid,)
             )
             if r is None or not r["active"]:
-                stock_errors.append(f"• '{_name}' is no longer available.")
-            elif qty > int(r["stock"]):
-                avail = int(r["stock"])
-                stock_errors.append(
-                    f"• '{r['name']}': need {qty}, only {avail} in stock."
-                )
-        if stock_errors:
+                unavail_errors.append(f"• '{_name}' is no longer available.")
+        if unavail_errors:
             messagebox.showerror(
-                "Insufficient Stock",
-                "Cannot complete order — stock issues:\n\n" + "\n".join(stock_errors),
+                "Product Unavailable",
+                "Cannot complete order:\n\n" + "\n".join(unavail_errors),
             )
             return
 
@@ -2268,13 +2259,7 @@ class POSView(tk.Frame):
                                            change=change, paid=paid)
         except Exception as e:
             err = str(e)
-            if "Insufficient stock" in err:
-                messagebox.showerror(
-                    "Out of Stock",
-                    f"{err}\n\n"
-                    "Go to Inventory → Products and increase the stock for this item before selling.",
-                )
-            elif "no longer available" in err:
+            if "no longer available" in err:
                 messagebox.showerror(
                     "Product Unavailable",
                     f"{err}\n\nThe item may have been deactivated. Remove it from the cart.",

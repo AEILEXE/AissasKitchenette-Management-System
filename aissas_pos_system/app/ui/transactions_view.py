@@ -1159,7 +1159,7 @@ class TransactionDetailsDialog(tk.Toplevel):
         if not messagebox.askyesno(
             "Void / Cancel Transaction",
             f"Are you sure you want to VOID order #{self.order_id}?\n\n"
-            "This will cancel the order and restore stock. This cannot be undone.",
+            "This will void/cancel the order. This cannot be undone.",
             icon="warning",
         ):
             return
@@ -1328,8 +1328,9 @@ class ResolveDialog(tk.Toplevel):
             messagebox.showerror("Resolve Failed", f"Could not resolve order:\n{exc}")
             return
 
-        # Re-fetch fresh data after resolve so receipt shows Completed status
+        # Show in-app receipt popup after resolve (no auto-opening browser/PDF)
         try:
+            from app.ui.pos_view import ReceiptPreviewDialog
             fresh = self.orders.get_order(self.order_id)
             raw_order = self.db.fetchone(
                 "SELECT * FROM orders WHERE id=?;", (int(self.order_id),)
@@ -1342,8 +1343,7 @@ class ResolveDialog(tk.Toplevel):
                         if raw_order[k] is not None:
                             order_dict[k] = raw_order[k]
                 items_list = [{k: item[k] for k in item.keys()} for item in items]
-                receipt_path = ReceiptService.generate_receipt(order_dict, items_list)
-                ReceiptService.open_file(receipt_path)
+                ReceiptPreviewDialog(self.winfo_toplevel(), order_dict, items_list)
         except Exception:
             pass  # Receipt failure must not block the resolve flow
 
@@ -1355,9 +1355,7 @@ class ResolveDialog(tk.Toplevel):
         confirmed = messagebox.askyesno(
             "Cancel Transaction",
             f"Cancel order #{self.order_id}?\n\n"
-            "• The order will be marked as Cancelled.\n"
-            "• Stock for all items will be restored.\n\n"
-            "This action cannot be undone.",
+            "This will void/cancel the order. This cannot be undone.",
             icon="warning",
         )
         if not confirmed:
@@ -1569,8 +1567,7 @@ class VoidDialog(tk.Toplevel):
         if not messagebox.askyesno(
             "Void Entire Order",
             f"Void ALL items in order #{self.order_id}?\n\n"
-            "This will cancel the order and restore all stock.\n"
-            "This cannot be undone.",
+            "This will void/cancel the order. This cannot be undone.",
             icon="warning",
         ):
             return
@@ -1581,7 +1578,7 @@ class VoidDialog(tk.Toplevel):
             )
             messagebox.showinfo(
                 "Order Voided",
-                f"Order #{self.order_id} has been voided and stock restored.",
+                f"Order #{self.order_id} has been voided.",
             )
             if self.on_done:
                 self.on_done()
@@ -1609,7 +1606,7 @@ class VoidDialog(tk.Toplevel):
             "Void Selected Items",
             f"Void {len(selected)} item(s) from order #{self.order_id}?\n\n"
             + "\n".join(f"  • {n}" for n in names)
-            + "\n\nStock will be restored for voided items.",
+            + "\n\nThis cannot be undone.",
             icon="warning",
         ):
             return
