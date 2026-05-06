@@ -11,6 +11,7 @@ from app.db.dao import OrderDAO, DraftDAO  # VoidDialog also uses void_completed
 from app.services.auth_service import AuthService
 from app.services.receipt_service import ReceiptService
 from app.ui import ui_scale
+from app.ui.dialogs import show_toast
 from app.utils import money
 from app.constants import P_VOID
 
@@ -553,13 +554,13 @@ class TransactionsView(tk.Frame):
         # Each tag uses an explicit dark foreground so date/time columns are
         # always readable regardless of the Windows native Treeview renderer.
         self.tbl.tag_configure("row_completed",
-                               background="#FAFFFE", foreground=_dark_text,
+                               background="#F0FFF4", foreground=_dark_text,
                                font=_row_font)
         self.tbl.tag_configure("row_pending",
-                               background="#FFFBEB", foreground="#78350F",
+                               background="#FEF3C7", foreground="#92400E",
                                font=("Segoe UI", 10, "bold"))
         self.tbl.tag_configure("row_cancelled",
-                               background="#FEF2F2", foreground="#7F1D1D",
+                               background="#FFE4E4", foreground="#991B1B",
                                font=_row_font)
 
         # ── Highlight tags ────────────────────────────────────────────────────
@@ -606,8 +607,8 @@ class TransactionsView(tk.Frame):
     # Badge-style display labels for the STATUS column (display only — DB values unchanged)
     _STATUS_BADGE: dict[str, str] = {
         "completed": "✔  Completed",
-        "pending":   "◉  Pending",
-        "cancelled": "✕  Cancelled",
+        "pending":   "⏳  Pending",
+        "cancelled": "✗  Cancelled",
     }
 
     def refresh(self):
@@ -781,6 +782,11 @@ class TransactionsView(tk.Frame):
             return
         self.open_selected()
 
+    def set_status_filter(self, status: str) -> None:
+        """Pre-select a status filter and refresh — called from dashboard cards."""
+        self.var_status.set(status)
+        self.refresh()
+
 
 # ── TRANSACTION DETAILS DIALOG ────────────────────────────────────────────────
 
@@ -804,6 +810,7 @@ class TransactionDetailsDialog(tk.Toplevel):
 
         self.transient(parent)
         self.grab_set()
+        self.bind("<Escape>", lambda _e: self.destroy())
 
         self._details_expanded = tk.BooleanVar(value=False)
         self._details_rows: list[tuple[str, str]] = []
@@ -935,10 +942,16 @@ class TransactionDetailsDialog(tk.Toplevel):
                 anchor="w",
             ).pack(side="left")
 
+        _ot = str(data["order_type"] if "order_type" in data.keys() else "DINE_IN").strip().upper()
+        _tbl = str(data["table_number"] if "table_number" in data.keys() else "").strip()
+        if not _tbl:
+            _tbl = str(data["customer_name"] or "—").strip() or "—"
+        _loc_label = "Order No." if _ot == "TAKE_OUT" else "Table No."
+
         info_line("Order Start:", str(data["start_dt"]))
         info_line("Order End:",   str(data["end_dt"] or ""))
         info_line("Cashier:",     str(data["cashier_username"]))
-        info_line("Customer:",    str(data["customer_name"]), bold_val=True)
+        info_line(f"{_loc_label}:", _tbl, bold_val=True)
         info_line("Payment:",     str(data["payment_method"]))
 
         ref = ""
@@ -1166,7 +1179,7 @@ class TransactionDetailsDialog(tk.Toplevel):
         try:
             self.orders.cancel_order(self.order_id)
             messagebox.showinfo("Voided",
-                                f"Order #{self.order_id} has been cancelled and stock restored.")
+                                f"Order #{self.order_id} has been cancelled.")
             if self.on_refresh:
                 self.on_refresh()
             self.destroy()
@@ -1469,7 +1482,8 @@ class VoidDialog(tk.Toplevel):
             subtotal = qty * price
 
             row_bg = "#fef2f2" if voided else THEME["panel"]
-            row = tk.Frame(inner, bg=row_bg)
+            row_cursor = "" if voided else "hand2"
+            row = tk.Frame(inner, bg=row_bg, cursor=row_cursor)
             row.pack(fill="x", padx=sp(4), pady=sp(1))
 
             var = tk.BooleanVar(value=False)
@@ -1483,25 +1497,37 @@ class VoidDialog(tk.Toplevel):
             cb.pack(side="left", padx=(sp(4), 0))
 
             name_text = f"{name}" + ("  [Voided]" if voided else "")
-            tk.Label(
+            lbl_name = tk.Label(
                 row, text=name_text,
                 bg=row_bg,
                 fg=THEME["muted"] if voided else THEME["text"],
                 font=("Segoe UI", f(9), "overstrike" if voided else "normal"),
-            ).pack(side="left", padx=(sp(4), 0))
+                cursor=row_cursor,
+            )
+            lbl_name.pack(side="left", padx=(sp(4), 0))
 
-            tk.Label(
+            lbl_price = tk.Label(
                 row, text=money(subtotal),
                 bg=row_bg,
                 fg=THEME["muted"] if voided else THEME["text"],
                 font=("Segoe UI", f(9)),
-            ).pack(side="right", padx=sp(8))
-            tk.Label(
+                cursor=row_cursor,
+            )
+            lbl_price.pack(side="right", padx=sp(8))
+
+            lbl_qty = tk.Label(
                 row, text=f"×{qty}",
                 bg=row_bg,
                 fg=THEME["muted"],
                 font=("Segoe UI", f(9)),
-            ).pack(side="right", padx=(0, sp(8)))
+                cursor=row_cursor,
+            )
+            lbl_qty.pack(side="right", padx=(0, sp(8)))
+
+            if not voided:
+                def _toggle(_e, v=var): v.set(not v.get())
+                for w in (row, lbl_name, lbl_price, lbl_qty):
+                    w.bind("<Button-1>", _toggle)
 
         # Reason
         reason_frame = tk.Frame(self, bg=THEME["bg"])
@@ -1576,13 +1602,11 @@ class VoidDialog(tk.Toplevel):
             self.orders.void_completed_order(
                 self.order_id, actor_id, actor_name, reason
             )
-            messagebox.showinfo(
-                "Order Voided",
-                f"Order #{self.order_id} has been voided.",
-            )
             if self.on_done:
                 self.on_done()
+            top = self.winfo_toplevel()
             self.destroy()
+            show_toast(top, f"Order #{self.order_id} has been voided.")
         except Exception as exc:
             messagebox.showerror("Void Failed", f"Could not void order:\n{exc}")
 
@@ -1632,16 +1656,14 @@ class VoidDialog(tk.Toplevel):
             except Exception as exc:
                 errors.append(str(exc))
 
+        top = self.winfo_toplevel()
         if errors:
             messagebox.showerror(
                 "Partial Void",
                 f"Some items could not be voided:\n\n" + "\n".join(errors),
             )
-        else:
-            messagebox.showinfo(
-                "Items Voided",
-                f"{len(selected)} item(s) voided successfully.",
-            )
         if self.on_done:
             self.on_done()
         self.destroy()
+        if not errors:
+            show_toast(top, f"{len(selected)} item(s) voided successfully.")

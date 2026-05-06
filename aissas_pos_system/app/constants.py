@@ -43,9 +43,7 @@ ALL_PERMISSION_KEYS: list[str] = [
     P_SETTINGS,
     P_EXPORT,
     P_DATABASE,
-    P_ML,
     P_INV_VIEW,
-    P_AUDIT_LOG,
     P_EDIT_COMPLETED,
 ]
 
@@ -64,9 +62,7 @@ PERMISSION_LABELS: dict[str, str] = {
     P_SETTINGS:       "Access settings",
     P_EXPORT:         "Export data (CSV / PDF)",
     P_DATABASE:       "Manage database (backup/restore)",
-    P_ML:             "Manage ML / seeding",
     P_INV_VIEW:       "View inventory",
-    P_AUDIT_LOG:      "View audit logs",
     P_EDIT_COMPLETED: "Edit completed transactions",
 }
 
@@ -80,7 +76,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, set[str]] = {
         P_SELL, P_DISCOUNT, P_VOID, P_VOID_APPROVE,
         P_REPORTS, P_REPORTS_FULL, P_PROFIT,
         P_MANAGE_PRODS, P_EDIT_PRICE,
-        P_SETTINGS, P_EXPORT, P_INV_VIEW, P_AUDIT_LOG,
+        P_SETTINGS, P_EXPORT, P_INV_VIEW,
         P_EDIT_COMPLETED,
     },
 

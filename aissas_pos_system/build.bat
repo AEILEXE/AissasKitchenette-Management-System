@@ -6,7 +6,7 @@ REM ── Single source of truth for version ───────────�
 REM    Keep in sync with: version_info.txt  (filevers/prodvers/FileVersion/ProductVersion)
 REM                       app/config.py     (APP_VERSION)
 REM                       installer.iss     (#ifndef MyAppVersion fallback)
-set APP_VERSION=2.2.0
+set APP_VERSION=2.0-beta
 
 echo.
 echo ================================================================
@@ -69,13 +69,24 @@ echo   OK.
 echo.
 
 REM ════════════════════════════════════════════════════════════════
+REM  BACKUP — preserve previous build outputs before cleaning
+REM ════════════════════════════════════════════════════════════════
+echo [PRE] Backing up previous build outputs...
+
+if not exist "dist\backup" md "dist\backup"
+for %%F in ("dist\*.exe") do copy /y "%%F" "dist\backup\%%~nxF" >nul 2>&1
+echo   Done.
+echo.
+
+REM ════════════════════════════════════════════════════════════════
 REM  PRE-CLEAN
 REM ════════════════════════════════════════════════════════════════
 echo [PRE] Removing stale outputs and bytecode cache...
 
-if exist "dist\AissasKitchenette.exe"                             del /f /q "dist\AissasKitchenette.exe"
-if exist "dist\AissasKitchenette_Setup.exe"                       del /f /q "dist\AissasKitchenette_Setup.exe"
-if exist "dist\AissasKitchenette_v%APP_VERSION%_Setup.exe"        del /f /q "dist\AissasKitchenette_v%APP_VERSION%_Setup.exe"
+if exist "dist\AissasKitchenette.exe"                                  del /f /q "dist\AissasKitchenette.exe"
+if exist "dist\AissasKitchenette_Setup.exe"                            del /f /q "dist\AissasKitchenette_Setup.exe"
+if exist "dist\AissasKitchenette_POS_v%APP_VERSION%.exe"               del /f /q "dist\AissasKitchenette_POS_v%APP_VERSION%.exe"
+if exist "dist\AissasKitchenette_POS_v%APP_VERSION%_Setup.exe"         del /f /q "dist\AissasKitchenette_POS_v%APP_VERSION%_Setup.exe"
 
 REM Remove all __pycache__ dirs and .pyc files under app\
 for /d /r "app" %%d in (__pycache__) do (
@@ -139,6 +150,14 @@ for %%F in ("dist\AissasKitchenette.exe") do (
     echo.
     echo   Done.  dist\AissasKitchenette.exe  (!EXE_MB! MB^)
 )
+
+REM Create versioned POS-named copy of the EXE
+copy /y "dist\AissasKitchenette.exe" "dist\AissasKitchenette_POS_v%APP_VERSION%.exe" >nul
+if errorlevel 1 (
+    echo   WARNING: Could not create renamed EXE copy.
+) else (
+    echo   Copied:  dist\AissasKitchenette_POS_v%APP_VERSION%.exe
+)
 echo.
 
 REM ════════════════════════════════════════════════════════════════
@@ -159,19 +178,20 @@ if not defined ISCC (
     goto :summary
 )
 
-REM Pass version from this script so installer.iss stays DRY
-!ISCC! /DMyAppVersion=%APP_VERSION% installer.iss
+REM Pass version from this script so installer.iss stays DRY.
+set ISCC_FLAGS=/DMyAppVersion=%APP_VERSION%
+!ISCC! !ISCC_FLAGS! installer.iss
 if errorlevel 1 (
     echo.
     echo   ERROR: Inno Setup build failed.  Check ISCC output above.
     exit /b 1
 )
 
-set SETUP_EXE=dist\AissasKitchenette_v%APP_VERSION%_Setup.exe
+set SETUP_EXE=dist\AissasKitchenette_POS_v%APP_VERSION%_Setup.exe
 if not exist "!SETUP_EXE!" (
     echo   ERROR: Installer not found at !SETUP_EXE! after build.
     echo          Verify OutputBaseFilename in installer.iss matches:
-    echo            AissasKitchenette_v{#MyAppVersion}_Setup
+    echo            AissasKitchenette_POS_v{#MyAppVersion}_Setup
     exit /b 1
 )
 
@@ -193,8 +213,14 @@ if exist "dist\AissasKitchenette.exe" (
         echo     EXE      %%~nxF   (!SZ! MB^)
     )
 )
-if exist "dist\AissasKitchenette_v%APP_VERSION%_Setup.exe" (
-    for %%F in ("dist\AissasKitchenette_v%APP_VERSION%_Setup.exe") do (
+if exist "dist\AissasKitchenette_POS_v%APP_VERSION%.exe" (
+    for %%F in ("dist\AissasKitchenette_POS_v%APP_VERSION%.exe") do (
+        set /a SZ=%%~zF / 1048576
+        echo     EXE      %%~nxF   (!SZ! MB^)
+    )
+)
+if exist "dist\AissasKitchenette_POS_v%APP_VERSION%_Setup.exe" (
+    for %%F in ("dist\AissasKitchenette_POS_v%APP_VERSION%_Setup.exe") do (
         set /a SZ=%%~zF / 1048576
         echo     Setup    %%~nxF   (!SZ! MB^)
     )

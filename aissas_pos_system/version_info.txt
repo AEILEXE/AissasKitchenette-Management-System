@@ -21,12 +21,12 @@ VSVersionInfo(
         [
           StringStruct(u'CompanyName',      u"Aissa's Kitchenette"),
           StringStruct(u'FileDescription',  u"Aissa's Kitchenette POS System"),
-          StringStruct(u'FileVersion',      u'2.0.0.0'),
+          StringStruct(u'FileVersion',      u'2.0-beta'),
           StringStruct(u'InternalName',     u'AissasKitchenette'),
           StringStruct(u'LegalCopyright',   u'\xa9 2026 Aissa\'s Kitchenette. All rights reserved.'),
           StringStruct(u'OriginalFilename', u'AissasKitchenette.exe'),
           StringStruct(u'ProductName',      u"Aissa's Kitchenette POS"),
-          StringStruct(u'ProductVersion',   u'2.0.0.0'),
+          StringStruct(u'ProductVersion',   u'2.0-beta'),
         ]
       )
     ]),

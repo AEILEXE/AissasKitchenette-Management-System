@@ -45,6 +45,7 @@ class InventoryProductsView(tk.Frame):
 
         self.var_search   = tk.StringVar()
         self.var_category = tk.StringVar(value="All")
+        self.var_status   = tk.StringVar(value="All")
         self._hovered_iid: str | None = None
         self._iid_tags: dict[str, str] = {}   # iid → original tag name
         self._prod_sort: dict = {"col": None, "reverse": False}
@@ -146,6 +147,23 @@ class InventoryProductsView(tk.Frame):
         self.cat_combo.pack(side="left")
         self.cat_combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh())
         self._refresh_category_options()
+
+        # Status filter
+        tk.Label(
+            cat_frame, text="Status:",
+            bg=THEME["bg"], fg=THEME["muted"],
+            font=("Segoe UI", ui_scale.scale_font(9)),
+        ).pack(side="left", padx=(12, 6))
+
+        status_combo = ttk.Combobox(
+            cat_frame, textvariable=self.var_status,
+            values=["All", "Available", "Unavailable"],
+            state="readonly",
+            font=("Segoe UI", ui_scale.scale_font(9)),
+            width=12,
+        )
+        status_combo.pack(side="left")
+        status_combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh())
 
         # ── Table ─────────────────────────────────────────────────────────────
         self._build_table()
@@ -293,29 +311,35 @@ class InventoryProductsView(tk.Frame):
 
         self._refresh_category_options()
 
-        q   = (self.var_search.get() or "").strip().lower()
-        cat = self.var_category.get()
+        q      = (self.var_search.get() or "").strip().lower()
+        cat    = self.var_category.get()
+        status = self.var_status.get()
 
         all_rows = self.products.list_all()
         filtered = []
         for r in all_rows:
-            name = str(r["name"])
+            name     = str(r["name"])
             cat_name = str(r["category"])
-            desc = str(r["description"] or "")
+            desc     = str(r["description"] or "")
+            active   = int(r["active"] or 0)
             if q and q not in name.lower() and q not in cat_name.lower() and q not in desc.lower():
                 continue
             if cat != "All" and cat_name != cat:
                 continue
+            if status == "Available" and not active:
+                continue
+            if status == "Unavailable" and active:
+                continue
             filtered.append(r)
 
-        # Apply sort
+        # Apply sort — use r[key] not r.get() since sqlite3.Row has no .get()
         sort_col = self._prod_sort["col"]
         if sort_col and sort_col != "action":
             _key = {
-                "name":      lambda r: str(r.get("name") or "").lower(),
-                "category":  lambda r: str(r.get("category") or "").lower(),
-                "price":     lambda r: float(r.get("price") or 0),
-                "available": lambda r: int(r.get("active") or 0),
+                "name":      lambda r: str(r["name"] or "").lower(),
+                "category":  lambda r: str(r["category"] or "").lower(),
+                "price":     lambda r: float(r["price"] or 0),
+                "available": lambda r: int(r["active"] or 0),
             }
             filtered = sorted(filtered,
                                key=_key.get(sort_col, lambda r: 0),
@@ -813,3 +837,239 @@ def simple_input(parent: tk.Widget, title: str, label: str) -> str | None:
     dlg.bind("<Return>", lambda _e: ok())
     dlg.wait_window()
     return out["v"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# InventoryCategoriesView
+# ─────────────────────────────────────────────────────────────────────────────
+
+class InventoryCategoriesView(tk.Frame):
+    """
+    Category management panel inside the Inventory shell.
+    Shows all categories with their product counts and allows safe deletion
+    (only when no products are linked) and creation of new categories.
+    """
+
+    def __init__(self, parent: tk.Frame, db: Database, auth: AuthService,
+                 refresh_pos_cats_cb=None):
+        super().__init__(parent, bg=THEME["bg"])
+        self.db = db
+        self.auth = auth
+        self.categories = CategoryDAO(db)
+        self._refresh_pos_cats = refresh_pos_cats_cb or (lambda: None)
+        self._del_btn: tk.Button | None = None
+        self._build()
+        self.refresh()
+
+    # ── Layout ───────────────────────────────────────────────────────────────
+
+    def _build(self):
+        f  = ui_scale.scale_font
+        sp = ui_scale.s
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(2, weight=1)
+
+        # ── Header card ───────────────────────────────────────────────────
+        hdr_card = tk.Frame(
+            self, bg=THEME["panel"],
+            highlightthickness=1, highlightbackground=THEME["border"],
+        )
+        hdr_card.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 6))
+        hdr_card.columnconfigure(0, weight=1)
+
+        title_row = tk.Frame(hdr_card, bg=THEME["panel"])
+        title_row.pack(fill="x", padx=16, pady=(14, 12))
+        title_row.columnconfigure(0, weight=1)
+
+        tk.Label(
+            title_row, text="Categories",
+            bg=THEME["panel"], fg=THEME["text"],
+            font=("Segoe UI", f(20), "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+
+        tk.Label(
+            title_row, text="Manage menu categories",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", f(9)),
+        ).grid(row=1, column=0, sticky="w")
+
+        tk.Button(
+            title_row,
+            text="＋  Add Category",
+            bg=THEME["brown"], fg="white",
+            activebackground=THEME["brown_dark"], activeforeground="white",
+            bd=0,
+            padx=sp(14), pady=sp(8),
+            cursor="hand2",
+            font=("Segoe UI", f(10), "bold"),
+            command=self._create_category,
+        ).grid(row=0, column=1, rowspan=2, sticky="e")
+
+        # ── Action bar (Delete button, enabled on selection) ──────────────
+        action_bar = tk.Frame(self, bg=THEME["bg"])
+        action_bar.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 6))
+
+        self._del_btn = tk.Button(
+            action_bar,
+            text="Delete Selected",
+            bg=THEME["danger"], fg="white",
+            activebackground="#c0392b", activeforeground="white",
+            bd=0, padx=sp(12), pady=sp(7),
+            cursor="hand2",
+            font=("Segoe UI", f(9), "bold"),
+            state="disabled",
+            command=self._delete_selected,
+        )
+        self._del_btn.pack(side="left")
+
+        tk.Label(
+            action_bar,
+            text="Select a category row, then click Delete.",
+            bg=THEME["bg"], fg=THEME["muted"],
+            font=("Segoe UI", f(8), "italic"),
+        ).pack(side="left", padx=(10, 0))
+
+        # ── Table ─────────────────────────────────────────────────────────
+        self._build_table()
+
+    def _build_table(self):
+        f  = ui_scale.scale_font
+        sp = ui_scale.s
+
+        style = ttk.Style()
+        style.configure(
+            "Cat.Treeview",
+            rowheight=sp(34),
+            font=("Segoe UI", f(10)),
+            background=THEME["panel"],
+            fieldbackground=THEME["panel"],
+            foreground=THEME["text"],
+            borderwidth=0,
+            relief="flat",
+        )
+        style.configure(
+            "Cat.Treeview.Heading",
+            font=("Segoe UI", f(9), "bold"),
+            background=THEME["beige"],
+            foreground=THEME["muted"],
+            relief="flat",
+            padding=(sp(10), sp(8)),
+        )
+        style.map(
+            "Cat.Treeview",
+            background=[("selected", THEME["select_bg"])],
+            foreground=[("selected", THEME["select_fg"])],
+        )
+        style.map("Cat.Treeview.Heading", background=[("active", THEME["beige"])])
+
+        tbl_card = tk.Frame(
+            self, bg=THEME["panel"],
+            highlightthickness=1, highlightbackground=THEME["border"],
+        )
+        tbl_card.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        tbl_card.rowconfigure(0, weight=1)
+        tbl_card.columnconfigure(0, weight=1)
+
+        cols = ("name", "products")
+        self.tbl = ttk.Treeview(
+            tbl_card, columns=cols, show="headings",
+            style="Cat.Treeview",
+        )
+        self.tbl.grid(row=0, column=0, sticky="nsew")
+
+        ysb = ttk.Scrollbar(tbl_card, orient="vertical", command=self.tbl.yview)
+        ysb.grid(row=0, column=1, sticky="ns")
+        self.tbl.configure(yscrollcommand=ysb.set)
+
+        col_cfg = [
+            ("name",     "Category Name", sp(320), "w",      True),
+            ("products", "Products",      sp(120), "center", False),
+        ]
+        for cid, heading, width, anchor, stretch in col_cfg:
+            self.tbl.heading(cid, text=heading, anchor="w" if cid == "name" else "center")
+            self.tbl.column(cid, width=width, minwidth=sp(80),
+                            anchor=anchor, stretch=stretch)
+
+        self.tbl.bind("<<TreeviewSelect>>", self._on_select)
+        self.tbl.bind("<Delete>", lambda _e: self._delete_selected())
+
+    # ── Data ─────────────────────────────────────────────────────────────────
+
+    def refresh(self):
+        for iid in self.tbl.get_children():
+            self.tbl.delete(iid)
+
+        rows = self.categories.list_with_counts()
+        for r in rows:
+            cid   = int(r["category_id"])
+            name  = str(r["name"])
+            count = int(r["product_count"])
+            self.tbl.insert("", tk.END, iid=str(cid),
+                            values=(name, count))
+
+        if self._del_btn:
+            self._del_btn.configure(state="disabled")
+
+    # ── Event handlers ────────────────────────────────────────────────────────
+
+    def _on_select(self, _event=None):
+        if self._del_btn is None:
+            return
+        sel = self.tbl.selection()
+        state = "normal" if sel else "disabled"
+        self._del_btn.configure(state=state)
+
+    def _create_category(self):
+        name = simple_input(self, "New Category", "Category name:")
+        if not name:
+            return
+        name = name.strip()
+        if not name:
+            return
+        existing = self.categories.get_by_name(name)
+        if existing:
+            from tkinter import messagebox
+            messagebox.showwarning("Duplicate", f"A category named '{name}' already exists.",
+                                   parent=self)
+            return
+        self.categories.create(name)
+        self.refresh()
+        self._refresh_pos_cats()
+
+    def _delete_selected(self):
+        sel = self.tbl.selection()
+        if not sel:
+            from tkinter import messagebox
+            messagebox.showinfo("No Selection", "Select a category to delete.", parent=self)
+            return
+
+        cat_id   = int(sel[0])
+        item     = self.tbl.item(str(cat_id))
+        cat_name = str(item["values"][0])
+        count    = int(item["values"][1])
+
+        if count > 0:
+            from tkinter import messagebox
+            messagebox.showerror(
+                "Cannot Delete",
+                f"Cannot delete category while products are assigned to it.\n\n"
+                f"'{cat_name}' still has {count} product(s).\n\n"
+                "Reassign or delete those products first, then retry.",
+                parent=self,
+            )
+            return
+
+        from tkinter import messagebox
+        confirmed = messagebox.askyesno(
+            "Confirm Delete",
+            f"Delete category '{cat_name}'?\n\nThis cannot be undone.",
+            icon="warning",
+            parent=self,
+        )
+        if not confirmed:
+            return
+
+        self.categories.delete(cat_id)
+        self.refresh()
+        self._refresh_pos_cats()

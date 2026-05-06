@@ -206,7 +206,7 @@ class ReceiptService:
         draw_hr(1.0, 6.0)
 
         # ── Order metadata ────────────────────────────────────────────────────
-        draw_row("Order #:", str(order_id))
+        draw_row("Transaction #:", str(order_id))
         draw_row("Date:", start_dt[:19] if len(start_dt) > 19 else start_dt)
         if end_dt and end_dt not in ("None", "—", ""):
             draw_row("Completed:", end_dt[:19] if len(end_dt) > 19 else end_dt)

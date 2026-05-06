@@ -7,6 +7,44 @@ from typing import Optional
 from app.config import THEME
 
 
+def show_toast(parent: tk.Widget, message: str, ms: int = 2500) -> None:
+    """Non-blocking success notification that auto-dismisses after `ms` milliseconds."""
+    try:
+        top = parent.winfo_toplevel()
+        if not top.winfo_exists():
+            return
+    except Exception:
+        return
+
+    toast = tk.Toplevel(top)
+    toast.overrideredirect(True)
+    toast.configure(bg="#166534")
+    toast.attributes("-topmost", True)
+
+    tk.Label(
+        toast, text=f"  {message}  ",
+        bg="#166534", fg="#ffffff",
+        font=("Segoe UI", 10), padx=12, pady=10,
+    ).pack()
+
+    toast.update_idletasks()
+    try:
+        sx = top.winfo_rootx() + (top.winfo_width() - toast.winfo_width()) // 2
+        sy = top.winfo_rooty() + top.winfo_height() - toast.winfo_height() - 50
+        toast.geometry(f"+{sx}+{sy}")
+    except Exception:
+        pass
+
+    def _dismiss():
+        try:
+            if toast.winfo_exists():
+                toast.destroy()
+        except Exception:
+            pass
+
+    toast.after(ms, _dismiss)
+
+
 class DiscountDialog(tk.Toplevel):
     """
     Checkout discount dialog — supports PWD 20%, Senior 20%, or custom Special amount.

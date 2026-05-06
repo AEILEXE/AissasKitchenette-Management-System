@@ -83,6 +83,10 @@ class DashboardView(tk.Frame):
         self.auth = auth
         self.go_transactions = callbacks.get("go_transactions_cb", lambda: None)
         self.go_pos          = callbacks.get("go_pos_cb",          lambda: None)
+        self.go_inventory    = callbacks.get("go_inventory_cb",    lambda: None)
+        self.go_pending      = callbacks.get("go_pending_cb",      self.go_transactions)
+        self.go_completed    = callbacks.get("go_completed_cb",    self.go_transactions)
+        self.go_reports      = callbacks.get("go_reports_cb",      self.go_transactions)
 
         self.orders   = OrderDAO(db)
         self.products = ProductDAO(db)
@@ -287,16 +291,16 @@ class DashboardView(tk.Frame):
 
         kpi_data = [
             ("Sales Today",        money(today_sales),
-             f"{today_count} completed order{'s' if today_count != 1 else ''}",
-             _RED, "\U0001f4b0", self.go_transactions),
+             f"{today_count} completed order{'s' if today_count != 1 else ''}  →  View Reports",
+             _RED, "\U0001f4b0", self.go_reports),
             ("Orders Today",       str(today_count),
-             "completed orders",
-             _SB, "\U0001f9fe", self.go_transactions),
+             "completed orders  →  View completed",
+             _SB, "\U0001f9fe", self.go_completed),
             ("Pending Orders",     str(pending_cnt),
-             "awaiting payment",
-             THEME["accent"], "⏳", self.go_transactions),
+             "awaiting payment  →  View pending",
+             THEME["accent"], "⏳", self.go_pending),
             ("Voids Today",        str(void_count),
-             "⚠ suspicious if high" if void_count >= 3 else "click to view details",
+             "⚠ suspicious if high" if void_count >= 3 else "click to view void history",
              THEME["danger"] if void_count >= 3 else _NEU, "\U0001f6ab", self._open_voids_popup),
         ]
         for col, (title, val, sub, accent, icon, cmd) in enumerate(kpi_data):
@@ -342,8 +346,8 @@ class DashboardView(tk.Frame):
 
             self._kpi_card(row2, 0,
                            "Low Stock Raw Materials",
-                           str(len(low_mats)), "materials below threshold",
-                           THEME["warning"], "\U0001f9c2", None)
+                           str(len(low_mats)), "click to view inventory",
+                           THEME["warning"], "\U0001f9c2", self.go_inventory)
 
         # ── Top Sellers ───────────────────────────────────────────────────
         top_sellers = list(data.get("top_sellers", []))

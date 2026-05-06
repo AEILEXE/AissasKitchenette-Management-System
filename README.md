@@ -2,7 +2,7 @@
 
 A standalone desktop **Point-of-Sale and Inventory Management System** built for a small food service business. Developed with **Python 3 + Tkinter + SQLite**. Fully offline — no internet connection required.
 
-> **Current release: v2.0.0** — Stable
+> **Current release: v2.0-beta** — Feature-complete beta, stable for daily use
 
 ---
 
@@ -101,7 +101,6 @@ See [Section 12](#12-reports--dashboard).
 - **Account** — change password
 - **Users** — create and manage user accounts (ADMIN only)
 - **Database** — export, import, and ZIP data restore
-- **Demo Data** — seed sample sales for testing
 
 ---
 
@@ -109,15 +108,30 @@ See [Section 12](#12-reports--dashboard).
 
 > No Python or development tools required.
 
-1. Double-click `AissasKitchenette_v2.0.0_Setup.exe` and follow the wizard.
+1. Double-click `AissasKitchenette_POS_v2.0-beta_Setup.exe` and follow the wizard.
 2. Launch via the **desktop shortcut** or **Start Menu → Aissa's Kitchenette**.
 3. Log in with the default credentials:
 
 | Username | Password | Role |
 |----------|----------|------|
-| `admin` | `admin123` | ADMIN |
+| `admin` | `Admin123@` | ADMIN |
 
 > **Change the default password immediately** after first login via Settings → Account → Change Password.
+
+### Fresh / Production Install
+
+The production installer starts with a completely empty database. No demo products, categories, or transactions are pre-loaded.
+
+**After first login the admin must:**
+
+1. Go to **Inventory → Products** and create at least one category.
+2. Add products (name, price, stock) to each category.
+3. Optionally upload a product image for each item.
+4. Products marked **Available** will appear immediately in the POS product grid.
+
+**Dashboard and Reports** display zero/empty states until real transactions exist — this is normal and expected on a fresh install.
+
+**Product images** can be uploaded at any time from the product edit dialog. The upload folder is `%APPDATA%\AissasPOS\product_images\`.
 
 ### Uninstalling
 
@@ -169,7 +183,7 @@ cd aissas_pos_system
 python main.py
 ```
 
-On first run the app automatically creates the database, seeds the default admin user, and seeds the product menu.
+On first run the app automatically creates the database and seeds the default admin user. No demo products or sample data are added — the menu starts empty and must be populated by an admin.
 
 ---
 
@@ -192,7 +206,8 @@ build.bat
 |------|--------|
 | Generate icon | `assets/logo.ico` |
 | PyInstaller | `dist/AissasKitchenette.exe` |
-| Inno Setup | `dist/AissasKitchenette_v2.0.0_Setup.exe` |
+| Rename copy | `dist/AissasKitchenette_POS_v2.0-beta.exe` |
+| Inno Setup | `dist/AissasKitchenette_POS_v2.0-beta_Setup.exe` |
 
 ### Manual build
 
@@ -213,7 +228,7 @@ Requires **Inno Setup 6**: [https://jrsoftware.org/isdl.php](https://jrsoftware.
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 ```
 
-Output: `dist/AissasKitchenette_v2.0.0_Setup.exe`
+Output: `dist/AissasKitchenette_POS_v2.0-beta_Setup.exe`
 
 ---
 
@@ -340,7 +355,44 @@ sudo dnf install python3-tkinter  # Fedora
 
 ## 14. Version History
 
-### v2.0.0 — Current Stable Release
+### v2.0-beta — Current Release
+
+**Payment & Order Validation**
+- Cash payments only: no reference number required
+- Bank/E-Wallet payments: reference number is mandatory (validated on checkout)
+- Dine In orders: Table No. must be a whole number between 1 and 20
+- Take Out orders: Order No. must be a whole number between 1 and 30
+
+**Product & Inventory**
+- Product availability is controlled by the Available toggle — not derived from stock levels
+- Inventory low-stock alerts apply to raw materials only; finished products are excluded from alert logic
+
+**Receipts & Pending Payments**
+- Bank/E-Wallet orders are saved as Pending and a receipt is generated immediately on checkout
+- Pending receipts are marked clearly and updated automatically when the order is resolved
+
+**Dashboard & Reports**
+- KPI cards and top-sellers use stabilized aggregation — consistent between daily/monthly views
+- Charts no longer overlap or break on window resize or maximize/restore
+- Dashboard polling interval tuned to avoid excessive DB reads on multi-device setups
+
+**UX & Notifications**
+- Confirmation and success popups are positioned relative to the active window
+- Auto-dismiss notifications disappear after a fixed timeout without user action
+- Void and payment dialogs enforce focus so they cannot be dismissed accidentally
+
+**Multi-device & Sync**
+- Database polling detects external changes (e.g., from a second cashier device) and refreshes affected views automatically
+- Transaction list and dashboard refresh without requiring a manual reload
+
+**Build**
+- Installer renamed to `AissasKitchenette_POS_v{version}_Setup.exe`
+- Standalone EXE renamed to `AissasKitchenette_POS_v{version}.exe`
+- Build script backs up previous dist outputs before each clean build
+
+---
+
+### v2.0.0
 
 - Raw Materials module — expiry tracking, FIFO, stock movements, audit logs
 - INVENTORY role — stock management without POS access
@@ -431,4 +483,4 @@ AissasKitchenette-Management-System/
 
 ---
 
-*Aissa's Kitchenette Management System — v2.0.0 — Python 3 + Tkinter + SQLite — Offline-first, Windows-ready.*
+*Aissa's Kitchenette Management System — v2.0-beta — Python 3 + Tkinter + SQLite — Offline-first, Windows-ready.*

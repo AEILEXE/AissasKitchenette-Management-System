@@ -2183,6 +2183,14 @@ class POSView(tk.Frame):
             except (ValueError, TypeError):
                 messagebox.showerror("Table Number", "Table number must be from 1 to 20 only.")
                 return
+        elif order_type == "TAKE_OUT":
+            try:
+                _ord_int = int(table_number)
+                if not table_number.lstrip("-").isdigit() or _ord_int < 1 or _ord_int > 30:
+                    raise ValueError
+            except (ValueError, TypeError):
+                messagebox.showerror("Order Number", "Order number must be from 1 to 30 only.")
+                return
 
         _disc_labels = {"PWD": "PWD", "SENIOR": "SENIOR", "SPECIAL": "SPECIAL",
                         "amount": "AMOUNT", "percent": "PERCENT", "NONE": "NONE"}
@@ -3086,6 +3094,23 @@ class ConfirmOrderDialog(tk.Toplevel):
             return
 
         order_type = self.var_order_type.get()
+        if order_type == "DINE_IN":
+            try:
+                _tbl_int = int(table_number)
+                if not table_number.lstrip("-").isdigit() or _tbl_int < 1 or _tbl_int > 20:
+                    raise ValueError
+            except (ValueError, TypeError):
+                messagebox.showerror("Table Number", "Table number must be from 1 to 20 only.")
+                return
+        elif order_type == "TAKE_OUT":
+            try:
+                _ord_int = int(table_number)
+                if not table_number.lstrip("-").isdigit() or _ord_int < 1 or _ord_int > 30:
+                    raise ValueError
+            except (ValueError, TypeError):
+                messagebox.showerror("Order Number", "Order number must be from 1 to 30 only.")
+                return
+
         _disc_labels = {"PWD": "PWD", "SENIOR": "SENIOR", "SPECIAL": "SPECIAL",
                         "amount": "AMOUNT", "percent": "PERCENT", "NONE": "NONE"}
         discount_type = _disc_labels.get(self.discount_mode, "NONE")

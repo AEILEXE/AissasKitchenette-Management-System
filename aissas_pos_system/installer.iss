@@ -1,24 +1,15 @@
 ; Inno Setup 6 installer script for Aissa's Kitchenette POS System
-; Build with:  build.bat   (or: ISCC.exe /DMyAppVersion=2.0.0 installer.iss)
+; Build with:  build.bat   (or: ISCC.exe /DMyAppVersion=2.0-beta installer.iss)
 ;
 ; Install target: {localappdata}\Programs\AissasKitchenette
-;   - Admin rights required (Tailscale silent install needs elevation)
 ;   - App EXE and settings.json both live here
 ;   - Runtime data (DB, exports, receipts) auto-created in %APPDATA%\AissasPOS\
 ;
 ; ── BEFORE COMPILING ──────────────────────────────────────────────────────────
-;   1. Place tailscale-setup.exe next to this .iss file.
-;      Download the latest Windows installer from https://tailscale.com/download/windows
-;
-;   2. In the [Run] section below, replace the placeholder:
-;        REPLACE_WITH_YOUR_TAILSCALE_PREAUTH_KEY
-;      with a real pre-auth key from:
-;        https://login.tailscale.com/admin/settings/keys
-;      Use a reusable, expiry-optional key tagged "aissas-owner".
-;
-;   3. On the server PC, share the AissasPOS data folder as a network share named
-;      "AissasDB". The expected UNC path is: \\<server-IP>\AissasDB\data\pos.db
-;      The installer will write this path into settings.json automatically.
+;   For Network Client installs, the server PC must share the AissasPOS data
+;   folder as a network share named "AissasDB". Expected UNC path:
+;     \\<server-IP>\AissasDB\data\pos.db
+;   The installer writes this path into settings.json automatically.
 ;
 ; ── VERSION NOTE ──────────────────────────────────────────────────────────────
 ; MyAppVersion is normally overridden by build.bat via:
@@ -26,7 +17,7 @@
 ; The #ifndef guard below is the fallback for direct ISCC invocations.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "2.0.0"
+  #define MyAppVersion "2.0-beta"
 #endif
 
 #define MyAppName          "Aissa's Kitchenette"
@@ -34,7 +25,6 @@
 #define MyAppExeName       "AissasKitchenette.exe"
 #define MyAppIcon          "assets\logo.ico"
 #define MyAppId            "A1552A01-CAFE-4B01-B001-AISSA1KITCH01"
-#define TailscaleInstaller "tailscale-setup.exe"
 
 [Setup]
 AppId={{{#MyAppId}}
@@ -51,7 +41,7 @@ DisableProgramGroupPage=yes
 
 ; Output
 OutputDir=dist
-OutputBaseFilename=AissasKitchenette_v{#MyAppVersion}_Setup
+OutputBaseFilename=AissasKitchenette_POS_v{#MyAppVersion}_Setup
 SetupIconFile={#MyAppIcon}
 
 ; Installer appearance
@@ -59,19 +49,18 @@ WizardStyle=modern
 DisableWelcomePage=no
 
 ; Branding (EXE Properties > Details)
-VersionInfoVersion={#MyAppVersion}.0
+VersionInfoVersion=2.0.0.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#MyAppVersion}.0
+VersionInfoProductVersion=2.0.0.0
 
 ; Compression
 Compression=lzma2/ultra64
 SolidCompression=yes
 
-; Admin required so Tailscale can install its system service on Owner devices.
-; Cashier-only installs still prompt for UAC but do not install Tailscale.
-PrivilegesRequired=admin
+; User-profile install directory — no system service, no elevation needed.
+PrivilegesRequired=lowest
 MinVersion=10.0
 
 ; Prevent duplicate installer instances
@@ -100,11 +89,6 @@ Name: "{app}"
 ; Main executable — one-file PyInstaller bundle
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
-; Tailscale installer — extracted to %TEMP%, deleted after use.
-; Only included and run when the user chooses the Owner Device role.
-; File must exist next to this .iss before compiling (see notes at top).
-Source: "{#TailscaleInstaller}"; DestDir: "{tmp}"; \
-  Flags: deleteafterinstall; Check: IsOwnerDevice
 
 [Icons]
 Name: "{group}\{#MyAppName}";           Filename: "{app}\{#MyAppExeName}"; \
@@ -114,28 +98,7 @@ Name: "{autodesktop}\{#MyAppName}";     Filename: "{app}\{#MyAppExeName}"; \
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 
 [Run]
-; ── Owner Device only: silent Tailscale install ───────────────────────────────
-; /S is the NSIS silent-mode flag used by the Tailscale Windows installer.
-; waitprogparam ensures this finishes before the next step runs.
-Filename: "{tmp}\{#TailscaleInstaller}"; Parameters: "/S"; \
-  Flags: waituntilterminated runhidden; \
-  StatusMsg: "Installing Tailscale VPN (this may take a moment)..."; \
-  Check: IsOwnerDevice
-
-; ── Owner Device only: join the Tailscale network ────────────────────────────
-; IMPORTANT: Replace REPLACE_WITH_YOUR_TAILSCALE_PREAUTH_KEY with a real key
-; from https://login.tailscale.com/admin/settings/keys before compiling.
-;
-; --hostname labels this device in the Tailscale admin panel.
-; If tailscale.exe is missing at the path below, check whether Tailscale
-; installed to {commonpf32}\Tailscale\ on a 32-bit system and adjust.
-Filename: "{autopf}\Tailscale\tailscale.exe"; \
-  Parameters: "up --authkey=tskey-auth-kr44DYfUDg11CNTRL-5n2VYBSr18izs8K87ymX7i7WJ9Ccb99D --hostname=aissas-owner"; \
-  Flags: waituntilterminated runhidden; \
-  StatusMsg: "Connecting to Tailscale network..."; \
-  Check: IsOwnerDevice
-
-; ── All roles: offer to launch the app immediately ────────────────────────────
+; ── Offer to launch the app immediately ───────────────────────────────────────
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName} now"; \
           Flags: nowait postinstall skipifsilent
 
@@ -156,14 +119,6 @@ var
   LblIPHint: TNewStaticText;
   LblIPNote: TNewStaticText;
   EdtIP    : TNewEdit;
-
-
-// ── IsOwnerDevice ─────────────────────────────────────────────────────────────
-// Called by [Files] and [Run] Check: directives at installation time.
-function IsOwnerDevice(): Boolean;
-begin
-  Result := (RbOwner <> nil) and RbOwner.Checked;
-end;
 
 
 // ── IP field visibility ───────────────────────────────────────────────────────
@@ -229,13 +184,13 @@ begin
     'The database is stored on this PC. Choose this for the main cashier ' +
     'station or any single-PC setup.';
 
-  // ── Radio: Owner Device ───────────────────────────────────────────────────
+  // ── Radio: Network Client ────────────────────────────────────────────────
   RbOwner := TNewRadioButton.Create(RolePage);
   RbOwner.Parent  := RolePage.Surface;
   RbOwner.Left    := 0;
   RbOwner.Top     := 110;
   RbOwner.Width   := RolePage.SurfaceWidth;
-  RbOwner.Caption := 'Owner Device  —  Network database (installs Tailscale VPN)';
+  RbOwner.Caption := 'Network Client  —  Network database (shared server)';
   RbOwner.OnClick := @RbOwnerClick;
 
   LblSub := TNewStaticText.Create(RolePage);
@@ -246,17 +201,16 @@ begin
   LblSub.WordWrap := True;
   LblSub.AutoSize := True;
   LblSub.Caption  :=
-    'Reads from the shared database on the server PC. ' +
-    'Tailscale will be installed silently to provide secure remote access.';
+    'Reads from the shared database on the server PC over the local network.';
 
-  // ── Server IP input (visible for Owner Device only) ───────────────────────
+  // ── Server IP input (visible for Network Client only) ────────────────────
   LblIPHint := TNewStaticText.Create(RolePage);
   LblIPHint.Parent   := RolePage.Surface;
   LblIPHint.Left     := 0;
   LblIPHint.Top      := 178;
   LblIPHint.Width    := RolePage.SurfaceWidth;
   LblIPHint.AutoSize := True;
-  LblIPHint.Caption  := 'Server PC IP address or Tailscale hostname:';
+  LblIPHint.Caption  := 'Server PC IP address:';
   LblIPHint.Visible  := False;
 
   EdtIP := TNewEdit.Create(RolePage);
@@ -275,8 +229,7 @@ begin
   LblIPNote.WordWrap := True;
   LblIPNote.AutoSize := True;
   LblIPNote.Caption  :=
-    'Use the LAN IP (e.g. 192.168.1.100) or Tailscale IP (100.x.x.x) ' +
-    'of the PC that hosts the database.';
+    'Use the LAN IP address (e.g. 192.168.1.100) of the PC that hosts the database.';
   LblIPNote.Visible := False;
 end;
 
@@ -289,7 +242,7 @@ begin
   begin
     if RbOwner.Checked and (Trim(EdtIP.Text) = '') then
     begin
-      MsgBox('Please enter the server PC IP address or Tailscale hostname.',
+      MsgBox('Please enter the server PC IP address.',
              mbError, MB_OK);
       WizardForm.ActiveControl := EdtIP;
       Result := False;

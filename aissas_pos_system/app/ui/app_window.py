@@ -501,6 +501,14 @@ class AppWindow:
             refresh_fn=lambda v: v.refresh() if hasattr(v, "refresh") else None,
         )
 
+    def show_transactions_filtered(self, status: str = "All") -> None:
+        """Navigate to Transactions and pre-apply a status filter."""
+        self._active_nav_key = None   # bypass same-tab guard
+        self.show_transactions()
+        v = self._view_cache.get("tx")
+        if v and v.winfo_exists() and hasattr(v, "set_status_filter"):
+            v.set_status_filter(status)
+
     def show_dashboard(self) -> None:
         if self._active_nav_key == "dash" and self._current_view is not None:
             return
@@ -511,9 +519,22 @@ class AppWindow:
                 self.content, self.db, self.auth_service,
                 go_transactions_cb=self.show_transactions,
                 go_pos_cb=self.show_pos,
+                go_inventory_cb=self.show_inventory,
+                go_pending_cb=lambda: self.show_transactions_filtered("Pending"),
+                go_completed_cb=lambda: self.show_transactions_filtered("Completed"),
+                go_reports_cb=self.show_reports,
             ),
             refresh_fn=lambda v: v._refresh() if hasattr(v, "_refresh") else None,
         )
+
+    def _refresh_pos_categories(self) -> None:
+        """Refresh the category buttons on the cached POS view, if it exists."""
+        v = self._view_cache.get("pos")
+        if v and v.winfo_exists() and hasattr(v, "_refresh_categories"):
+            try:
+                v._refresh_categories()
+            except Exception:
+                pass
 
     def show_inventory(self) -> None:
         if not (self.auth_service.has_permission(P_INV_VIEW) or
@@ -528,6 +549,7 @@ class AppWindow:
             lambda: InventoryShellView(
                 self.content, self.db, self.auth_service,
                 self.show_transactions, self.show_pos, self._force_show_reports,
+                refresh_pos_cats_cb=self._refresh_pos_categories,
             ),
         )
 

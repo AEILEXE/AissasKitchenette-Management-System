@@ -9,7 +9,7 @@ from app.config import THEME
 from app.db.database import Database
 from app.db.dao import OrderDAO, DraftDAO, ProductDAO
 from app.services.auth_service import AuthService
-from app.ui.inventory_products_view import InventoryProductsView
+from app.ui.inventory_products_view import InventoryProductsView, InventoryCategoriesView
 from app.ui.inventory_raw_materials_view import InventoryRawMaterialsView
 from app.ui.transactions_view import TransactionDetailsDialog
 from app.utils import money
@@ -40,13 +40,15 @@ class InventoryShellView(tk.Frame):
     """
 
     def __init__(self, parent: tk.Frame, db: Database, auth: AuthService,
-                 go_transactions_cb, go_pos_cb, go_reports_cb=None):
+                 go_transactions_cb, go_pos_cb, go_reports_cb=None,
+                 refresh_pos_cats_cb=None):
         super().__init__(parent, bg=THEME["bg"])
         self.db = db
         self.auth = auth
         self.go_transactions_cb = go_transactions_cb
         self.go_pos_cb = go_pos_cb
         self.go_reports_cb = go_reports_cb or (lambda: None)
+        self.refresh_pos_cats_cb = refresh_pos_cats_cb or (lambda: None)
 
         self.orders   = OrderDAO(db)
         self.drafts   = DraftDAO(db)
@@ -75,7 +77,8 @@ class InventoryShellView(tk.Frame):
         ).pack(side="left", padx=(16, 20), pady=12)
 
         tab_items = [
-            ("products", "Products", self.show_products),
+            ("products",      "Products",      self.show_products),
+            ("categories",    "Categories",    self.show_categories),
             ("raw_materials", "Raw Materials", self.show_raw_materials),
         ]
         for key, text, cmd in tab_items:
@@ -127,6 +130,16 @@ class InventoryShellView(tk.Frame):
         self._set_active("products")
         self._clear_content()
         InventoryProductsView(self.content, self.db, self.auth).pack(fill="both", expand=True)
+
+    def show_categories(self):
+        if self._active == "categories":
+            return
+        self._set_active("categories")
+        self._clear_content()
+        InventoryCategoriesView(
+            self.content, self.db, self.auth,
+            refresh_pos_cats_cb=self.refresh_pos_cats_cb,
+        ).pack(fill="both", expand=True)
 
     def show_raw_materials(self):
         if self._active == "raw_materials":

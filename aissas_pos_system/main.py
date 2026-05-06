@@ -45,8 +45,8 @@ if _is_frozen():
 # ── Normal imports ────────────────────────────────────────────────────────
 from app.config import APP_NAME, APP_VERSION, ASSETS_DIR, LOGO_PATH
 from app.db.database import Database
-from app.db.seed_menu import seed_menu_if_empty
 from app.db.seed_users import seed_admin_user
+from app.db.seed_menu import seed_menu_if_empty
 from app.services.auth_service import AuthService
 from app.ui.app_window import AppWindow
 
@@ -150,8 +150,8 @@ def init_db(db: Database) -> bool:
         db.connect()
 
     db.initialize_schema()
-    seed_menu_if_empty(db)
     seed_admin_user(db)
+    seed_menu_if_empty(db)
     return True
 
 

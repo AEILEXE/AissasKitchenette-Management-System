@@ -267,7 +267,6 @@ class AccountSettingsDialog(tk.Toplevel):
             ("security",  "Security",            False),
             ("database",  "Database",            True),
             ("users",     "User Management",     True),
-            ("seed",      "Demo Seed",           True),
             ("roles",     "Role Permissions",    True),
         ]
 

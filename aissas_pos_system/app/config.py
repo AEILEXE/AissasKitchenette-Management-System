@@ -7,7 +7,7 @@ from pathlib import Path
 
 # ── App Info ───────────────────────────────────────────────────────────────
 APP_NAME = "Aissa's Kitchenette"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.0-beta"
 
 # Backwards-compat aliases (some modules import these)
 APP_VER = APP_VERSION

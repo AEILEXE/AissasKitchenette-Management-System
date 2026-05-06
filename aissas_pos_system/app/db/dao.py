@@ -126,6 +126,31 @@ class CategoryDAO:
             (name,),
         )
 
+    def list_with_counts(self):
+        """List all categories with the number of products assigned to each."""
+        return self.db.fetchall(
+            """
+            SELECT c.id AS category_id, c.name,
+                   COUNT(p.id) AS product_count
+            FROM categories c
+            LEFT JOIN products p ON p.category_id = c.id
+            GROUP BY c.id, c.name
+            ORDER BY c.name;
+            """
+        )
+
+    def has_products(self, category_id: int) -> bool:
+        """Return True if any product is assigned to this category."""
+        r = self.db.fetchone(
+            "SELECT COUNT(*) AS c FROM products WHERE category_id=?;",
+            (int(category_id),),
+        )
+        return (int(r["c"]) if r else 0) > 0
+
+    def delete(self, category_id: int) -> None:
+        """Delete a category (caller must ensure has_products() is False first)."""
+        self.db.execute("DELETE FROM categories WHERE id=?;", (int(category_id),))
+
 
 # PRODUCT DATA ACCESS OBJECT
 
@@ -487,6 +512,8 @@ class OrderDAO:
                    o.datetime AS start_dt,
                    o.end_datetime AS end_dt,
                    o.customer_name,
+                   o.order_type,
+                   o.table_number,
                    o.payment_method,
                    o.status,
                    o.reference_no,
