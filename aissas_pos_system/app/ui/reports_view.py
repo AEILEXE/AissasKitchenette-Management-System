@@ -255,23 +255,6 @@ class ReportsView(tk.Frame):
                      bg=_PANEL, fg=_MUTED,
                      font=("Segoe UI", 9)).grid(row=0, column=2, padx=(0, 14), pady=8)
 
-        # Product Stock Alerts — only stock-tracked products (low_stock > 0)
-        _section_hdr("Inventory Alerts — Products")
-        prod_card = tk.Frame(body, bg=_PANEL,
-                             highlightthickness=1, highlightbackground=_BORDER)
-        prod_card.pack(fill="x", padx=24, pady=(0, 4))
-        tk.Frame(prod_card, bg=THEME["danger"], height=3).pack(fill="x")
-
-        low_prods = self._fetch_low_stock_products()
-        if low_prods:
-            for p in low_prods:
-                _alert_card(prod_card, p["name"], p["stock"], p["low_stock"])
-        else:
-            tk.Label(prod_card,
-                     text="No stock-tracked products with low inventory.",
-                     bg=_PANEL, fg=_GREEN,
-                     font=("Segoe UI", 10)).pack(anchor="w", padx=16, pady=12)
-
         # Raw Materials Alerts
         _section_hdr("Inventory Alerts — Raw Materials")
         mat_card = tk.Frame(body, bg=_PANEL,
