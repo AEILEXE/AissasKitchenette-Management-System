@@ -7,8 +7,26 @@ from typing import Optional
 from app.config import THEME
 
 
-def show_toast(parent: tk.Widget, message: str, ms: int = 2500) -> None:
-    """Non-blocking success notification that auto-dismisses after `ms` milliseconds."""
+_TOAST_COLORS = {
+    "success": ("#166534", "#FFFFFF"),  # dark green
+    "error":   ("#991B1B", "#FFFFFF"),  # dark red
+    "warning": ("#92400E", "#FFF7ED"),  # dark amber
+    "info":    ("#1E3A5F", "#FFFFFF"),  # dark blue
+}
+_TOAST_ICONS = {
+    "success": "✓",   # ✓
+    "error":   "✗",   # ✗
+    "warning": "⚠",   # ⚠
+    "info":    "ℹ",   # ℹ
+}
+
+
+def show_toast(parent: tk.Widget, message: str, ms: int = 2500,
+               kind: str = "success") -> None:
+    """Non-blocking notification that auto-dismisses after `ms` milliseconds.
+
+    kind: "success" (default) | "error" | "warning" | "info"
+    """
     try:
         top = parent.winfo_toplevel()
         if not top.winfo_exists():
@@ -16,16 +34,31 @@ def show_toast(parent: tk.Widget, message: str, ms: int = 2500) -> None:
     except Exception:
         return
 
+    bg, fg = _TOAST_COLORS.get(kind, _TOAST_COLORS["success"])
+    icon   = _TOAST_ICONS.get(kind, "")
+
     toast = tk.Toplevel(top)
     toast.overrideredirect(True)
-    toast.configure(bg="#166534")
+    toast.configure(bg=bg)
     toast.attributes("-topmost", True)
 
+    inner = tk.Frame(toast, bg=bg)
+    inner.pack(padx=2, pady=2)
+
+    if icon:
+        tk.Label(
+            inner, text=icon,
+            bg=bg, fg=fg,
+            font=("Segoe UI", 11, "bold"),
+            padx=4,
+        ).pack(side="left")
+
     tk.Label(
-        toast, text=f"  {message}  ",
-        bg="#166534", fg="#ffffff",
-        font=("Segoe UI", 10), padx=12, pady=10,
-    ).pack()
+        inner, text=f"{message}",
+        bg=bg, fg=fg,
+        font=("Segoe UI", 10),
+        padx=8, pady=10,
+    ).pack(side="left")
 
     toast.update_idletasks()
     try:

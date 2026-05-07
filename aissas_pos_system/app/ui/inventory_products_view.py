@@ -114,7 +114,7 @@ class InventoryProductsView(tk.Frame):
         search_pill.columnconfigure(1, weight=1)
 
         tk.Label(
-            search_pill, text="Search",
+            search_pill, text="Search  (name / ID)",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", ui_scale.scale_font(9)),
         ).grid(row=0, column=0, padx=(10, 4), pady=4)
@@ -322,7 +322,13 @@ class InventoryProductsView(tk.Frame):
             cat_name = str(r["category"])
             desc     = str(r["description"] or "")
             active   = int(r["active"] or 0)
-            if q and q not in name.lower() and q not in cat_name.lower() and q not in desc.lower():
+            pid_str  = str(int(r["product_id"]))
+            # Match by product name, category, description, or product ID (e.g. "12" or "#12")
+            q_id = q.lstrip("#")
+            if q and (q not in name.lower()
+                      and q not in cat_name.lower()
+                      and q not in desc.lower()
+                      and q_id != pid_str):
                 continue
             if cat != "All" and cat_name != cat:
                 continue

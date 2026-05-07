@@ -244,6 +244,12 @@ class LoginView(tk.Frame):
 
         self.username_entry.bind("<Return>", lambda e: self._do_login())
         self.password_entry.bind("<Return>", lambda e: self._do_login())
+
+        # Prevent clipboard leakage from the password field
+        self.password_entry.bind("<<Copy>>",  lambda e: "break")
+        self.password_entry.bind("<<Cut>>",   lambda e: "break")
+        self.password_entry.bind("<Button-3>", lambda e: "break")
+
         self.after(50, self.username_entry.focus_set)
 
     # ─────────────────────────────────────────────────────────────────────────

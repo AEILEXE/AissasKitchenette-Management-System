@@ -15,8 +15,10 @@ ALL_SCHEMAS: list[str] = [
 
     """
     CREATE TABLE IF NOT EXISTS categories (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        name      TEXT UNIQUE NOT NULL,
+        parent_id INTEGER DEFAULT NULL,
+        FOREIGN KEY(parent_id) REFERENCES categories(id) ON DELETE SET NULL
     );
     """,
 
@@ -178,6 +180,20 @@ ALL_SCHEMAS: list[str] = [
         value TEXT NOT NULL DEFAULT ''
     );
     """,
+
+    # ── Print audit log — tracks who printed receipts/reports ────────────────
+    """
+    CREATE TABLE IF NOT EXISTS print_logs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id     INTEGER,
+        username    TEXT NOT NULL DEFAULT '',
+        print_type  TEXT NOT NULL DEFAULT '',
+        reference_id TEXT NOT NULL DEFAULT '',
+        detail      TEXT NOT NULL DEFAULT '',
+        printed_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+    """,
 ]
 
 INDEX_STATEMENTS: list[str] = [
@@ -202,6 +218,8 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_product_materials_material_id ON product_materials(material_id);",
     "CREATE INDEX IF NOT EXISTS idx_role_perms ON role_permissions(role, permission);",
     "CREATE INDEX IF NOT EXISTS idx_audit_logs_ts ON audit_logs(timestamp);",
+    "CREATE INDEX IF NOT EXISTS idx_print_logs_printed_at ON print_logs(printed_at);",
+    "CREATE INDEX IF NOT EXISTS idx_print_logs_user_id ON print_logs(user_id);",
 ]
 
 SCHEMAS = ALL_SCHEMAS

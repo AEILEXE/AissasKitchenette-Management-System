@@ -151,6 +151,48 @@ class CategoryDAO:
         """Delete a category (caller must ensure has_products() is False first)."""
         self.db.execute("DELETE FROM categories WHERE id=?;", (int(category_id),))
 
+    def list_main_categories(self):
+        """List only top-level categories (parent_id IS NULL). Falls back to list_categories if column missing."""
+        try:
+            return self.db.fetchall(
+                "SELECT id AS category_id, name FROM categories "
+                "WHERE parent_id IS NULL ORDER BY name;"
+            )
+        except Exception:
+            return self.list_categories()
+
+    def list_subcategories(self, parent_id: int):
+        """List direct subcategories of a given parent category."""
+        try:
+            return self.db.fetchall(
+                "SELECT id AS category_id, name FROM categories "
+                "WHERE parent_id=? ORDER BY name;",
+                (int(parent_id),),
+            )
+        except Exception:
+            return []
+
+    def has_subcategories(self, category_id: int) -> bool:
+        """Return True if the category has any direct subcategories."""
+        try:
+            r = self.db.fetchone(
+                "SELECT COUNT(*) AS c FROM categories WHERE parent_id=?;",
+                (int(category_id),),
+            )
+            return (int(r["c"]) if r else 0) > 0
+        except Exception:
+            return False
+
+    def get_by_id(self, category_id: int):
+        """Get a category by its numeric ID."""
+        try:
+            return self.db.fetchone(
+                "SELECT id AS category_id, name FROM categories WHERE id=?;",
+                (int(category_id),),
+            )
+        except Exception:
+            return None
+
 
 # PRODUCT DATA ACCESS OBJECT
 
@@ -202,6 +244,31 @@ class ProductDAO:
             WHERE p.active=1
             ORDER BY c.name, p.name;
             """
+        )
+
+    def list_by_categories(self, category_ids: list[int]):
+        """List all active products belonging to any of the given category IDs (for hierarchical filtering)."""
+        if not category_ids:
+            return []
+        placeholders = ",".join("?" * len(category_ids))
+        return self.db.fetchall(
+            f"""
+            SELECT p.id AS product_id,
+                   p.name,
+                   COALESCE(c.name, '') AS category,
+                   p.description,
+                   p.tags,
+                   p.image_path,
+                   p.price,
+                   p.stock AS stock_qty,
+                   p.low_stock,
+                   p.active
+            FROM products p
+            LEFT JOIN categories c ON c.id = p.category_id
+            WHERE p.category_id IN ({placeholders}) AND p.active=1
+            ORDER BY p.name;
+            """,
+            list(category_ids),
         )
 
     def list_all(self):

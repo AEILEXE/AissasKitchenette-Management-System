@@ -95,6 +95,15 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, set[str]] = {
     },
 }
 
+# ── Permission groups — for organised UI display ──────────────────────────
+PERMISSION_GROUPS: dict[str, list[str]] = {
+    "POS":          [P_SELL, P_DISCOUNT, P_VOID, P_VOID_APPROVE],
+    "Reports":      [P_REPORTS, P_REPORTS_FULL, P_PROFIT],
+    "Inventory":    [P_INV_VIEW, P_MANAGE_PRODS, P_EDIT_PRICE],
+    "Transactions": [P_EDIT_COMPLETED],
+    "Settings":     [P_MANAGE_USERS, P_SETTINGS, P_EXPORT, P_DATABASE],
+}
+
 # ── Backward-compatible aliases ────────────────────────────────────────────
 P_POS        = P_SELL
 P_INV_MANAGE = P_MANAGE_PRODS

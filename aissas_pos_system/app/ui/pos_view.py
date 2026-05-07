@@ -67,6 +67,9 @@ class POSView(tk.Frame):
         self._draft_id_by_index: list[int] = []
         self._cat_buttons: dict[str, tk.Button] = {}
         self._selected_category: str = "All"
+        self._cat_level: str = "main"        # "main" or "sub"
+        self._cat_parent_id: int | None = None
+        self._cat_parent_name: str = ""
 
         self._products_cache = []
         self._all_products_cache: list[Any] = []
@@ -741,9 +744,17 @@ class POSView(tk.Frame):
         def _on_ot(val):
             self.var_order_type.set(val)
             _ot_style(val)
-            lbl = "Table No." if val == "DINE_IN" else "Order No."
-            if self._lbl_table_no:
-                self._lbl_table_no.configure(text=lbl)
+            if val == "TAKE_OUT":
+                if self._lbl_table_no:
+                    self._lbl_table_no.configure(text="Order No.")
+                # Auto-fill order number only when field is currently empty
+                if self.var_table_number is not None and not self.var_table_number.get().strip():
+                    self.var_table_number.set(self._generate_order_number())
+            else:
+                if self._lbl_table_no:
+                    self._lbl_table_no.configure(text="Table No.")
+                if self.var_table_number is not None:
+                    self.var_table_number.set("")
 
         btn_dine = tk.Button(ot_btns, text="Dine In",
                              bg=THEME.get("brown_dark", "#8E0000"), fg="white",
@@ -1044,7 +1055,10 @@ class POSView(tk.Frame):
     def _set_active_category_btn(self, name: str) -> None:
         self._selected_category = name
         for cat_name, btn in self._cat_buttons.items():
-            if cat_name == name:
+            if cat_name == "__back__":
+                btn.configure(bg=THEME.get("panel2", "#E8DDD0"),
+                              fg=THEME.get("text", "#3d2b1f"))
+            elif cat_name == name:
                 btn.configure(bg=THEME["select_bg"], fg=THEME["select_fg"])
             else:
                 btn.configure(bg=THEME.get("brown", "#6b4a3a"), fg="white")
@@ -1071,7 +1085,6 @@ class POSView(tk.Frame):
                 activebackground=THEME["select_bg"],
                 activeforeground=THEME["select_fg"],
                 bd=0,
-                # Fixed width in characters for uniform sizing
                 width=14,
                 height=2,
                 cursor="hand2",
@@ -1082,22 +1095,94 @@ class POSView(tk.Frame):
             )
             self._cat_buttons[name] = btn
 
-        add_btn("All")
-        for r in self.cat_dao.list_categories():
-            add_btn(str(r["name"]))
+        if self._cat_level == "sub":
+            # Subcategory level: BACK button + subcategories of parent
+            back_btn = tk.Button(
+                frame,
+                text="←  Back",
+                anchor="center",
+                command=self._on_back_click,
+                bg=THEME.get("panel2", "#E8DDD0"),
+                fg=THEME.get("text", "#3d2b1f"),
+                activebackground=THEME.get("beige", "#F4EFEA"),
+                activeforeground=THEME.get("text", "#3d2b1f"),
+                bd=0,
+                width=14,
+                height=2,
+                cursor="hand2",
+                font=("Segoe UI", 9),
+                relief="flat",
+            )
+            self._cat_buttons["__back__"] = back_btn
+            if self._cat_parent_id is not None:
+                for r in self.cat_dao.list_subcategories(self._cat_parent_id):
+                    add_btn(str(r["name"]))
+        else:
+            # Main level: All button + top-level categories
+            add_btn("All")
+            for r in self.cat_dao.list_main_categories():
+                add_btn(str(r["name"]))
 
+        default_sel = "All" if self._cat_level == "main" else (
+            self._selected_category if self._selected_category in self._cat_buttons else ""
+        )
         self._set_active_category_btn(
-            self._selected_category if self._selected_category in self._cat_buttons else "All"
+            self._selected_category if self._selected_category in self._cat_buttons else default_sel
         )
         self._cancel_after(self._cat_grid_after)
         self._cat_grid_after = self._after(0, self._relayout_cat_grid)
 
     def _on_category_click(self, name: str) -> None:
-        # Update the button highlight immediately so UI feels instant.
+        if self._cat_level == "main" and name != "All":
+            # Check if this category has subcategories — drill down if so
+            try:
+                cat = self.cat_dao.get_by_name(name)
+                if cat and self.cat_dao.has_subcategories(int(cat["category_id"])):
+                    self._cat_level = "sub"
+                    self._cat_parent_id = int(cat["category_id"])
+                    self._cat_parent_name = name
+                    self._selected_category = name
+                    self._all_products_cache = []
+                    self._all_products_cache_cat = ""
+                    self._refresh_categories()
+                    self._cancel_after(self._cat_click_after)
+                    self._cat_click_after = self._after(100, lambda: self._do_category_load(name))
+                    return
+            except Exception:
+                pass
+        # Standard click — highlight button and load products
         self._set_active_category_btn(name)
-        # Debounce the actual load: rapid clicks cancel earlier pending loads.
         self._cancel_after(self._cat_click_after)
         self._cat_click_after = self._after(100, lambda: self._do_category_load(name))
+
+    def _on_back_click(self) -> None:
+        """Return from subcategory view to main category view."""
+        self._cat_level = "main"
+        self._cat_parent_id = None
+        self._cat_parent_name = ""
+        self._selected_category = "All"
+        self._all_products_cache = []
+        self._all_products_cache_cat = ""
+        self._refresh_categories()
+        self._cancel_after(self._cat_click_after)
+        self._cat_click_after = self._after(100, lambda: self._do_category_load("All"))
+
+    # ── Auto order number ─────────────────────────────────────────────────────
+    def _generate_order_number(self) -> str:
+        """Generate a take-out order number: T0507-001 (date + daily sequence)."""
+        try:
+            from datetime import date
+            today = date.today().strftime("%m%d")
+            r = self.db.fetchone(
+                "SELECT COUNT(*) AS c FROM orders "
+                "WHERE order_type='TAKE_OUT' "
+                "AND DATE(datetime,'localtime')=DATE('now','localtime');"
+            )
+            n = (int(r["c"]) if r and r["c"] is not None else 0) + 1
+            return f"T{today}-{n:03d}"
+        except Exception:
+            import time
+            return f"T-{int(time.time()) % 100000:05d}"
 
     def _do_category_load(self, name: str) -> None:
         self._cat_click_after = None
@@ -1118,7 +1203,8 @@ class POSView(tk.Frame):
 
     def _load_products_for_category(self) -> None:
         """Fetch products from DB in a background thread; continue on main thread."""
-        cat_name = self._selected_category or "All"
+        cat_name  = self._selected_category or "All"
+        cat_level = self._cat_level
         self._load_gen += 1
         gen = self._load_gen
 
@@ -1132,7 +1218,20 @@ class POSView(tk.Frame):
                 t_prod_dao = ProductDAO(thread_db)
                 if cat_name == "All":
                     rows = t_prod_dao.list_all_active()
+                elif cat_level == "main":
+                    # Main-level selection: include products in this category
+                    # AND any products in its subcategories
+                    c = t_cat_dao.get_by_name(cat_name)
+                    if c:
+                        c_id = int(c["category_id"])
+                        subs = t_cat_dao.list_subcategories(c_id)
+                        if subs:
+                            all_ids = [c_id] + [int(s["category_id"]) for s in subs]
+                            rows = t_prod_dao.list_by_categories(all_ids)
+                        else:
+                            rows = t_prod_dao.list_by_category(c_id)
                 else:
+                    # Sub-level: exact category match only
                     c = t_cat_dao.get_by_name(cat_name)
                     rows = (
                         t_prod_dao.list_by_category(int(c["category_id"])) if c else []

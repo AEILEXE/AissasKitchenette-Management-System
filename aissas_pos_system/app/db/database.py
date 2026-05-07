@@ -95,6 +95,18 @@ class Database:
         except Exception:
             return 0
 
+    def log_print(self, user_id: int | None, username: str,
+                  print_type: str, reference_id: str = "", detail: str = "") -> None:
+        """Record a print action (receipt/report) to the print_logs audit table."""
+        try:
+            self.execute(
+                "INSERT INTO print_logs(user_id, username, print_type, reference_id, detail) "
+                "VALUES(?,?,?,?,?);",
+                (user_id, username, print_type, reference_id, detail),
+            )
+        except Exception:
+            pass
+
     def increment_data_version(self) -> None:
         """Atomically increment data_version in app_meta. Never raises."""
         try:
@@ -318,6 +330,40 @@ class Database:
                 self.execute(
                     "CREATE TABLE IF NOT EXISTS app_meta "
                     "(key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '');"
+                )
+            except Exception:
+                pass
+
+        # =====================================================================
+        # CATEGORIES TABLE — add parent_id for hierarchical categories
+        # =====================================================================
+        if self._table_exists("categories"):
+            self._add_column_if_missing(
+                "categories", "parent_id", "INTEGER DEFAULT NULL"
+            )
+
+        # =====================================================================
+        # PRINT_LOGS TABLE — audit trail for receipt/report printing
+        # =====================================================================
+        if not self._table_exists("print_logs"):
+            try:
+                self.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS print_logs (
+                        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id      INTEGER,
+                        username     TEXT NOT NULL DEFAULT '',
+                        print_type   TEXT NOT NULL DEFAULT '',
+                        reference_id TEXT NOT NULL DEFAULT '',
+                        detail       TEXT NOT NULL DEFAULT '',
+                        printed_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+                    );
+                    """
+                )
+                self.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_print_logs_printed_at "
+                    "ON print_logs(printed_at);"
                 )
             except Exception:
                 pass

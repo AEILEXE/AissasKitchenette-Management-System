@@ -168,10 +168,7 @@ class DashboardView(tk.Frame):
                     data["top_sellers"] = t_orders.best_sellers_today(limit=8)
                 except Exception:
                     data["top_sellers"] = []
-                try:
-                    data["recent"] = t_orders.list_recent(limit=10)
-                except Exception:
-                    data["recent"] = []
+                data["recent"] = []  # not displayed — removed from dashboard
             except Exception as exc:
                 import traceback
                 traceback.print_exc()
@@ -352,10 +349,6 @@ class DashboardView(tk.Frame):
         # ── Top Sellers ───────────────────────────────────────────────────
         top_sellers = list(data.get("top_sellers", []))
         self._build_top_sellers(wrap, top_sellers, PAD)
-
-        # ── Recent Transactions ───────────────────────────────────────────
-        recent = list(data.get("recent", []))
-        self._build_recent_transactions(wrap, recent, PAD)
 
         # ── Low stock detail tables ───────────────────────────────────────
         if low_mats:

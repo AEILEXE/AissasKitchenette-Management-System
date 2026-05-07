@@ -75,6 +75,7 @@ class ReportsView(tk.Frame):
             ("reports",      "Overview"),
             ("sales",        "Sales Analytics"),
             ("top_sellers",  "Top Sellers"),
+            ("discounts",    "Discounts"),
             ("raw_materials","Raw Materials"),
         ]
         for key, label in tabs:
@@ -168,6 +169,8 @@ class ReportsView(tk.Frame):
             self._build_sales_tab(tab_frame)
         elif key == "top_sellers":
             self._build_top_sellers_tab(tab_frame)
+        elif key == "discounts":
+            self._build_discounts_tab(tab_frame)
         elif key == "raw_materials":
             self._build_raw_materials_tab(tab_frame)
         else:
@@ -583,6 +586,258 @@ class ReportsView(tk.Frame):
         period_var.trace_add("write", load)
         from_ent.bind("<Return>", load)
         to_ent.bind("<Return>",   load)
+        load()
+
+    # ── Discounts Report tab ──────────────────────────────────────────────────
+
+    def _build_discounts_tab(self, parent: tk.Frame):
+        outer = tk.Frame(parent, bg=_BG)
+        outer.pack(fill="both", expand=True)
+        outer.rowconfigure(2, weight=1)
+        outer.columnconfigure(0, weight=1)
+
+        _FILTER_BG = "#f5f0e8"
+        _LABEL_FG  = "#3d2b1f"
+        _SEL_BG    = "#8c6e3b"
+        _SEL_FG    = "white"
+        _UNSEL_BG  = _FILTER_BG
+        _UNSEL_FG  = _LABEL_FG
+
+        # ── Filter bar ────────────────────────────────────────────────────────
+        bar = tk.Frame(outer, bg=_FILTER_BG,
+                       highlightthickness=1, highlightbackground=_BORDER)
+        bar.grid(row=0, column=0, sticky="ew", padx=24, pady=(12, 0))
+
+        tk.Label(bar, text="Period:", bg=_FILTER_BG, fg=_LABEL_FG,
+                 font=("Segoe UI", 9)).pack(side="left", padx=(12, 6), pady=8)
+
+        period_var = tk.StringVar(value="month")
+        _period_btns: dict[str, tk.Button] = {}
+
+        def _set_period(val: str) -> None:
+            period_var.set(val)
+            for v, b in _period_btns.items():
+                b.configure(
+                    bg=_SEL_BG if v == val else _UNSEL_BG,
+                    fg=_SEL_FG if v == val else _UNSEL_FG,
+                )
+
+        for lbl, val in [("Today", "today"), ("This Week", "week"),
+                          ("This Month", "month"), ("This Year", "year")]:
+            is_def = (val == "month")
+            btn = tk.Button(bar, text=lbl,
+                            command=lambda v=val: _set_period(v),
+                            bg=_SEL_BG if is_def else _UNSEL_BG,
+                            fg=_SEL_FG if is_def else _UNSEL_FG,
+                            activebackground=_SEL_BG, activeforeground=_SEL_FG,
+                            relief="flat", bd=0, padx=12, pady=5, cursor="hand2",
+                            font=("Segoe UI", 9, "bold"))
+            btn.pack(side="left", padx=2, pady=8)
+            _period_btns[val] = btn
+
+        # Custom date range
+        tk.Label(bar, text="From:", bg=_FILTER_BG, fg=_LABEL_FG,
+                 font=("Segoe UI", 9)).pack(side="left", padx=(14, 4), pady=8)
+        from_var = tk.StringVar()
+        from_ent = tk.Entry(bar, textvariable=from_var, width=11,
+                            bd=0, bg="#FFFFFF", fg=_TEXT,
+                            insertbackground=_TEXT, insertwidth=2)
+        from_ent.pack(side="left", ipady=5, pady=8)
+        _bind_date_picker(from_ent, from_var)
+
+        tk.Label(bar, text="To:", bg=_FILTER_BG, fg=_LABEL_FG,
+                 font=("Segoe UI", 9)).pack(side="left", padx=(8, 4), pady=8)
+        to_var = tk.StringVar()
+        to_ent = tk.Entry(bar, textvariable=to_var, width=11,
+                          bd=0, bg="#FFFFFF", fg=_TEXT,
+                          insertbackground=_TEXT, insertwidth=2)
+        to_ent.pack(side="left", ipady=5, pady=8)
+        _bind_date_picker(to_ent, to_var)
+
+        # ── Summary KPI row ───────────────────────────────────────────────────
+        kpi_frame = tk.Frame(outer, bg=_BG)
+        kpi_frame.grid(row=1, column=0, sticky="ew", padx=24, pady=(12, 0))
+        for i in range(3):
+            kpi_frame.columnconfigure(i, weight=1, uniform="dkpi")
+
+        kpi_vars = [tk.StringVar(value="—") for _ in range(3)]
+        kpi_labels = ["Discounted Orders", "Total Discount Amount", "Net Discounted Sales"]
+        kpi_accents = [_SB, _RED, _GREEN]
+        for i, (lbl, var, accent) in enumerate(zip(kpi_labels, kpi_vars, kpi_accents)):
+            pad_left = 0 if i == 0 else 10
+            outer_c = tk.Frame(kpi_frame, bg=_BG)
+            outer_c.grid(row=0, column=i, sticky="nsew", padx=(pad_left, 0))
+            card = tk.Frame(outer_c, bg=_PANEL,
+                            highlightthickness=1, highlightbackground=_BORDER)
+            card.pack(fill="both", expand=True)
+            tk.Frame(card, bg=accent, height=4).pack(fill="x")
+            tk.Label(card, text=lbl, bg=_PANEL, fg=_MUTED,
+                     font=("Segoe UI", 8), anchor="w").pack(anchor="w", padx=14, pady=(10, 2))
+            tk.Label(card, textvariable=var, bg=_PANEL, fg=accent,
+                     font=("Segoe UI", 18, "bold"), anchor="w").pack(anchor="w", padx=14, pady=(0, 12))
+
+        # ── Breakdown table ───────────────────────────────────────────────────
+        tbl_frame = tk.Frame(outer, bg=_PANEL,
+                             highlightthickness=1, highlightbackground=_BORDER)
+        tbl_frame.grid(row=2, column=0, sticky="nsew", padx=24, pady=12)
+        tbl_frame.rowconfigure(0, weight=1)
+        tbl_frame.columnconfigure(0, weight=1)
+
+        s = ttk.Style()
+        s.configure("DC.Treeview",
+                    rowheight=28, font=("Segoe UI", 9),
+                    background=_PANEL, fieldbackground=_PANEL, foreground=_TEXT,
+                    borderwidth=0, relief="flat")
+        s.configure("DC.Treeview.Heading",
+                    font=("Segoe UI", 9, "bold"),
+                    background=_SB, foreground="#FFFFFF", relief="flat", padding=(8, 7))
+        s.map("DC.Treeview",
+              background=[("selected", _RED), ("!selected", _PANEL)],
+              foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])
+
+        dc_cols = ("type", "count", "discount", "net")
+        tbl = ttk.Treeview(tbl_frame, columns=dc_cols, show="headings",
+                           style="DC.Treeview")
+        tbl.grid(row=0, column=0, sticky="nsew")
+        ysb = ttk.Scrollbar(tbl_frame, orient="vertical", command=tbl.yview)
+        ysb.grid(row=0, column=1, sticky="ns")
+        tbl.configure(yscrollcommand=ysb.set)
+
+        for cid, hdr, w, anc, stretch in [
+            ("type",     "Discount Type",  160, "w",      True),
+            ("count",    "Orders",          80, "center", False),
+            ("discount", "Discount Amount", 130, "e",     False),
+            ("net",      "Net Sales",       130, "e",     False),
+        ]:
+            tbl.heading(cid, text=hdr, anchor="center")
+            tbl.column(cid, width=w, minwidth=60, anchor=anc, stretch=stretch)
+
+        tbl.tag_configure("odd",  background=_PANEL)
+        tbl.tag_configure("even", background="#FAFAF8")
+
+        empty_lbl = tk.Label(tbl_frame, text="No discounted orders for the selected period.",
+                              bg=_PANEL, fg=_MUTED, font=("Segoe UI", 11, "italic"))
+
+        # Footer
+        foot = tk.Frame(outer, bg=_BG)
+        foot.grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 12))
+        count_lbl = tk.Label(foot, text="", bg=_BG, fg=_MUTED, font=("Segoe UI", 9))
+        count_lbl.pack(side="left")
+
+        def _export():
+            rows_cache_ref = getattr(_export, "_rows", [])
+            if not rows_cache_ref:
+                messagebox.showinfo("Export", "No data to export.")
+                return
+            path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv")],
+                initialfile="discounts_report.csv",
+                title="Save CSV",
+            )
+            if not path:
+                return
+            try:
+                from datetime import datetime as _dt
+                with open(path, "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    w.writerow(["Aissa's Kitchenette", "Discounts Report",
+                                f"Generated: {_dt.now().strftime('%Y-%m-%d %H:%M')}"])
+                    w.writerow([])
+                    w.writerow(["Discount Type", "Orders", "Discount Amount", "Net Sales"])
+                    for r in rows_cache_ref:
+                        w.writerow([r["discount_type"], r["order_count"],
+                                    _money(r["total_discount"]), _money(r["net_total"])])
+                messagebox.showinfo("Export", f"Saved to:\n{path}")
+            except Exception as e:
+                messagebox.showerror("Export Error", str(e))
+
+        tk.Button(foot, text="Export CSV",
+                  bg=THEME["success"], fg="white",
+                  activebackground="#16a34a", activeforeground="white",
+                  bd=0, padx=12, pady=5, cursor="hand2",
+                  font=("Segoe UI", 8, "bold"),
+                  command=_export).pack(side="right")
+
+        def _date_clause() -> str:
+            p = period_var.get()
+            df = from_var.get().strip()
+            dt = to_var.get().strip()
+            if df and dt:
+                return f"DATE(o.datetime,'localtime') BETWEEN DATE('{df}') AND DATE('{dt}')"
+            if p == "today":
+                return "DATE(o.datetime,'localtime') = DATE('now','localtime')"
+            if p == "week":
+                return "DATE(o.datetime,'localtime') >= DATE('now','localtime','-6 days')"
+            if p == "year":
+                return "strftime('%Y',o.datetime,'localtime') = strftime('%Y','now','localtime')"
+            return "strftime('%Y-%m',o.datetime,'localtime') = strftime('%Y-%m','now','localtime')"
+
+        def load(*_args):
+            dc = _date_clause()
+            try:
+                raw = self.db.fetchall(
+                    f"""
+                    SELECT COALESCE(NULLIF(discount_type,''), 'NONE') AS discount_type,
+                           COUNT(*)         AS order_count,
+                           SUM(discount)    AS total_discount,
+                           SUM(total)       AS net_total
+                    FROM orders o
+                    WHERE o.status = 'Completed'
+                      AND o.discount > 0
+                      AND {dc}
+                    GROUP BY discount_type
+                    ORDER BY total_discount DESC;
+                    """
+                )
+                rows = [dict(r) for r in raw]
+            except Exception:
+                rows = []
+
+            _export._rows = rows
+
+            for iid in tbl.get_children():
+                tbl.delete(iid)
+
+            if not rows:
+                empty_lbl.place(relx=0.5, rely=0.5, anchor="center")
+                for v in kpi_vars:
+                    v.set("—")
+                count_lbl.configure(text="No discounted orders found")
+                return
+
+            empty_lbl.place_forget()
+
+            total_count    = sum(int(r["order_count"]    or 0) for r in rows)
+            total_discount = sum(float(r["total_discount"] or 0) for r in rows)
+            total_net      = sum(float(r["net_total"]      or 0) for r in rows)
+
+            kpi_vars[0].set(str(total_count))
+            kpi_vars[1].set(_money(total_discount))
+            kpi_vars[2].set(_money(total_net))
+
+            _type_labels = {
+                "PWD":     "PWD (20%)",
+                "SENIOR":  "Senior (20%)",
+                "SPECIAL": "Special Discount",
+                "NONE":    "No Discount Type",
+            }
+            for i, r in enumerate(rows):
+                tag = "odd" if i % 2 else "even"
+                label = _type_labels.get(str(r["discount_type"]), str(r["discount_type"]))
+                tbl.insert("", tk.END, tags=(tag,), values=(
+                    label,
+                    int(r["order_count"] or 0),
+                    _money(r["total_discount"]),
+                    _money(r["net_total"]),
+                ))
+
+            n = len(rows)
+            count_lbl.configure(text=f"{total_count} discounted order{'s' if total_count != 1 else ''}, {n} type{'s' if n != 1 else ''}")
+
+        period_var.trace_add("write", load)
+        from_ent.bind("<Return>", load)
+        to_ent.bind("<Return>", load)
         load()
 
     # ── Raw Materials Movement Report tab ─────────────────────────────────────

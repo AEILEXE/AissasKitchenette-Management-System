@@ -15,7 +15,7 @@ from app.db.dao import UserDAO, RolePermissionDAO
 from app.services.auth_service import AuthService
 from app.constants import (
     ROLES, ROLE_ADMIN, ROLE_MANAGER, ROLE_CASHIER, ROLE_INVENTORY,
-    ALL_PERMISSION_KEYS, PERMISSION_LABELS,
+    ALL_PERMISSION_KEYS, PERMISSION_LABELS, PERMISSION_GROUPS,
 )
 from app.ui import ui_scale
 
@@ -443,6 +443,14 @@ class AccountSettingsDialog(tk.Toplevel):
             command=_toggle,
         )
         toggle_btn.grid(row=0, column=1, padx=(2, 4), sticky="ns")
+
+        # Block clipboard operations while the field is masked
+        def _block_copy(e):
+            if not _state["visible"]:
+                return "break"
+        ent.bind("<<Copy>>",   _block_copy)
+        ent.bind("<<Cut>>",    _block_copy)
+        ent.bind("<Button-3>", lambda e: "break")
 
         return ent
 
@@ -1056,41 +1064,53 @@ class AccountSettingsDialog(tk.Toplevel):
                     padx=6,
                 ).pack(side="left")
 
-            # ── Permission checkbox grid (3 columns) ──────────────────────────
-            perm_frame = tk.Frame(card, bg=THEME["panel"])
-            perm_frame.pack(fill="x", padx=20, pady=(4, 4))
-            perm_frame.columnconfigure(0, weight=1, uniform="permcol")
-            perm_frame.columnconfigure(1, weight=1, uniform="permcol")
-            perm_frame.columnconfigure(2, weight=1, uniform="permcol")
+            # ── Permission toggles grouped by module ──────────────────────────
+            groups_frame = tk.Frame(card, bg=THEME["panel"])
+            groups_frame.pack(fill="x", padx=20, pady=(4, 4))
 
-            for idx, perm in enumerate(ALL_PERMISSION_KEYS):
-                label = PERMISSION_LABELS.get(perm, perm)
-                try:
-                    val = self.rbac_dao.has_permission(role, perm)
-                except Exception:
-                    val = is_admin_role  # Admin fallback = True
-
-                var = tk.BooleanVar(value=val)
-
-                # Container row: toggle switch + label side by side
-                cell = tk.Frame(perm_frame, bg=THEME["panel"])
-                cell.grid(row=idx // 3, column=idx % 3, sticky="w", padx=8, pady=3)
-
-                sw = ToggleSwitch(
-                    cell,
-                    variable=var,
-                    state="disabled" if is_admin_role else "normal",
-                    bg=THEME["panel"],
-                    command=lambda r=role, p=perm, v=var: _toggle(r, p, v),
-                )
-                sw.pack(side="left")
-
+            for grp_name, grp_perms in PERMISSION_GROUPS.items():
+                # Group header
+                grp_hdr = tk.Frame(groups_frame, bg=THEME["bg"])
+                grp_hdr.pack(fill="x", pady=(6, 2))
                 tk.Label(
-                    cell, text=label,
-                    bg=THEME["panel"],
-                    fg=THEME["muted"] if is_admin_role else THEME["text"],
-                    font=("Segoe UI", ui_scale.scale_font(9)),
-                ).pack(side="left", padx=(6, 0))
+                    grp_hdr, text=grp_name.upper(),
+                    bg=THEME["bg"], fg=THEME["muted"],
+                    font=("Segoe UI", ui_scale.scale_font(7), "bold"),
+                ).pack(side="left", padx=(4, 6))
+                tk.Frame(grp_hdr, bg=THEME["border"], height=1).pack(
+                    side="left", fill="x", expand=True, pady=5,
+                )
+
+                perm_row_frame = tk.Frame(groups_frame, bg=THEME["panel"])
+                perm_row_frame.pack(fill="x")
+                for gi, perm in enumerate(grp_perms):
+                    perm_row_frame.columnconfigure(gi % 2, weight=1, uniform=f"pgcol{grp_name}")
+                    label = PERMISSION_LABELS.get(perm, perm)
+                    try:
+                        val = self.rbac_dao.has_permission(role, perm)
+                    except Exception:
+                        val = is_admin_role
+
+                    var = tk.BooleanVar(value=val)
+
+                    cell = tk.Frame(perm_row_frame, bg=THEME["panel"])
+                    cell.grid(row=gi // 2, column=gi % 2, sticky="w", padx=8, pady=3)
+
+                    sw = ToggleSwitch(
+                        cell,
+                        variable=var,
+                        state="disabled" if is_admin_role else "normal",
+                        bg=THEME["panel"],
+                        command=lambda r=role, p=perm, v=var: _toggle(r, p, v),
+                    )
+                    sw.pack(side="left")
+
+                    tk.Label(
+                        cell, text=label,
+                        bg=THEME["panel"],
+                        fg=THEME["muted"] if is_admin_role else THEME["text"],
+                        font=("Segoe UI", ui_scale.scale_font(9)),
+                    ).pack(side="left", padx=(6, 0))
 
             # Thin divider between roles
             tk.Frame(card, bg=THEME["border"], height=1).pack(
