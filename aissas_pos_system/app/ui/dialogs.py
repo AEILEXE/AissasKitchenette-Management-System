@@ -618,6 +618,10 @@ class PasswordConfirmDialog(tk.Toplevel):
         )
         self.entry.pack(fill="x", ipady=9)
         self.entry.focus_set()
+        # Block clipboard leakage from a masked password field.
+        self.entry.bind("<<Copy>>",  lambda _e: "break")
+        self.entry.bind("<<Cut>>",   lambda _e: "break")
+        self.entry.bind("<Button-3>", lambda _e: "break")
 
         btns = tk.Frame(body, bg=THEME["panel"])
         btns.pack(fill="x", pady=(18, 0))
@@ -750,6 +754,10 @@ class ManagerApprovalDialog(tk.Toplevel):
             insertbackground="#3d2b1f", insertwidth=2, show="*",
         )
         self.password_entry.pack(fill="x", ipady=8, pady=(2, 10))
+        # Block clipboard leakage from a masked manager-password field.
+        self.password_entry.bind("<<Copy>>",  lambda _e: "break")
+        self.password_entry.bind("<<Cut>>",   lambda _e: "break")
+        self.password_entry.bind("<Button-3>", lambda _e: "break")
 
         tk.Label(body,
                  text="Reason" + (" *" if require_reason else " (optional)"),

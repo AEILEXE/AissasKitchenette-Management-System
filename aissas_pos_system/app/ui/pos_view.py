@@ -509,42 +509,22 @@ class POSView(tk.Frame):
         search.bind("<FocusOut>", lambda _e: self._restore_placeholder(search, "Search Products"), add="+")
         search.bind("<KeyRelease>", lambda _e: self._debounced_search(), add="+")
 
-        # ── ROW 1: Wrapping category grid (BELOW search) ─────────────────────
+        # ── ROW 1: Category tile grid (BELOW search) ─────────────────────────
+        # No header strip — the Back tile lives inline with the category tiles
+        # on sub-level so the area always feels like a continuous card grid.
         cat_outer = tk.Frame(prod_area, bg=THEME["panel"])
-        cat_outer.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
+        cat_outer.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 0))
         cat_outer.columnconfigure(0, weight=1)
 
-        # Breadcrumb / header strip — always visible so users can see the
-        # current category context and a clear way back to the main level.
-        self._cat_header = tk.Frame(cat_outer, bg=THEME.get("panel2", "#E8DDD0"),
-                                     highlightthickness=1,
-                                     highlightbackground=THEME.get("border", "#C8B79E"))
-        self._cat_header.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        self._cat_header.columnconfigure(1, weight=1)
-
-        self._cat_back_btn = tk.Button(
-            self._cat_header,
-            text="←  Back to Categories",
-            command=self._on_back_click,
-            bg=THEME.get("brown", "#6b4a3a"), fg="white",
-            activebackground=THEME.get("brown_dark", "#5a3a2a"),
-            activeforeground="white",
-            bd=0, padx=12, pady=4, cursor="hand2",
-            font=("Segoe UI", 9, "bold"),
-            relief="flat",
-        )
-        self._cat_breadcrumb_lbl = tk.Label(
-            self._cat_header,
-            text="All Categories",
-            bg=THEME.get("panel2", "#E8DDD0"),
-            fg=THEME.get("text", "#3d2b1f"),
-            font=("Segoe UI", 10, "bold"),
-            anchor="w", padx=10, pady=6,
-        )
-        self._cat_breadcrumb_lbl.grid(row=0, column=1, sticky="ew")
+        # Hidden placeholder header (kept for backwards-compat with helpers
+        # that grid_remove() on it). No visible content.
+        self._cat_header = tk.Frame(cat_outer, bg=THEME["panel"])
+        self._cat_back_btn = None  # back is rendered inline as a tile now
+        self._cat_breadcrumb_lbl = tk.Label(self._cat_header, text="",
+                                            bg=THEME["panel"])
 
         self._cat_grid_frame = tk.Frame(cat_outer, bg=THEME["panel"])
-        self._cat_grid_frame.grid(row=1, column=0, sticky="ew")
+        self._cat_grid_frame.grid(row=0, column=0, sticky="ew")
 
         self._cat_grid_frame.bind("<Configure>", self._on_cat_grid_configure, add="+")
 
@@ -675,45 +655,14 @@ class POSView(tk.Frame):
                                      bg=THEME["panel"], fg=THEME["muted"],
                                      font=("Segoe UI", 10, "bold"))
 
-        # ── DRAFTS PANEL (row=4) ──────────────────────────────────────────────
+        # ── DRAFTS PANEL — removed from cashier UI ────────────────────────────
+        # Save/Load/Delete-Draft cashier-facing UX has been removed; the
+        # drafts table and DraftDAO remain so other code paths still compile.
+        # An empty placeholder frame is kept so existing references to
+        # `self.drafts_section` (e.g. in _refresh_drafts_panel) stay valid.
         self.drafts_section = tk.Frame(col1, bg=THEME["panel"])
-        self.drafts_section.grid(row=4, column=0, sticky="ew")
-
-        _dh = tk.Frame(self.drafts_section, bg=THEME["panel"])
-        _dh.pack(fill="x", padx=10, pady=(4, 2))
-        tk.Label(_dh, text="Draft Orders", bg=THEME["panel"], fg=THEME["text"],
-                 font=("Segoe UI", 10, "bold")).pack(side="left")
-
-        tk.Frame(self.drafts_section, bg=THEME["border"], height=1).pack(fill="x", padx=10)
-
-        self.draft_list = tk.Listbox(
-            self.drafts_section, height=3, bd=0, highlightthickness=0,
-            bg=THEME["panel2"], fg=THEME["text"],
-            selectbackground=THEME["select_bg"],
-            selectforeground=THEME["select_fg"],
-            activestyle="none", font=("Segoe UI", 9),
-        )
-        self.draft_list.pack(fill="x", padx=10, pady=(4, 0))
-        self.draft_list.bind("<Double-Button-1>", lambda _e: self._load_selected_draft(), add="+")
-        self.draft_list.bind("<MouseWheel>", self._draft_mousewheel, add="+")
-
-        draft_btns = tk.Frame(self.drafts_section, bg=THEME["panel"])
-        draft_btns.pack(fill="x", padx=10, pady=(4, 6))
-
-        tk.Button(draft_btns, text="Load Draft", command=self._load_selected_draft,
-                  bg=THEME["brown"], fg="white", bd=0, padx=10, pady=5,
-                  font=("Segoe UI", 9, "bold"), cursor="hand2",
-                  ).pack(side="left", fill="x", expand=True, padx=(0, 3))
-
-        tk.Button(draft_btns, text="Delete", command=self._delete_selected_draft,
-                  bg=THEME["danger"], fg="white", bd=0, padx=10, pady=5,
-                  font=("Segoe UI", 9), cursor="hand2",
-                  ).pack(side="left", fill="x", expand=True, padx=(0, 3))
-
-        tk.Button(draft_btns, text="Delete All", command=self._delete_all_drafts,
-                  bg=THEME["panel2"], fg=THEME["danger"], bd=0, padx=10, pady=5,
-                  font=("Segoe UI", 9),
-                  ).pack(side="left", fill="x", expand=True)
+        # Not gridded — section stays hidden permanently in cashier flow.
+        self.draft_list = None  # type: ignore[assignment]
 
         # ══ COLUMN 2 — PAYMENT + KEYPAD ═════════════════════════════════════
         col2 = tk.Frame(body, bg=THEME["panel"])
@@ -734,21 +683,15 @@ class POSView(tk.Frame):
 
         tk.Frame(col2, bg=THEME["border"], height=1).pack(side="bottom", fill="x", padx=_pad, pady=(4, 0))
 
-        # ── DISCOUNT + SAVE DRAFT — above Pay Now ─────────────────────────────
+        # ── DISCOUNT — above Pay Now (Save Draft removed from cashier flow) ──
         mid_btns = tk.Frame(col2, bg=THEME["panel"])
         mid_btns.pack(side="bottom", fill="x", padx=_pad, pady=(4, 2))
-        mid_btns.columnconfigure(0, weight=1, uniform="mb")
-        mid_btns.columnconfigure(1, weight=1, uniform="mb")
+        mid_btns.columnconfigure(0, weight=1)
 
         tk.Button(mid_btns, text="Discount", command=self._add_discount,
                   bg=THEME["panel2"], fg=THEME["text"], bd=0, padx=6, pady=8,
                   cursor="hand2", font=("Segoe UI", 9, "bold"),
-                  ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
-
-        tk.Button(mid_btns, text="Save Draft", command=self._save_draft,
-                  bg=THEME["panel2"], fg=THEME["muted"], bd=0, padx=6, pady=8,
-                  cursor="hand2", font=("Segoe UI", 9),
-                  ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+                  ).grid(row=0, column=0, sticky="ew")
 
         # ── ORDER TYPE ────────────────────────────────────────────────────────
         tk.Frame(col2, bg=THEME["border"], height=1).pack(fill="x")
@@ -1023,11 +966,9 @@ class POSView(tk.Frame):
             pass
 
     def _draft_mousewheel(self, e):
-        try:
-            step = -1 if e.delta > 0 else 1
-            self.draft_list.yview_scroll(step * self.SCROLL_SPEED_UNITS, "units")
-        except tk.TclError:
-            pass
+        # Cashier draft UI was removed — kept as a stub to avoid breaking any
+        # legacy lambda still bound somewhere.
+        return None
 
     # ── Category grid (wrapping, uniform buttons) ─────────────────────────────
     def _on_cat_grid_configure(self, event=None) -> None:
@@ -1047,7 +988,7 @@ class POSView(tk.Frame):
         self._cat_grid_after = self._after(0 if is_initial else 80, self._relayout_cat_grid)
 
     def _relayout_cat_grid(self) -> None:
-        """Place all category buttons into a uniform grid that wraps based on frame width."""
+        """Place all category tiles into a uniform grid that wraps based on frame width."""
         self._cat_grid_after = None
         if self._destroyed or not self.winfo_exists():
             return
@@ -1055,76 +996,186 @@ class POSView(tk.Frame):
         if not frame or not frame.winfo_exists():
             return
 
-        buttons = list(self._cat_buttons.values())
-        if not buttons:
+        tiles = list(self._cat_buttons.values())
+        if not tiles:
             return
 
         frame_w = frame.winfo_width()
         if frame_w < 10:
             return
 
-        # Fixed button width (in chars) for uniformity — about 5–6 per row
-        # Estimate pixel width per char ~7px at font size 8; +padx overhead ~20
-        # Target 5–6 cols: try 6, reduce if buttons would overflow
-        btn_char_w = 14  # fixed width in characters
-        btn_px_est = btn_char_w * 7 + 24  # ~122px per button
-        cols = max(4, min(8, frame_w // max(btn_px_est, 60)))
+        # Tile-style layout: ~118px wide tiles → 4-7 cols based on width
+        tile_px_est = 130
+        cols = max(3, min(8, frame_w // tile_px_est))
 
-        # Skip if column count hasn't changed — avoids re-gridding every button on slight resize
         if cols == getattr(self, "_cat_last_cols", -1):
             return
         self._cat_last_cols = cols
 
-        # Clear old grid config
         for c in range(10):
             try:
                 frame.columnconfigure(c, weight=0, uniform="")
             except Exception:
                 pass
 
-        # Re-grid all buttons with uniform width
-        for i, btn in enumerate(buttons):
-            btn.grid_forget()
-            btn.grid(row=i // cols, column=i % cols, padx=2, pady=2, sticky="ew")
+        for i, tile in enumerate(tiles):
+            tile.grid_forget()
+            tile.grid(row=i // cols, column=i % cols, padx=4, pady=4, sticky="nsew")
 
-        # Uniform column weights so all columns are the same width
         for c in range(cols):
             frame.columnconfigure(c, weight=1, uniform="catcol")
 
     def _set_active_category_btn(self, name: str) -> None:
         self._selected_category = name
-        for cat_name, btn in self._cat_buttons.items():
-            if cat_name == "__back__":
-                btn.configure(bg=THEME.get("panel2", "#E8DDD0"),
-                              fg=THEME.get("text", "#3d2b1f"))
-            elif cat_name == name:
-                btn.configure(bg=THEME["select_bg"], fg=THEME["select_fg"])
-            else:
-                btn.configure(bg=THEME.get("brown", "#6b4a3a"), fg="white")
+        for cat_name, tile in self._cat_buttons.items():
+            try:
+                _apply = getattr(tile, "_apply_state", None)
+                if callable(_apply):
+                    _apply(active=(cat_name == name))
+            except Exception:
+                pass
 
     def _update_breadcrumb(self) -> None:
-        """Refresh the breadcrumb header + back-button visibility based on level."""
+        """Header strip is removed in the tile layout — Back is an inline tile.
+        Kept as a no-op so existing callers stay safe."""
+        return None
+
+    def refresh_after_inventory_change(self, changed_image_rel: str | None = None) -> None:
+        """Public hook called from inventory after a product/category save or delete.
+
+        Clears the cached product list and (optionally) invalidates a single
+        image cache entry, then refreshes categories + visible POS cards. Safe
+        to call from the Tk main thread — schedules work via `after` so we
+        never touch widgets from a background thread.
+        """
+        if self._destroyed or not self.winfo_exists():
+            return
         try:
-            lbl = getattr(self, "_cat_breadcrumb_lbl", None)
-            back = getattr(self, "_cat_back_btn", None)
-            if not lbl or not lbl.winfo_exists():
-                return
-            if self._cat_level == "sub" and self._cat_parent_name:
-                # On sub-level: show "Beef" or "Beef > Subcategory"
-                if (self._selected_category
-                        and self._selected_category != self._cat_parent_name):
-                    crumb = f"{self._cat_parent_name}  ›  {self._selected_category}"
-                else:
-                    crumb = self._cat_parent_name
-                lbl.configure(text=crumb)
-                if back is not None and back.winfo_exists():
-                    back.grid(row=0, column=0, sticky="w", padx=(6, 0), pady=4)
-            else:
-                lbl.configure(text="All Categories")
-                if back is not None and back.winfo_exists():
-                    back.grid_remove()
+            if changed_image_rel:
+                norm = changed_image_rel.replace("\\", "/").strip()
+                key = f"img::{norm}"
+                if key in self._img_cache:
+                    self._img_cache.pop(key, None)
         except Exception:
             pass
+        # Force a fresh DB fetch on next render.
+        self._all_products_cache = []
+        self._all_products_cache_cat = ""
+
+        def _do() -> None:
+            if self._destroyed or not self.winfo_exists():
+                return
+            try:
+                self._refresh_categories()
+            except Exception:
+                pass
+            try:
+                self._refresh_products()
+            except Exception:
+                pass
+
+        self._after(0, _do)
+
+    # Category tile dimensions (px). Square-ish to mirror product cards.
+    _CAT_TILE_W = 118
+    _CAT_TILE_H = 78
+
+    def _build_cat_tile(self, parent: tk.Widget, label: str, *,
+                         icon: str = "📂", is_back: bool = False,
+                         on_click=None) -> tk.Frame:
+        """Build a single tile (Frame) that visually matches product cards."""
+        bg = THEME.get("panel2", "#E8DDD0") if is_back else THEME.get("panel", "#FFFFFF")
+        accent = THEME.get("muted", "#7B6B57") if is_back else THEME.get("accent", "#D4956A")
+
+        tile = tk.Frame(
+            parent, bg=bg,
+            width=self._CAT_TILE_W, height=self._CAT_TILE_H,
+            highlightthickness=1, highlightbackground=THEME["border"],
+            cursor="hand2",
+        )
+        tile.grid_propagate(False)
+        tile.columnconfigure(0, weight=1)
+        tile.rowconfigure(1, weight=1)
+
+        # Top accent bar (visible selection cue)
+        accent_bar = tk.Frame(tile, bg=accent, height=3)
+        accent_bar.grid(row=0, column=0, sticky="ew")
+
+        body = tk.Frame(tile, bg=bg)
+        body.grid(row=1, column=0, sticky="nsew", padx=4, pady=(2, 4))
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        ico_lbl = tk.Label(body, text=icon, bg=bg,
+                           fg=THEME.get("brown", "#6b4a3a"),
+                           font=("Segoe UI", 16))
+        ico_lbl.grid(row=0, column=0, sticky="s", pady=(2, 0))
+
+        text_lbl = tk.Label(body, text=label, bg=bg,
+                            fg=THEME.get("text", "#3d2b1f"),
+                            font=("Segoe UI", 9, "bold"),
+                            wraplength=self._CAT_TILE_W - 14,
+                            justify="center")
+        text_lbl.grid(row=1, column=0, sticky="n", pady=(2, 4))
+
+        widgets = (tile, accent_bar, body, ico_lbl, text_lbl)
+        for w in widgets:
+            w.configure(cursor="hand2")
+            if on_click is not None:
+                w.bind("<Button-1>", lambda _e, cb=on_click: cb(), add="+")
+
+        # State styling helper attached to the tile so _set_active_category_btn
+        # can recolour without rebuilding.
+        _ACTIVE_BG = THEME.get("select_bg", "#5C3D2E")
+        _ACTIVE_FG = THEME.get("select_fg", "#FFFFFF")
+        _HOVER_BORDER = THEME.get("accent", "#D4956A")
+        _NORMAL_BORDER = THEME["border"]
+
+        def _apply_state(active: bool = False):
+            if is_back:
+                # Back tile keeps neutral colour but shows accent border
+                return
+            try:
+                if active:
+                    for w in (tile, body, accent_bar):
+                        w.configure(bg=_ACTIVE_BG)
+                    text_lbl.configure(bg=_ACTIVE_BG, fg=_ACTIVE_FG)
+                    ico_lbl.configure(bg=_ACTIVE_BG, fg=_ACTIVE_FG)
+                    tile.configure(highlightbackground=_HOVER_BORDER,
+                                    highlightcolor=_HOVER_BORDER)
+                else:
+                    for w in (tile, body):
+                        w.configure(bg=bg)
+                    accent_bar.configure(bg=accent)
+                    text_lbl.configure(bg=bg, fg=THEME.get("text", "#3d2b1f"))
+                    ico_lbl.configure(bg=bg, fg=THEME.get("brown", "#6b4a3a"))
+                    tile.configure(highlightbackground=_NORMAL_BORDER,
+                                    highlightcolor=_NORMAL_BORDER)
+            except Exception:
+                pass
+
+        def _on_enter(_e=None):
+            try:
+                if not is_back and tile.winfo_exists():
+                    tile.configure(highlightbackground=_HOVER_BORDER,
+                                    highlightcolor=_HOVER_BORDER)
+            except Exception:
+                pass
+
+        def _on_leave(_e=None):
+            try:
+                if tile.winfo_exists():
+                    tile.configure(highlightbackground=_NORMAL_BORDER,
+                                    highlightcolor=_NORMAL_BORDER)
+            except Exception:
+                pass
+
+        for w in widgets:
+            w.bind("<Enter>", _on_enter, add="+")
+            w.bind("<Leave>", _on_leave, add="+")
+
+        tile._apply_state = _apply_state  # type: ignore[attr-defined]
+        return tile
 
     def _refresh_categories(self):
         if self._destroyed or not self.winfo_exists():
@@ -1136,42 +1187,52 @@ class POSView(tk.Frame):
             w.destroy()
         self._cat_buttons.clear()
         self._cat_grid_width = 0
-
-        def add_btn(name: str):
-            btn = tk.Button(
-                frame,
-                text=name,
-                anchor="center",
-                command=lambda n=name: self._on_category_click(n),
-                bg=THEME.get("brown", "#6b4a3a"),
-                fg="white",
-                activebackground=THEME["select_bg"],
-                activeforeground=THEME["select_fg"],
-                bd=0,
-                width=14,
-                height=2,
-                cursor="hand2",
-                font=("Segoe UI", 10, "bold"),
-                relief="flat",
-                wraplength=100,
-                justify="center",
-            )
-            self._cat_buttons[name] = btn
+        # Force re-layout pass next time even if column count is same
+        self._cat_last_cols = -1
 
         if self._cat_level == "sub":
-            # Subcategory level: only the parent's subcategories (back button is
-            # in the breadcrumb header above, so we no longer add it inline).
+            # Inline Back tile is always the first card on sub-level
+            back_tile = self._build_cat_tile(
+                frame,
+                label=f"Back to Categories",
+                icon="←",
+                is_back=True,
+                on_click=self._on_back_click,
+            )
+            self._cat_buttons["__back__"] = back_tile
+
+            subs = []
             if self._cat_parent_id is not None:
                 subs = self.cat_dao.list_subcategories(self._cat_parent_id)
-                for r in subs:
-                    add_btn(str(r["name"]))
-        else:
-            # Main level: top-level categories ONLY (no "All" button — products area
-            # shows everything by default when nothing is selected)
-            for r in self.cat_dao.list_main_categories():
-                add_btn(str(r["name"]))
+            for r in subs:
+                nm = str(r["name"])
+                tile = self._build_cat_tile(
+                    frame, label=nm, icon="🍽",
+                    on_click=lambda n=nm: self._on_category_click(n),
+                )
+                self._cat_buttons[nm] = tile
 
-        # Highlight current selection if it still exists at this level
+            # If no subcategories, surface a single neutral tile so the row
+            # still looks like a card grid (no thin/clipped strip).
+            if not subs:
+                parent_label = self._cat_parent_name or "Items"
+                hint_tile = self._build_cat_tile(
+                    frame,
+                    label=f"All {parent_label}",
+                    icon="📋",
+                    is_back=True,
+                    on_click=lambda: None,
+                )
+                self._cat_buttons["__all_parent__"] = hint_tile
+        else:
+            for r in self.cat_dao.list_main_categories():
+                nm = str(r["name"])
+                tile = self._build_cat_tile(
+                    frame, label=nm, icon="🍽",
+                    on_click=lambda n=nm: self._on_category_click(n),
+                )
+                self._cat_buttons[nm] = tile
+
         if self._selected_category in self._cat_buttons:
             self._set_active_category_btn(self._selected_category)
         else:
@@ -1253,8 +1314,10 @@ class POSView(tk.Frame):
 
     def _load_products_for_category(self) -> None:
         """Fetch products from DB in a background thread; continue on main thread."""
-        cat_name  = self._selected_category or ""
-        cat_level = self._cat_level
+        cat_name   = self._selected_category or ""
+        cat_level  = self._cat_level
+        parent_id  = self._cat_parent_id
+        parent_nm  = self._cat_parent_name or ""
         self._load_gen += 1
         gen = self._load_gen
 
@@ -1267,11 +1330,10 @@ class POSView(tk.Frame):
                 t_cat_dao = CategoryDAO(thread_db)
                 t_prod_dao = ProductDAO(thread_db)
                 if not cat_name:
-                    # No selection — show all active products (initial main-level state)
+                    # No selection — show all active products
                     rows = t_prod_dao.list_all_active()
                 elif cat_level == "main":
-                    # Main-level selection: include products in this category
-                    # AND any products in its subcategories
+                    # Main-level: this category + any subcategories
                     c = t_cat_dao.get_by_name(cat_name)
                     if c:
                         c_id = int(c["category_id"])
@@ -1281,12 +1343,22 @@ class POSView(tk.Frame):
                             rows = t_prod_dao.list_by_categories(all_ids)
                         else:
                             rows = t_prod_dao.list_by_category(c_id)
+                    # No fallback to all products — empty list shows empty state
                 else:
-                    # Sub-level: exact category match only
-                    c = t_cat_dao.get_by_name(cat_name)
-                    rows = (
-                        t_prod_dao.list_by_category(int(c["category_id"])) if c else []
-                    )
+                    # Sub-level: prefer parent_id when the displayed selection is
+                    # the parent itself (no real subcategory click yet).
+                    if cat_name == parent_nm and parent_id is not None:
+                        subs = t_cat_dao.list_subcategories(int(parent_id))
+                        if subs:
+                            ids = [int(parent_id)] + [int(s["category_id"]) for s in subs]
+                            rows = t_prod_dao.list_by_categories(ids)
+                        else:
+                            rows = t_prod_dao.list_by_category(int(parent_id))
+                    else:
+                        c = t_cat_dao.get_by_name(cat_name)
+                        rows = (
+                            t_prod_dao.list_by_category(int(c["category_id"])) if c else []
+                        )
             except Exception as exc:
                 err_msg = str(exc)
                 rows = []
@@ -1435,9 +1507,13 @@ class POSView(tk.Frame):
         self._product_card_widgets = []
 
         if not self._products_cache:
+            if self._selected_category:
+                msg = f"No products in '{self._selected_category}'."
+            else:
+                msg = "No items found. Clear search or seed products."
             self._loading_lbl = tk.Label(
                 self.prod_inner,
-                text="No items found. Clear search or seed products.",
+                text=msg,
                 bg=self._CARD_BG, fg=THEME["muted"],
                 font=("Segoe UI", 12, "bold"),
             )
@@ -2388,120 +2464,35 @@ class POSView(tk.Frame):
         self.discount_value = float(value)
         self._refresh_cart()
 
-    # ── Drafts ────────────────────────────────────────────────────────────────
+    # ── Drafts (cashier UI removed; methods kept as safe no-ops) ─────────────
     def _refresh_drafts_panel(self):
-        rows = self.draft_dao.list_drafts()
-        if not rows:
-            try:
-                self.drafts_section.grid_remove()
-            except Exception:
-                pass
-            self._draft_id_by_index.clear()
-            try:
-                self.draft_list.delete(0, tk.END)
-            except Exception:
-                pass
-            return
-        if not self.drafts_section.winfo_ismapped():
-            self.drafts_section.grid()
-        self.draft_list.delete(0, tk.END)
-        self._draft_id_by_index.clear()
-        for r in rows:
-            did = int(r["draft_id"])
-            title = str(r["title"])
-            total = float(_row_get(r, "total", 0.0))
-            self.draft_list.insert(tk.END, f"{title}  •  {money(total)}")
-            self._draft_id_by_index.append(did)
-
-    def _get_selected_draft_id(self):
-        sel = self.draft_list.curselection()
-        if not sel:
-            return None
-        idx = int(sel[0])
-        if idx < 0 or idx >= len(self._draft_id_by_index):
-            return None
-        did = self._draft_id_by_index[idx]
-        return None if did == -1 else did
-
-    def _save_draft(self):
-        if not self.cart:
-            messagebox.showinfo("Draft", "No items to save.")
-            return
-        dlg = DraftTitleDialog(self)
-        self.wait_window(dlg)
-        if not dlg.result:
-            return
-        title = dlg.result.strip()
-        _subtotal, _discount, _tax, total = self._calc_totals()
-        payload = {
-            "cart": [{"product_id": pid, "name": n, "price": p, "qty": q, "note": note}
-                     for pid, (n, p, q, note) in self.cart.items()],
-            "discount_mode": self.discount_mode,
-            "discount_value": self.discount_value,
-        }
+        # Cashier draft UI was removed — make sure the section is hidden and
+        # any internal index is cleared. DraftDAO still exists for future use.
         try:
-            self.draft_dao.create_draft(title=title, payload=payload, total=total)
-            show_toast(self, f"Draft saved: {title}", kind="success")
-            self._refresh_drafts_panel()
-            self.cart.clear()
-            self.discount_mode = "NONE"
-            self.discount_value = 0.0
-            self._refresh_cart()
-        except Exception as e:
-            messagebox.showerror("Draft Error", f"Failed to save draft.\n\n{e}")
-
-    def _load_selected_draft(self):
-        did = self._get_selected_draft_id()
-        if did is None:
-            return
-        d = self.draft_dao.get_draft(did)
-        if not d:
-            return
-        try:
-            payload = json.loads(d["payload_json"])
-        except Exception:
-            payload = {}
-        self.discount_mode = str(payload.get("discount_mode", "amount"))
-        self.discount_value = float(payload.get("discount_value", 0.0))
-        self.cart.clear()
-        for it in payload.get("cart", []):
-            pid = int(it.get("product_id", 0))
-            name = str(it.get("name", ""))
-            price = float(it.get("price", 0.0))
-            qty = int(it.get("qty", 1))
-            note = str(it.get("note", ""))
-            if pid:
-                self.cart[pid] = (name, price, qty, note)
-        try:
-            self.draft_dao.delete_draft(did)
+            self.drafts_section.grid_remove()
         except Exception:
             pass
-        self._refresh_cart()
-        self._refresh_drafts_panel()
-        show_toast(self, f"Draft loaded: {d['title']}", kind="info")
+        self._draft_id_by_index.clear()
+
+    def _get_selected_draft_id(self):
+        # Cashier draft UI was removed; nothing is ever selected.
+        return None
+
+    def _save_draft(self):
+        # Cashier draft UI was removed — kept as a no-op stub.
+        return None
+
+    def _load_selected_draft(self):
+        # Cashier draft UI was removed — kept as a no-op stub.
+        return None
 
     def _delete_selected_draft(self):
-        did = self._get_selected_draft_id()
-        if did is None:
-            return
-        if not messagebox.askyesno("Delete draft", "Delete selected draft?"):
-            return
-        self.draft_dao.delete_draft(did)
-        self._refresh_drafts_panel()
+        # Cashier draft UI was removed — kept as a no-op stub.
+        return None
 
     def _delete_all_drafts(self):
-        rows = self.draft_dao.list_drafts()
-        if not rows:
-            messagebox.showinfo("Draft orders", "There are no drafts to delete.")
-            return
-        if not messagebox.askyesno("Delete all drafts", "Delete ALL draft orders?"):
-            return
-        try:
-            self.draft_dao.delete_all_drafts()
-            self._refresh_drafts_panel()
-            messagebox.showinfo("Draft orders", "All drafts deleted.")
-        except Exception as e:
-            messagebox.showerror("Draft orders", f"Failed to delete all drafts.\n\n{e}")
+        # Cashier draft UI was removed — kept as a no-op stub.
+        return None
 
     # ── Checkout ──────────────────────────────────────────────────────────────
     def _checkout(self):
@@ -2735,7 +2726,7 @@ class POSView(tk.Frame):
 class ReceiptPreviewDialog(tk.Toplevel):
     """
     Shows a scrollable receipt preview inside the POS window.
-    PDF is only generated if the user clicks 'Print / Save PDF'.
+    Cashier flow exposes a single 'Print' action — no Save PDF option.
     """
 
     _BG   = str(THEME["bg"])
@@ -3029,7 +3020,7 @@ class ReceiptPreviewDialog(tk.Toplevel):
         btn_frame.columnconfigure(1, weight=1, uniform="rb")
 
         def _print_receipt():
-            """Generate the receipt and send straight to print preview / printer.
+            """Generate the receipt and send it straight to the default printer.
             Cashier flow has no 'Save PDF' option — only Print."""
             try:
                 _u = self.auth.get_current_user() if self.auth else None
@@ -3037,8 +3028,8 @@ class ReceiptPreviewDialog(tk.Toplevel):
                 path = ReceiptService.generate_receipt(
                     self.order_data, self.items, printed_by=_by
                 )
-                ok = ReceiptService.open_file(path)
-                # Audit print regardless of preview success — the file exists.
+                ok = ReceiptService.print_file(path)
+                # Audit print regardless of dispatch success — the file exists.
                 try:
                     u = self.auth.get_current_user() if self.auth else None
                     if self.db is not None:
@@ -3052,11 +3043,14 @@ class ReceiptPreviewDialog(tk.Toplevel):
                 except Exception:
                     pass
                 if not ok:
-                    messagebox.showwarning(
+                    if messagebox.askyesno(
                         "Print",
-                        f"Could not open print preview automatically.\n\nReceipt is at:\n{path}",
+                        "Could not send the receipt directly to a printer.\n\n"
+                        f"Receipt was saved to:\n{path}\n\n"
+                        "Open the file for manual print preview?",
                         parent=self,
-                    )
+                    ):
+                        ReceiptService.open_file(path)
             except Exception as exc:
                 from app.utils import log_error
                 log_error("Receipt print", exc)
@@ -3066,7 +3060,7 @@ class ReceiptPreviewDialog(tk.Toplevel):
                     parent=self,
                 )
 
-        tk.Button(btn_frame, text="🖨  Print",
+        tk.Button(btn_frame, text="Print",
                   command=_print_receipt,
                   bg=THEME.get("brown", "#6b4a3a"), fg="white",
                   activebackground=THEME.get("brown_dark", "#8E0000"),

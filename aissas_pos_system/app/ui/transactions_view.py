@@ -1218,7 +1218,7 @@ class TransactionDetailsDialog(tk.Toplevel):
             receipt_path = ReceiptService.generate_receipt(
                 order_dict, items_list, printed_by=_by
             )
-            ok = ReceiptService.open_file(receipt_path)
+            ok = ReceiptService.print_file(receipt_path)
             try:
                 import os as _os
                 u = self.auth.get_current_user() if getattr(self, "auth", None) else None
@@ -1232,10 +1232,13 @@ class TransactionDetailsDialog(tk.Toplevel):
             except Exception:
                 pass
             if not ok:
-                messagebox.showwarning(
+                if messagebox.askyesno(
                     "Receipt",
-                    f"Receipt generated but could not open automatically.\n\nSaved to:\n{receipt_path}",
-                )
+                    "Could not send the receipt directly to a printer.\n\n"
+                    f"Receipt was saved to:\n{receipt_path}\n\n"
+                    "Open the file for manual print preview?",
+                ):
+                    ReceiptService.open_file(receipt_path)
         except Exception as e:
             from app.utils import log_error
             log_error("Transactions print receipt", e)

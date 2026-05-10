@@ -69,31 +69,21 @@ class ReportsView(tk.Frame):
                  font=("Segoe UI", 14, "bold"),
                  padx=14, pady=12).pack(side="left")
 
-        # Tab buttons (type-first ordering)
-        tk.Frame(hdr_bar, bg="#7A6050", width=1).pack(side="left", fill="y", pady=8)
-        tabs = [
-            ("home",          "Home"),
-            ("sales",         "Total Sales"),
-            ("discounts",     "Discounts"),
-            ("raw_materials", "Inventory"),
-            ("void_history",  "Void History"),
-            ("top_sellers",   "Analytics"),
-        ]
-        for key, label in tabs:
-            btn = tk.Button(
-                hdr_bar, text=f"  {label}  ",
-                command=lambda k=key: self._show_tab(k),
-                bg=_SB, fg="#FFFFFF",
-                activebackground=_SB, activeforeground="#FFFFFF",
-                bd=0, padx=4, pady=0,
-                cursor="hand2",
-                font=("Segoe UI", 9, "bold"),
-                height=2,
-                relief="flat",
-            )
-            btn.pack(side="left", padx=2)
-            self._tab_btns[key] = btn
-        self._update_tab_style()
+        # A single "Back to Reports" button is shown on the right of the header
+        # whenever a specific report is open. It returns to the cards picker.
+        # The previous duplicate sub-navigation tabs (Home / Total Sales /
+        # Discounts / Inventory / Void History / Analytics) have been removed
+        # because the card picker on the home view already provides navigation.
+        self._back_btn = tk.Button(
+            hdr_bar, text="←  Back to Reports",
+            command=lambda: self._show_tab("home"),
+            bg=THEME["primary_dark"], fg="#FFFFFF",
+            activebackground=THEME["primary"], activeforeground="#FFFFFF",
+            bd=0, padx=14, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+        )
+        # Not packed by default — only visible when a report is open.
 
         self._content = tk.Frame(self, bg=_BG)
         self._content.pack(fill="both", expand=True)
@@ -103,13 +93,19 @@ class ReportsView(tk.Frame):
         self._show_tab("home")
 
     def _update_tab_style(self):
-        for key, btn in self._tab_btns.items():
-            if key == self._active_tab:
-                btn.configure(bg=THEME["primary_dark"], fg="#FFFFFF",
-                               font=("Segoe UI", 9, "bold"))
+        # Only the Back button is visible — toggle it based on whether the
+        # active tab is the home picker or a specific report.
+        back = getattr(self, "_back_btn", None)
+        if back is None:
+            return
+        try:
+            if self._active_tab == "home":
+                back.pack_forget()
             else:
-                btn.configure(bg=_SB, fg="#F5DFB8",
-                               font=("Segoe UI", 9))
+                if not back.winfo_ismapped():
+                    back.pack(side="right", padx=(8, 14), pady=10)
+        except Exception:
+            pass
 
     def refresh(self):
         # Force-rebuild only the active tab so stale data is never shown

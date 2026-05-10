@@ -21,6 +21,7 @@ from app.db.database import Database
 from app.db.dao import ProductDAO, CategoryDAO
 from app.services.auth_service import AuthService
 from app.ui import ui_scale
+from app.ui.dialogs import show_toast
 from app.utils import money
 
 try:
@@ -36,12 +37,17 @@ _HOVER_BG   = "#eef3ff"   # blue-tint hover
 
 
 class InventoryProductsView(tk.Frame):
-    def __init__(self, parent: tk.Frame, db: Database, auth: AuthService):
+    def __init__(self, parent: tk.Frame, db: Database, auth: AuthService,
+                 on_change_cb=None):
         super().__init__(parent, bg=THEME["bg"])
         self.db = db
         self.auth = auth
         self.products = ProductDAO(db)
         self.categories = CategoryDAO(db)
+        # Called after a successful save/delete so the cached POS view can
+        # refresh categories + product cards (and invalidate image caches).
+        # Signature: on_change_cb(changed_image_rel: str | None = None)
+        self.on_change_cb = on_change_cb or (lambda *_a, **_k: None)
 
         self.var_search   = tk.StringVar()
         self.var_category = tk.StringVar(value="All")
@@ -114,7 +120,7 @@ class InventoryProductsView(tk.Frame):
         search_pill.columnconfigure(1, weight=1)
 
         tk.Label(
-            search_pill, text="Search  (name / ID)",
+            search_pill, text="Search by Product ID or Name",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", ui_scale.scale_font(9)),
         ).grid(row=0, column=0, padx=(10, 4), pady=4)
@@ -207,7 +213,7 @@ class InventoryProductsView(tk.Frame):
         tbl_card.rowconfigure(0, weight=1)
         tbl_card.columnconfigure(0, weight=1)
 
-        cols = ("name", "category", "price", "available", "action")
+        cols = ("id", "name", "category", "price", "available", "action")
         self.tbl = ttk.Treeview(
             tbl_card, columns=cols, show="headings",
             style="Prod.Treeview",
@@ -220,6 +226,7 @@ class InventoryProductsView(tk.Frame):
 
         # Column headers
         col_cfg = [
+            ("id",          "Product ID",   ui_scale.s(90),   "center", False),
             ("name",        "Name",         ui_scale.s(180),  "w",      True),
             ("category",    "Category",     ui_scale.s(120),  "w",      False),
             ("price",       "Price",        ui_scale.s(100),  "e",      False),
@@ -285,7 +292,7 @@ class InventoryProductsView(tk.Frame):
             self._prod_sort["reverse"] = False
         rev = self._prod_sort["reverse"]
         ind = " ▲" if not rev else " ▼"
-        _labels = {"name": "Name", "category": "Category",
+        _labels = {"id": "Product ID", "name": "Name", "category": "Category",
                    "price": "Price", "available": "Status", "action": ""}
         for cid, hdr in _labels.items():
             self.tbl.heading(cid, text=(hdr + ind) if cid == col else hdr,
@@ -342,6 +349,7 @@ class InventoryProductsView(tk.Frame):
         sort_col = self._prod_sort["col"]
         if sort_col and sort_col != "action":
             _key = {
+                "id":        lambda r: int(r["product_id"] or 0),
                 "name":      lambda r: str(r["name"] or "").lower(),
                 "category":  lambda r: str(r["category"] or "").lower(),
                 "price":     lambda r: float(r["price"] or 0),
@@ -360,6 +368,7 @@ class InventoryProductsView(tk.Frame):
                 "", tk.END,
                 iid=str(pid),
                 values=(
+                    f"#{pid}",
                     str(r["name"]), str(r["category"]),
                     money(r["price"]),
                     status_text,
@@ -375,14 +384,26 @@ class InventoryProductsView(tk.Frame):
             return None
         return int(sel[0])
 
+    def _on_product_saved(self, changed_image_rel: str | None = None):
+        """Refresh the inventory list and notify any external listener
+        (e.g. the cached POS view) so product cards and image caches
+        update without an app restart."""
+        self.refresh()
+        try:
+            self.on_change_cb(changed_image_rel)
+        except Exception:
+            pass
+
     def create_product(self):
-        ProductEditor(self, self.db, product_id=None, on_save=self.refresh)
+        ProductEditor(self, self.db, product_id=None,
+                      on_save=self._on_product_saved)
 
     def edit_selected(self):
         pid = self._selected_id()
         if pid is None:
             return
-        ProductEditor(self, self.db, product_id=pid, on_save=self.refresh)
+        ProductEditor(self, self.db, product_id=pid,
+                      on_save=self._on_product_saved)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -425,11 +446,19 @@ class ProductEditor(tk.Toplevel):
         sp  = ui_scale.s
 
         # ── Title (top) ───────────────────────────────────────────────────────
+        title_row = tk.Frame(self, bg=THEME["bg"])
+        title_row.pack(fill="x", padx=18, pady=(14, 6))
         tk.Label(
-            self, text=self.title(),
+            title_row, text=self.title(),
             bg=THEME["bg"], fg=THEME["text"],
             font=("Segoe UI", f(14), "bold"),
-        ).pack(anchor="w", padx=18, pady=(14, 6))
+        ).pack(side="left")
+        if self.product_id:
+            tk.Label(
+                title_row, text=f"Product ID: #{int(self.product_id)}",
+                bg=THEME["bg"], fg=THEME["muted"],
+                font=("Segoe UI", f(10), "bold"),
+            ).pack(side="right")
 
         # ── Footer (bottom — packed BEFORE the scroll area so it's always visible) ──
         footer = tk.Frame(self, bg=THEME["bg"])
@@ -780,6 +809,7 @@ class ProductEditor(tk.Toplevel):
         cat      = self.categories.get_by_name(cat_name) if cat_name else None
         cat_id   = int(cat["category_id"]) if cat else None
 
+        was_update = bool(self.product_id)
         if self.product_id:
             self.products.update(
                 self.product_id, cat_id, name, "", "", image_path,
@@ -792,8 +822,18 @@ class ProductEditor(tk.Toplevel):
             )
 
         if self.on_save:
-            self.on_save()
+            try:
+                self.on_save(image_path or None)
+            except TypeError:
+                # Callers using the legacy zero-arg signature still work.
+                self.on_save()
+        parent_for_toast = self.master
         self.destroy()
+        try:
+            show_toast(parent_for_toast,
+                       f"'{name}' {'updated' if was_update else 'added'} successfully.")
+        except Exception:
+            pass
 
     def _delete(self):
         if not self.product_id:
@@ -802,8 +842,16 @@ class ProductEditor(tk.Toplevel):
             return
         self.products.delete(self.product_id)
         if self.on_save:
-            self.on_save()
+            try:
+                self.on_save(None)
+            except TypeError:
+                self.on_save()
+        parent_for_toast = self.master
         self.destroy()
+        try:
+            show_toast(parent_for_toast, "Product deleted successfully.")
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -390,6 +390,19 @@ class Database:
         # =====================================================================
         self._add_unique_reference_index()
 
+        # =====================================================================
+        # CATEGORY HIERARCHY — ensure 'Drinks' parent + reparent tea/coffee subs
+        # Idempotent: tracked by app_meta key so it runs at most once per DB.
+        # =====================================================================
+        self._apply_drinks_category_migration()
+
+        # =====================================================================
+        # PRODUCT IMAGES — match empty/missing image_path to files on disk by
+        # normalised name. One-shot, conservative: only updates when confident.
+        # Tracked by app_meta key so it runs at most once per database.
+        # =====================================================================
+        self._apply_product_image_backfill()
+
     def _add_unique_reference_index(self) -> None:
         """
         Create a partial unique index on orders.reference_no.
@@ -422,6 +435,156 @@ class Database:
                         )
                     except Exception:
                         pass
+        except Exception:
+            pass
+
+    def _apply_drinks_category_migration(self) -> None:
+        """
+        Ensure a 'Drinks' main category exists and that the standard drink
+        subcategories (Hot Coffee, Iced Coffee, Milk Tea, Hot Tea) are
+        reparented under it. Safe & idempotent:
+        • never deletes products or categories
+        • only changes parent_id (top-level → child of Drinks)
+        • won't reparent a category that already has a different parent
+        • guarded by app_meta key 'drinks_cat_migration_v1' (still re-checks
+          each run so missing children can be reparented if added later)
+        """
+        try:
+            if not self._table_exists("categories"):
+                return
+            cols = self._table_columns("categories")
+            if "parent_id" not in cols:
+                return
+            # Ensure 'Drinks' main category exists.
+            row = self.fetchone(
+                "SELECT id, parent_id FROM categories WHERE name='Drinks';"
+            )
+            if row is None:
+                self.execute(
+                    "INSERT INTO categories(name, parent_id) VALUES('Drinks', NULL);"
+                )
+                row = self.fetchone(
+                    "SELECT id, parent_id FROM categories WHERE name='Drinks';"
+                )
+            if row is None:
+                return
+            drinks_id = int(row["id"])
+            # Drinks itself must be top-level.
+            if row["parent_id"] is not None:
+                self.execute(
+                    "UPDATE categories SET parent_id=NULL WHERE id=?;",
+                    (drinks_id,),
+                )
+            # Reparent each standard drink subcategory if present and
+            # not already under another parent.
+            for sub_name in ("Hot Coffee", "Iced Coffee", "Milk Tea", "Hot Tea"):
+                sub = self.fetchone(
+                    "SELECT id, parent_id FROM categories WHERE name=?;",
+                    (sub_name,),
+                )
+                if sub is None:
+                    continue
+                sub_id = int(sub["id"])
+                if sub_id == drinks_id:
+                    continue
+                cur_parent = sub["parent_id"]
+                if cur_parent is None or int(cur_parent) == drinks_id:
+                    self.execute(
+                        "UPDATE categories SET parent_id=? WHERE id=?;",
+                        (drinks_id, sub_id),
+                    )
+        except Exception:
+            pass
+
+    def _apply_product_image_backfill(self) -> None:
+        """
+        One-shot fixer: when product_images/<file> exists on disk but a
+        product's image_path is empty or points to a missing file, match
+        by normalised product name and update image_path. Conservative —
+        never overwrites a valid existing image_path; runs at most once
+        per database (guarded by app_meta key 'product_image_backfill_v1').
+        """
+        try:
+            if not self._table_exists("products"):
+                return
+            if not self._table_exists("app_meta"):
+                return
+            done = self.fetchone(
+                "SELECT value FROM app_meta WHERE key='product_image_backfill_v1';"
+            )
+            if done:
+                return
+
+            from app.config import PRODUCT_IMAGES_DIR, resolve_image_path
+            if not PRODUCT_IMAGES_DIR.exists():
+                # Mark as done anyway so we don't probe every startup.
+                self.execute(
+                    "INSERT OR REPLACE INTO app_meta(key, value) "
+                    "VALUES('product_image_backfill_v1','1');"
+                )
+                return
+
+            def _norm(s: str) -> str:
+                # lowercase + remove any non-alphanumeric so 'Spanish Latte'
+                # matches 'SpanishLatte.png' or 'spanish_latte.png'.
+                return "".join(ch for ch in s.lower() if ch.isalnum())
+
+            valid_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+            files: list = []
+            for f in PRODUCT_IMAGES_DIR.iterdir():
+                if not f.is_file():
+                    continue
+                if f.suffix.lower() not in valid_exts:
+                    continue
+                stem = f.stem
+                # Strip trailing _1, _2 etc. (alternate uploads)
+                if "_" in stem:
+                    parts = stem.rsplit("_", 1)
+                    if parts[1].isdigit():
+                        stem = parts[0]
+                files.append((f.name, _norm(stem)))
+
+            if not files:
+                self.execute(
+                    "INSERT OR REPLACE INTO app_meta(key, value) "
+                    "VALUES('product_image_backfill_v1','1');"
+                )
+                return
+
+            rows = self.fetchall(
+                "SELECT id, name, image_path FROM products;"
+            )
+            updated = 0
+            for r in rows:
+                pid = int(r["id"])
+                pname = str(r["name"] or "")
+                img = str(r["image_path"] or "").strip()
+                # Skip when product already has a valid image on disk.
+                if img:
+                    found = resolve_image_path(img)
+                    if found is not None:
+                        continue
+                norm_name = _norm(pname)
+                if not norm_name:
+                    continue
+                match = None
+                for fname, fnorm in files:
+                    if fnorm == norm_name:
+                        match = fname
+                        break
+                if match is None:
+                    continue
+                rel = f"product_images/{match}"
+                self.execute(
+                    "UPDATE products SET image_path=? WHERE id=?;",
+                    (rel, pid),
+                )
+                updated += 1
+
+            self.execute(
+                "INSERT OR REPLACE INTO app_meta(key, value) "
+                "VALUES('product_image_backfill_v1','1');"
+            )
         except Exception:
             pass
 

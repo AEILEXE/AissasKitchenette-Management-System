@@ -303,12 +303,13 @@ class AppWindow:
         # Thin vertical divider after logo
         tk.Frame(self.nav, bg="#7A6050", width=1).pack(side=tk.LEFT, fill=tk.Y, pady=8)
 
-        # Nav tabs
+        # Nav tabs — Dashboard is the primary landing tab
+        self._btn("dash", "  Dashboard  ", self.show_dashboard)
+
         if self.auth_service.has_permission(P_POS):
             self._btn("pos", "  POS  ", self.show_pos)
 
         self._btn("tx", "  Transactions  ", self.show_transactions)
-        self._btn("dash", "  Dashboard  ", self.show_dashboard)
 
         if self.auth_service.has_permission(P_INV_VIEW) or self.auth_service.has_permission(P_INV_MANAGE):
             self._btn("inv", "  Inventory  ", self.show_inventory)
@@ -476,7 +477,15 @@ class AppWindow:
         self.root.update_idletasks()   # paint the loading frame before continuing
 
     def _finish_login_navigation(self) -> None:
-        """Navigate to the appropriate first view after login."""
+        """Navigate to the appropriate first view after login.
+        Dashboard is the default landing screen for any logged-in user;
+        if Dashboard is unavailable for some reason, fall back to POS,
+        then Inventory, then Transactions based on permissions."""
+        try:
+            self.show_dashboard()
+            return
+        except Exception:
+            pass
         if self.auth_service.has_permission(P_POS):
             self.show_pos()
         elif (self.auth_service.has_permission(P_INV_VIEW) or
@@ -554,6 +563,20 @@ class AppWindow:
             except Exception:
                 pass
 
+    def _refresh_pos_after_inventory(self, changed_image_rel: str | None = None) -> None:
+        """Full POS refresh after an inventory product/category change.
+
+        Refreshes both category buttons and the visible product cards on the
+        cached POS view (if any). Image cache is invalidated for the changed
+        product so a swapped image renders without an app restart.
+        """
+        v = self._view_cache.get("pos")
+        if v and v.winfo_exists() and hasattr(v, "refresh_after_inventory_change"):
+            try:
+                v.refresh_after_inventory_change(changed_image_rel)
+            except Exception:
+                pass
+
     def show_inventory(self) -> None:
         if not (self.auth_service.has_permission(P_INV_VIEW) or
                 self.auth_service.has_permission(P_INV_MANAGE)):
@@ -568,6 +591,7 @@ class AppWindow:
                 self.content, self.db, self.auth_service,
                 self.show_transactions, self.show_pos, self._force_show_reports,
                 refresh_pos_cats_cb=self._refresh_pos_categories,
+                refresh_pos_full_cb=self._refresh_pos_after_inventory,
             ),
         )
 
@@ -899,6 +923,10 @@ class _InactivityLockOverlay(tk.Toplevel):
         )
         entry.pack(fill="x", padx=40, ipady=10)
         entry.focus_set()
+        # Block clipboard leakage from the inactivity-unlock password field.
+        entry.bind("<<Copy>>",  lambda _e: "break")
+        entry.bind("<<Cut>>",   lambda _e: "break")
+        entry.bind("<Button-3>", lambda _e: "break")
 
         self._err_lbl = tk.Label(
             card, text="", bg=self._PANEL,

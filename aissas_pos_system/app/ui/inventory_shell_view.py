@@ -41,7 +41,7 @@ class InventoryShellView(tk.Frame):
 
     def __init__(self, parent: tk.Frame, db: Database, auth: AuthService,
                  go_transactions_cb, go_pos_cb, go_reports_cb=None,
-                 refresh_pos_cats_cb=None):
+                 refresh_pos_cats_cb=None, refresh_pos_full_cb=None):
         super().__init__(parent, bg=THEME["bg"])
         self.db = db
         self.auth = auth
@@ -49,6 +49,10 @@ class InventoryShellView(tk.Frame):
         self.go_pos_cb = go_pos_cb
         self.go_reports_cb = go_reports_cb or (lambda: None)
         self.refresh_pos_cats_cb = refresh_pos_cats_cb or (lambda: None)
+        # Full POS refresh (categories + products + image cache invalidation).
+        # Used by InventoryProductsView after a save/delete so the POS view
+        # picks up the change without an app restart.
+        self.refresh_pos_full_cb = refresh_pos_full_cb or (lambda *_a, **_k: None)
 
         self.orders   = OrderDAO(db)
         self.drafts   = DraftDAO(db)
@@ -129,16 +133,31 @@ class InventoryShellView(tk.Frame):
             return
         self._set_active("products")
         self._clear_content()
-        InventoryProductsView(self.content, self.db, self.auth).pack(fill="both", expand=True)
+        InventoryProductsView(
+            self.content, self.db, self.auth,
+            on_change_cb=self.refresh_pos_full_cb,
+        ).pack(fill="both", expand=True)
 
     def show_categories(self):
         if self._active == "categories":
             return
         self._set_active("categories")
         self._clear_content()
+
+        def _on_cat_change():
+            # Refresh both the category buttons and the visible product cards.
+            try:
+                self.refresh_pos_cats_cb()
+            except Exception:
+                pass
+            try:
+                self.refresh_pos_full_cb()
+            except Exception:
+                pass
+
         InventoryCategoriesView(
             self.content, self.db, self.auth,
-            refresh_pos_cats_cb=self.refresh_pos_cats_cb,
+            refresh_pos_cats_cb=_on_cat_change,
         ).pack(fill="both", expand=True)
 
     def show_raw_materials(self):

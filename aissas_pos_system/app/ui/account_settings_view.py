@@ -123,6 +123,10 @@ def _ask_password(parent: tk.Widget, title: str, prompt: str):
     )
     ent.pack(fill="x", padx=16, ipady=ui_scale.s(8))
     ent.focus_set()
+    # Block clipboard leakage on this masked confirm-password field.
+    ent.bind("<<Copy>>",  lambda _e: "break")
+    ent.bind("<<Cut>>",   lambda _e: "break")
+    ent.bind("<Button-3>", lambda _e: "break")
 
     result = {"v": None}
 

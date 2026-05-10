@@ -288,3 +288,32 @@ class ReceiptService:
             return False
         except Exception:
             return False
+
+    @staticmethod
+    def print_file(file_path: str) -> bool:
+        """
+        Send the receipt directly to the default printer.
+        Returns True if the print verb was successfully invoked.
+        On Windows uses os.startfile(path, "print"); on POSIX uses lp / lpr.
+        Does NOT open a browser/PDF viewer on success.
+        """
+        try:
+            if os.name == "nt":
+                try:
+                    os.startfile(file_path, "print")  # type: ignore[attr-defined]
+                    return True
+                except Exception:
+                    return False
+            elif os.name == "posix":
+                for cmd in (["lp", file_path], ["lpr", file_path]):
+                    try:
+                        subprocess.run(cmd, check=True,
+                                       stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+                        return True
+                    except Exception:
+                        continue
+                return False
+            return False
+        except Exception:
+            return False
