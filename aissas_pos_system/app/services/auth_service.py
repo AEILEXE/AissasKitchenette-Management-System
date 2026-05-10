@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Optional
 
 from app.constants import (
@@ -11,10 +12,16 @@ from app.constants import (
     ERROR_USER_NOT_FOUND,
     ROLES,
 )
-from app.db.dao import UserDAO, RolePermissionDAO
+from app.db.dao import UserDAO, RolePermissionDAO, AuditLogDAO
 from app.db.database import Database
 from app.models.user import User
 from app.utils import verify_password, hash_password
+
+
+# ── Failed-login lockout policy ───────────────────────────────────────────────
+# After this many bad attempts on a single username, lock for COOLDOWN_SECONDS.
+LOCKOUT_MAX_ATTEMPTS = 5
+LOCKOUT_COOLDOWN_SECONDS = 300  # 5 minutes
 
 
 def validate_password_strength(username: str, password: str) -> tuple[bool, str]:
@@ -58,8 +65,11 @@ class AuthService:
     def __init__(self, db: Database):
         self.user_dao  = UserDAO(db)
         self.rbac_dao  = RolePermissionDAO(db)
+        self.audit_dao = AuditLogDAO(db)
         self._current_user: Optional[User] = None
         self._last_error: str = ""
+        # In-memory lockout tracker: {username_lower: (failed_count, lock_until_ts)}
+        self._fail_state: dict[str, tuple[int, float]] = {}
 
     def get_last_error(self) -> str:
         return self._last_error
@@ -67,26 +77,97 @@ class AuthService:
     def get_current_user(self) -> Optional[User]:
         return self._current_user
 
+    def _is_locked_out(self, username: str) -> tuple[bool, int]:
+        """Return (locked, remaining_seconds). Cleans up expired locks."""
+        key = (username or "").strip().lower()
+        if not key:
+            return False, 0
+        entry = self._fail_state.get(key)
+        if not entry:
+            return False, 0
+        _, lock_until = entry
+        if lock_until <= 0:
+            return False, 0
+        now = time.time()
+        if now >= lock_until:
+            self._fail_state.pop(key, None)
+            return False, 0
+        return True, int(lock_until - now)
+
+    def _record_failed_attempt(self, username: str) -> int:
+        """Increment failed counter; return current count."""
+        key = (username or "").strip().lower()
+        if not key:
+            return 0
+        count, lock_until = self._fail_state.get(key, (0, 0.0))
+        count += 1
+        if count >= LOCKOUT_MAX_ATTEMPTS:
+            lock_until = time.time() + LOCKOUT_COOLDOWN_SECONDS
+        self._fail_state[key] = (count, lock_until)
+        return count
+
+    def _clear_failed_attempts(self, username: str) -> None:
+        key = (username or "").strip().lower()
+        self._fail_state.pop(key, None)
+
+    def _safe_audit(self, action: str, detail: str = "",
+                    user_id: int = 0, username: str = "") -> None:
+        try:
+            self.audit_dao.log(
+                username=username, action=action, detail=detail,
+                user_id=user_id,
+            )
+        except Exception:
+            pass
+
     def login(self, username: str, password: str) -> bool:
         self._last_error = ""
-        user = self.user_dao.get_by_username(username.strip())
+        uname = (username or "").strip()
+
+        locked, remaining = self._is_locked_out(uname)
+        if locked:
+            mins = max(1, (remaining + 59) // 60)
+            self._last_error = (
+                f"Too many failed attempts. Try again in about {mins} minute(s)."
+            )
+            self._safe_audit("LOGIN_LOCKED", detail=uname, username=uname)
+            return False
+
+        user = self.user_dao.get_by_username(uname)
         if not user:
+            self._record_failed_attempt(uname)
+            self._safe_audit("LOGIN_FAILED",
+                              detail=f"unknown user: {uname}", username=uname)
             self._last_error = ERROR_USER_NOT_FOUND
             return False
 
         if not user.is_active:
+            self._safe_audit("LOGIN_FAILED",
+                              detail="user disabled",
+                              user_id=user.user_id, username=user.username)
             self._last_error = ERROR_USER_DISABLED
             return False
 
         if not verify_password(password, user.password_hash):
+            count = self._record_failed_attempt(uname)
+            self._safe_audit("LOGIN_FAILED",
+                              detail=f"bad password (attempt {count})",
+                              user_id=user.user_id, username=user.username)
             self._last_error = ERROR_INVALID_CREDENTIALS
             return False
 
+        self._clear_failed_attempts(uname)
         user.role = (user.role or "").upper()
         self._current_user = user
+        self._safe_audit("LOGIN_SUCCESS",
+                          detail=f"role={user.role}",
+                          user_id=user.user_id, username=user.username)
         return True
 
     def logout(self) -> None:
+        u = self._current_user
+        if u is not None:
+            self._safe_audit("LOGOUT", user_id=u.user_id, username=u.username)
         self._current_user = None
         self._last_error = ""
 

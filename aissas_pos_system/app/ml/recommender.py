@@ -130,7 +130,45 @@ class Recommender:
         except Exception:
             return set()
 
-    def _same_category_candidates(self, cart_ids: List[int], exclude: Set[int]) -> List[int]:
+    def _expand_to_parent_tree(self, cat_ids: Set[int]) -> Set[int]:
+        """Given a set of (sub)category IDs, return the union of their parent
+        category and all sibling subcategories so 'same category' includes the
+        whole tree. Falls back to original set on any error / no parent col."""
+        if not cat_ids:
+            return set()
+        try:
+            placeholders = ",".join("?" * len(cat_ids))
+            rows = self.db.fetchall(
+                f"SELECT id, parent_id FROM categories WHERE id IN ({placeholders});",
+                tuple(cat_ids),
+            )
+            parents: Set[int] = set()
+            for r in rows:
+                pid = r["parent_id"]
+                if pid is not None:
+                    parents.add(int(pid))
+                else:
+                    # Top-level itself — keep its own id
+                    parents.add(int(r["id"]))
+            if not parents:
+                return cat_ids
+            ph2 = ",".join("?" * len(parents))
+            sib_rows = self.db.fetchall(
+                f"SELECT id FROM categories "
+                f"WHERE id IN ({ph2}) OR parent_id IN ({ph2});",
+                tuple(parents) + tuple(parents),
+            )
+            tree = {int(r["id"]) for r in sib_rows}
+            tree |= cat_ids
+            tree |= parents
+            return tree
+        except Exception:
+            return cat_ids
+
+    def _same_subcategory_candidates(self, cart_ids: List[int],
+                                      exclude: Set[int]) -> List[int]:
+        """Step 1 — narrowest match: products in the EXACT subcategories
+        of items already in the cart. Excludes already-added items."""
         cat_ids = self._get_category_ids(cart_ids)
         if not cat_ids:
             return []
@@ -142,6 +180,29 @@ class Recommender:
                 f"WHERE p.category_id IN ({cp}) AND p.active=1 "
                 f"AND p.id NOT IN ({ep}) ORDER BY p.name;",
                 tuple(cat_ids) + tuple(exclude),
+            )
+            return [int(r["product_id"]) for r in rows]
+        except Exception:
+            return []
+
+    def _same_category_candidates(self, cart_ids: List[int], exclude: Set[int]) -> List[int]:
+        """Step 2 — broader match: products in the same category TREE
+        (parent + sibling subcategories). Excludes the narrower
+        same-subcategory matches via the caller-provided exclude set."""
+        cat_ids = self._get_category_ids(cart_ids)
+        if not cat_ids:
+            return []
+        tree = self._expand_to_parent_tree(cat_ids)
+        if not tree:
+            return []
+        try:
+            cp = ",".join("?" * len(tree))
+            ep = ",".join("?" * len(exclude)) if exclude else "0"
+            rows = self.db.fetchall(
+                f"SELECT p.id AS product_id FROM products p "
+                f"WHERE p.category_id IN ({cp}) AND p.active=1 "
+                f"AND p.id NOT IN ({ep}) ORDER BY p.name;",
+                tuple(tree) + tuple(exclude),
             )
             return [int(r["product_id"]) for r in rows]
         except Exception:
@@ -194,33 +255,48 @@ class Recommender:
 
     def suggest(self, current_product_ids: List[int], top_n: int = 3) -> List[int]:
         """
-        Hybrid suggestion:
-          - Low history: top sellers + same-category add-ons
-          - Sufficient history: pair-frequency with popularity fallback
+        Layered suggestion priority (always excludes cart items):
+          1. Same exact subcategory as cart items
+          2. Same parent-category tree (siblings + parent)
+          3. Pair-frequency association (when history is sufficient)
+          4. Top-selling products (popularity fallback)
         """
         if not current_product_ids:
             return []
 
         exclude = set(current_product_ids)
-        completed_orders = self._get_completed_order_count()
+        result: List[int] = []
 
-        if completed_orders < PAIR_THRESHOLD:
-            result: List[int] = []
-            for pid in self._same_category_candidates(current_product_ids, exclude):
+        def _take(ids: List[int]) -> None:
+            for pid in ids:
                 if len(result) >= top_n:
-                    break
+                    return
+                if pid in exclude:
+                    continue
                 result.append(pid)
                 exclude.add(pid)
-            if len(result) < top_n:
-                for pid in self._top_sellers(top_n, exclude):
-                    if len(result) >= top_n:
-                        break
-                    result.append(pid)
-            return result[:top_n]
 
-        result = self._pair_suggest(current_product_ids, top_n)
-        if not result:
-            result = self._top_sellers(top_n, exclude)
+        # 1) Same subcategory
+        _take(self._same_subcategory_candidates(current_product_ids, exclude))
+
+        # 2) Same parent-category tree
+        if len(result) < top_n:
+            _take(self._same_category_candidates(current_product_ids, exclude))
+
+        # 3) Pair-frequency, when history is sufficient
+        if len(result) < top_n:
+            try:
+                completed_orders = self._get_completed_order_count()
+                if completed_orders >= PAIR_THRESHOLD:
+                    _take(self._pair_suggest(current_product_ids,
+                                              top_n + len(exclude)))
+            except Exception:
+                pass
+
+        # 4) Top sellers fallback
+        if len(result) < top_n:
+            _take(self._top_sellers(top_n + len(exclude), exclude))
+
         return result[:top_n]
 
     def get_product_names(self, product_ids: List[int]) -> Dict[int, str]:

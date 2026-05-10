@@ -5,13 +5,16 @@ Only accessible to Admin (P_DATABASE permission).
 """
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 from app.config import THEME
 from app.db.database import Database
 from app.services.auth_service import AuthService
-from app.services.backup_service import BackupService
+from app.services.backup_service import BackupService, BACKUP_DIR
 
 
 class BackupView(tk.Frame):
@@ -37,15 +40,43 @@ class BackupView(tk.Frame):
                  font=("Segoe UI", 14, "bold"),
                  padx=16, pady=12).pack(side="left")
 
+        # Backup folder info — small card showing where backups are stored
+        info_card = tk.Frame(self, bg=THEME["panel"],
+                              highlightthickness=1,
+                              highlightbackground=THEME["border"])
+        info_card.pack(fill="x", padx=20, pady=(12, 6))
+
+        tk.Label(info_card, text="Backup Folder",
+                 bg=THEME["panel"], fg=THEME["muted"],
+                 font=("Segoe UI", 8, "bold")
+                 ).pack(anchor="w", padx=14, pady=(8, 0))
+
+        path_row = tk.Frame(info_card, bg=THEME["panel"])
+        path_row.pack(fill="x", padx=14, pady=(2, 10))
+        self._folder_path_lbl = tk.Label(
+            path_row, text=str(BACKUP_DIR),
+            bg=THEME["panel"], fg=THEME["text"],
+            font=("Segoe UI", 9), anchor="w",
+        )
+        self._folder_path_lbl.pack(side="left", fill="x", expand=True)
+
+        tk.Button(
+            path_row, text="Open Folder",
+            command=self._open_backup_folder,
+            bg=THEME["panel"], fg=THEME["primary"], bd=1,
+            relief="solid", padx=10, pady=4, cursor="hand2",
+            font=("Segoe UI", 9),
+        ).pack(side="right", padx=(8, 0))
+
         # Status bar
         self._status_var = tk.StringVar(value="")
         tk.Label(self, textvariable=self._status_var, bg=BG,
                  fg=THEME["success"], font=("Segoe UI", 9, "italic"),
-                 wraplength=600, justify="left").pack(anchor="w", padx=20, pady=(8, 0))
+                 wraplength=600, justify="left").pack(anchor="w", padx=20, pady=(0, 0))
 
         # Action buttons
         btn_row = tk.Frame(self, bg=BG)
-        btn_row.pack(fill="x", padx=20, pady=(4, 12))
+        btn_row.pack(fill="x", padx=20, pady=(8, 12))
 
         tk.Button(
             btn_row, text="\U0001f4e6 Create Backup Now",
@@ -87,17 +118,40 @@ class BackupView(tk.Frame):
 
         restore_btn_row = tk.Frame(self, bg=BG)
         restore_btn_row.pack(fill="x", padx=20, pady=(0, 12))
-        tk.Button(
+        self._restore_btn = tk.Button(
             restore_btn_row, text="↩ Restore Selected Backup",
             command=self._restore_selected,
-            bg=THEME["danger"], fg="white", relief="flat",
-            padx=14, pady=7, cursor="hand2", font=("Segoe UI", 9, "bold"),
-        ).pack(side="left")
+            bg=THEME["border"], fg=THEME["muted"], relief="flat",
+            state="disabled",
+            padx=14, pady=7, cursor="arrow", font=("Segoe UI", 9, "bold"),
+        )
+        self._restore_btn.pack(side="left")
 
         tk.Label(restore_btn_row,
                  text="⚠ Restoring will overwrite the live database. The current DB is saved automatically as a safety backup.",
                  bg=BG, fg=THEME["muted"], font=("Segoe UI", 8),
                  wraplength=500, justify="left").pack(side="left", padx=12)
+
+        # Toggle restore button enabled state with selection
+        self._tree.bind("<<TreeviewSelect>>", self._on_tree_select, add="+")
+
+    def _on_tree_select(self, _event=None):
+        try:
+            has_sel = bool(self._tree.selection())
+            if has_sel:
+                self._restore_btn.configure(
+                    state="normal",
+                    bg=THEME["danger"], fg="white",
+                    cursor="hand2",
+                )
+            else:
+                self._restore_btn.configure(
+                    state="disabled",
+                    bg=THEME["border"], fg=THEME["muted"],
+                    cursor="arrow",
+                )
+        except Exception:
+            pass
 
     def _load_list(self):
         self._tree.delete(*self._tree.get_children())
@@ -105,15 +159,62 @@ class BackupView(tk.Frame):
         for b in backups:
             self._tree.insert("", "end", iid=b["path"],
                               values=(b["created"], b["filename"], b["size_kb"]))
-        self._status_var.set(f"  {len(backups)} backup(s) found in history.")
+        if not backups:
+            self._status_var.set(
+                "  No backups yet. Use 'Create Backup Now' to save a copy."
+            )
+        else:
+            self._status_var.set(f"  {len(backups)} backup(s) on disk.")
+        # Selection is cleared after delete/insert — sync button state.
+        self._on_tree_select()
 
     def _create_backup(self):
-        ok, msg = self.backup.create_backup("manual")
+        try:
+            ok, msg = self.backup.create_backup("manual")
+        except Exception as exc:
+            from app.utils import log_error
+            log_error("Manual backup", exc)
+            messagebox.showerror(
+                "Backup Failed",
+                "Could not create the backup. Please check disk space and try again.",
+            )
+            return
         if ok:
-            self._status_var.set(f"✅ Backup created: {msg}")
+            self._status_var.set(f"✅ Backup created: {os.path.basename(msg)}")
             self._load_list()
         else:
             messagebox.showerror("Backup Failed", msg)
+
+    def _open_backup_folder(self):
+        """Open the backup folder in the OS file browser. Ensures the
+        directory exists first — handles fresh installs / packaged EXE
+        builds where no backup has been written yet."""
+        try:
+            BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            from app.utils import log_error
+            log_error("Open backup folder mkdir", exc)
+            messagebox.showinfo(
+                "Backup Folder",
+                f"Backups are saved at:\n{BACKUP_DIR}",
+            )
+            return
+
+        path = str(BACKUP_DIR)
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(path)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except Exception as exc:
+            from app.utils import log_error
+            log_error("Open backup folder", exc)
+            messagebox.showinfo(
+                "Backup Folder",
+                f"Backups are saved at:\n{path}",
+            )
 
     def _restore_selected(self):
         sel = self._tree.selection()

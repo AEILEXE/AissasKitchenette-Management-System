@@ -665,3 +665,226 @@ class PasswordConfirmDialog(tk.Toplevel):
             return
         self.result = password
         self.destroy()
+
+
+class ManagerApprovalDialog(tk.Toplevel):
+    """
+    Reusable manager/admin approval prompt for sensitive POS actions
+    (void transaction, large discount, refund/cancellation).
+
+    Requires the approver to:
+      • have a valid username + password
+      • have role ADMIN or MANAGER (or P_VOID_APPROVE permission)
+      • be active
+
+    Returns:
+        self.result = {
+            "approver_id":       int,
+            "approver_username": str,
+            "approver_role":     str,
+            "reason":             str,
+        }
+        or None if cancelled.
+
+    The dialog never closes the parent window; on auth failure it stays
+    open so the user can retry.
+    """
+
+    def __init__(self, parent: tk.Widget, auth, action_label: str = "this action",
+                 require_reason: bool = True):
+        super().__init__(parent)
+        self.auth = auth
+        self.result: Optional[dict] = None
+        self._action_label = action_label
+        self._require_reason = require_reason
+
+        self.title("Manager Approval Required")
+        self.configure(bg=THEME["panel"])
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self._username_var = tk.StringVar()
+        self._password_var = tk.StringVar()
+        self._reason_var   = tk.StringVar()
+
+        # ── Header ────────────────────────────────────────────────────────
+        hdr = tk.Frame(self, bg=THEME.get("danger", "#991B1B"))
+        hdr.pack(fill="x")
+        tk.Label(
+            hdr, text="Manager Approval Required",
+            bg=THEME.get("danger", "#991B1B"), fg="white",
+            font=("Segoe UI", 11, "bold"),
+            padx=18, pady=10,
+        ).pack(side="left")
+
+        # ── Body ──────────────────────────────────────────────────────────
+        body = tk.Frame(self, bg=THEME["panel"])
+        body.pack(fill="both", expand=True, padx=20, pady=16)
+
+        tk.Label(
+            body,
+            text=f"A manager or admin must approve {action_label}.",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", 9),
+            justify="left", wraplength=360,
+        ).pack(anchor="w", pady=(0, 12))
+
+        tk.Label(body, text="Manager Username",
+                 bg=THEME["panel"], fg=THEME["text"],
+                 font=("Segoe UI", 9)).pack(anchor="w")
+        self.username_entry = tk.Entry(
+            body, textvariable=self._username_var,
+            font=("Segoe UI", 11), bg="#FFFFFF", bd=0,
+            insertbackground="#3d2b1f", insertwidth=2,
+        )
+        self.username_entry.pack(fill="x", ipady=8, pady=(2, 10))
+        self.username_entry.focus_set()
+
+        tk.Label(body, text="Manager Password",
+                 bg=THEME["panel"], fg=THEME["text"],
+                 font=("Segoe UI", 9)).pack(anchor="w")
+        self.password_entry = tk.Entry(
+            body, textvariable=self._password_var,
+            font=("Segoe UI", 11), bg="#FFFFFF", bd=0,
+            insertbackground="#3d2b1f", insertwidth=2, show="*",
+        )
+        self.password_entry.pack(fill="x", ipady=8, pady=(2, 10))
+
+        tk.Label(body,
+                 text="Reason" + (" *" if require_reason else " (optional)"),
+                 bg=THEME["panel"], fg=THEME["text"],
+                 font=("Segoe UI", 9)).pack(anchor="w")
+        self.reason_entry = tk.Entry(
+            body, textvariable=self._reason_var,
+            font=("Segoe UI", 10), bg="#FFFFFF", bd=0,
+            insertbackground="#3d2b1f", insertwidth=2,
+        )
+        self.reason_entry.pack(fill="x", ipady=7, pady=(2, 4))
+
+        self._error_lbl = tk.Label(
+            body, text="", bg=THEME["panel"],
+            fg=THEME.get("danger", "#991B1B"),
+            font=("Segoe UI", 9, "italic"),
+            wraplength=360, justify="left",
+        )
+        self._error_lbl.pack(anchor="w", pady=(6, 0))
+
+        # ── Buttons ───────────────────────────────────────────────────────
+        btns = tk.Frame(body, bg=THEME["panel"])
+        btns.pack(fill="x", pady=(14, 0))
+
+        tk.Button(
+            btns, text="Cancel", command=self._cancel,
+            bg="#FFFFFF", fg=THEME["text"], bd=0,
+            padx=16, pady=9, cursor="hand2",
+            font=("Segoe UI", 10),
+        ).pack(side="left")
+
+        tk.Button(
+            btns, text="Approve", command=self._confirm,
+            bg=THEME.get("danger", "#991B1B"), fg="white", bd=0,
+            padx=16, pady=10, cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="right")
+
+        self.bind("<Return>", lambda _e: self._confirm())
+        self.bind("<Escape>", lambda _e: self._cancel())
+        # Window-close (X) button must always cancel — never silently approve.
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        self.update_idletasks()
+        if self.winfo_width() < 420:
+            self.geometry(f"420x{self.winfo_height()}")
+        self._center(parent)
+
+    def _center(self, parent: tk.Widget) -> None:
+        try:
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            pw = parent.winfo_width()
+            ph = parent.winfo_height()
+        except Exception:
+            return
+        w = self.winfo_width()
+        h = self.winfo_height()
+        x = px + (pw - w) // 2
+        y = py + (ph - h) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _show_error(self, msg: str) -> None:
+        try:
+            self._error_lbl.configure(text=msg)
+        except Exception:
+            pass
+
+    def _cancel(self) -> None:
+        # Hard-clear result so caller can never mistake X-button close for
+        # an implicit approval.
+        self.result = None
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+    def _confirm(self) -> None:
+        username = (self._username_var.get() or "").strip()
+        password = self._password_var.get() or ""
+        reason   = (self._reason_var.get() or "").strip()
+
+        if not username or not password:
+            self._show_error("Enter the manager's username and password.")
+            return
+
+        if self._require_reason and not reason:
+            self._show_error("Please enter a reason for this action.")
+            return
+
+        # Hard fail — never let a missing auth service silently approve.
+        if self.auth is None or getattr(self.auth, "user_dao", None) is None:
+            self._show_error("Authentication service unavailable.")
+            return
+
+        try:
+            from app.db.dao import UserDAO
+            from app.constants import (
+                ROLE_ADMIN, ROLE_MANAGER, P_VOID_APPROVE,
+            )
+            from app.utils import verify_password
+            udao = UserDAO(self.auth.user_dao.db)  # reuse existing DB connection
+            user = udao.get_by_username(username)
+            if not user:
+                self._show_error("That manager account was not found.")
+                return
+            if not user.is_active:
+                self._show_error("That manager account is disabled.")
+                return
+            if not verify_password(password, user.password_hash):
+                self._show_error("Incorrect password. Please try again.")
+                return
+            role = (user.role or "").upper()
+            allowed = role in (ROLE_ADMIN, ROLE_MANAGER)
+            if not allowed:
+                # Permission-based fallback
+                try:
+                    allowed = self.auth.rbac_dao.has_permission(role, P_VOID_APPROVE)
+                except Exception:
+                    allowed = False
+            if not allowed:
+                self._show_error(
+                    "That account does not have manager/admin approval rights."
+                )
+                return
+        except Exception as exc:
+            from app.utils import log_error
+            log_error("ManagerApprovalDialog auth", exc)
+            self._show_error("Could not verify credentials. Please try again.")
+            return
+
+        self.result = {
+            "approver_id":       int(getattr(user, "user_id", 0) or 0),
+            "approver_username": user.username,
+            "approver_role":     role,
+            "reason":             reason,
+        }
+        self.destroy()

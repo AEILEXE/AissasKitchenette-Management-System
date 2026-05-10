@@ -54,27 +54,39 @@ class _MaterialDialog(tk.Toplevel):
         self.grab_set()
 
         pad = 14
+        # Selectable units — dropdown, no longer a free-text PCS-only field
+        UNIT_CHOICES = ["pcs", "grams", "kilograms", "liters", "milliliters",
+                        "bottles", "packs", "boxes", "cans", "trays"]
+
         fields = [
-            ("Name *",                     "var_name",       _safe(material, "name", "")),
-            ("Unit",                       "var_unit",       _safe(material, "unit", "pcs")),
-            ("Quantity",                   "var_qty",        str(_safe(material, "quantity", 0))),
-            ("Low Stock Alert",            "var_low",        str(_safe(material, "low_stock", 5))),
-            ("Delivered Date (YYYY-MM-DD)", "var_delivered", _safe(material, "delivered_date", "") or ""),
-            ("Expiration Date (YYYY-MM-DD)", "var_expiration", _safe(material, "expiration_date", "") or ""),
+            ("Name *",                     "var_name",       _safe(material, "name", ""),               "entry"),
+            ("Unit",                       "var_unit",       _safe(material, "unit", "pcs"),            "unit"),
+            ("Quantity",                   "var_qty",        str(_safe(material, "quantity", 0)),       "entry"),
+            ("Low Stock Alert",            "var_low",        str(_safe(material, "low_stock", 5)),      "entry"),
+            ("Delivered Date (YYYY-MM-DD)", "var_delivered", _safe(material, "delivered_date", "") or "", "entry"),
+            ("Expiration Date (YYYY-MM-DD)", "var_expiration", _safe(material, "expiration_date", "") or "", "entry"),
         ]
-        for row_i, (lbl_txt, attr, default) in enumerate(fields):
+        for row_i, (lbl_txt, attr, default, kind) in enumerate(fields):
             tk.Label(self, text=lbl_txt, bg=THEME["bg"], fg=THEME["text"],
                      font=("Segoe UI", 10)).grid(
                 row=row_i, column=0, sticky="w",
                 padx=pad, pady=(pad if row_i == 0 else 4, 4))
             sv = tk.StringVar(value=default)
             setattr(self, attr, sv)
-            tk.Entry(self, textvariable=sv, width=28,
-                     bg=THEME["beige"], fg=THEME["text"],
-                     insertbackground="#3d2b1f", insertwidth=2,
-                     font=("Segoe UI", 10)).grid(
-                row=row_i, column=1, padx=pad,
-                pady=(pad if row_i == 0 else 4, 4))
+            if kind == "unit":
+                cb = ttk.Combobox(
+                    self, textvariable=sv, values=UNIT_CHOICES,
+                    width=26, font=("Segoe UI", 10), state="normal",
+                )
+                cb.grid(row=row_i, column=1, padx=pad,
+                        pady=(pad if row_i == 0 else 4, 4))
+            else:
+                tk.Entry(self, textvariable=sv, width=28,
+                         bg=THEME["beige"], fg=THEME["text"],
+                         insertbackground="#3d2b1f", insertwidth=2,
+                         font=("Segoe UI", 10)).grid(
+                    row=row_i, column=1, padx=pad,
+                    pady=(pad if row_i == 0 else 4, 4))
 
         n = len(fields)
 
@@ -250,7 +262,7 @@ class _HistoryDialog(tk.Toplevel):
         self.title(f"Stock History — {mat_name}")
         self.configure(bg=THEME["bg"])
         self.resizable(True, True)
-        self.geometry("700x420")
+        self.geometry("960x460")
         self.grab_set()
 
         tk.Label(self, text=f"Stock History: {mat_name}",
@@ -260,39 +272,65 @@ class _HistoryDialog(tk.Toplevel):
         frm = tk.Frame(self, bg=THEME["bg"])
         frm.pack(fill="both", expand=True, padx=16, pady=(0, 4))
 
-        cols = ("created_at", "action_type", "quantity", "reason", "reference")
-        hdrs = ("Date & Time", "Action", "Quantity", "Reason", "Reference")
-        widths = (165, 90, 90, 150, 150)
+        cols = ("created_at", "action_type", "quantity",
+                "old_qty", "new_qty", "reason", "user", "reference")
+        hdrs = ("Date & Time", "Action", "Δ Qty",
+                "Old Qty", "New Qty", "Reason", "User", "Reference")
+        widths = (155, 80, 80, 80, 80, 150, 110, 140)
 
         tree = ttk.Treeview(frm, columns=cols, show="headings", height=14)
         for col, hdr, w in zip(cols, hdrs, widths):
             tree.heading(col, text=hdr)
             tree.column(col, width=w, minwidth=50)
-        sb = ttk.Scrollbar(frm, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=sb.set)
+        sb_y = ttk.Scrollbar(frm, orient="vertical", command=tree.yview)
+        sb_x = ttk.Scrollbar(frm, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=sb_y.set, xscrollcommand=sb_x.set)
         tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
+        sb_y.pack(side="right", fill="y")
 
         tree.tag_configure("ADD",    foreground=THEME["success"])
         tree.tag_configure("DEDUCT", foreground=THEME["danger"])
 
-        rows = db.fetchall(
-            """SELECT created_at, action_type, quantity, reason, reference
-               FROM raw_material_logs WHERE material_id=?
-               ORDER BY datetime(created_at) DESC;""",
-            (material_id,),
-        )
+        # Tolerate older rows that lack the new columns.
+        try:
+            rows = db.fetchall(
+                """SELECT created_at, action_type, quantity, reason, reference,
+                          COALESCE(old_quantity, 0) AS old_quantity,
+                          COALESCE(new_quantity, 0) AS new_quantity,
+                          COALESCE(username, '')    AS username
+                   FROM raw_material_logs WHERE material_id=?
+                   ORDER BY datetime(created_at) DESC;""",
+                (material_id,),
+            )
+        except Exception:
+            rows = db.fetchall(
+                """SELECT created_at, action_type, quantity, reason, reference
+                   FROM raw_material_logs WHERE material_id=?
+                   ORDER BY datetime(created_at) DESC;""",
+                (material_id,),
+            )
+
         for r in rows:
             action = str(_safe(r, "action_type", ""))
+            qty = float(_safe(r, "quantity", 0))
+            old_q = float(_safe(r, "old_quantity", 0))
+            new_q = float(_safe(r, "new_quantity", 0))
             tree.insert("", "end", tags=(action,), values=(
                 _safe(r, "created_at", ""),
                 action,
-                f"{float(_safe(r, 'quantity', 0)):.3f}",
+                f"{qty:.3f}",
+                f"{old_q:.3f}",
+                f"{new_q:.3f}",
                 _safe(r, "reason", ""),
+                _safe(r, "username", ""),
                 _safe(r, "reference", ""),
             ))
         if not rows:
-            tree.insert("", "end", values=("No history yet.", "", "", "", ""))
+            tree.insert("", "end", values=(
+                "No stock movements yet.", "", "", "", "", "", "", ""))
+
+        # Pack horizontal scrollbar after rows exist so layout is final
+        sb_x.pack(side="bottom", fill="x")
 
         tk.Button(self, text="Close", command=self.destroy,
                   bg=THEME["primary"], fg="white", padx=14, pady=6,
@@ -683,14 +721,26 @@ class InventoryRawMaterialsView(tk.Frame):
         row = self.db.fetchone("SELECT * FROM raw_materials WHERE id=?;", (mid,))
         return dict(row) if row else None
 
+    def _current_username(self) -> str:
+        try:
+            u = self.auth.get_current_user() if self.auth else None
+            return getattr(u, "username", "") or ""
+        except Exception:
+            return ""
+
     def _log_movement(self, material_id: int, action_type: str,
-                      quantity: float, reason: str, reference: str) -> None:
+                      quantity: float, reason: str, reference: str,
+                      old_quantity: float = 0.0,
+                      new_quantity: float = 0.0,
+                      username: str = "") -> None:
         try:
             self.db.execute(
                 """INSERT INTO raw_material_logs
-                       (material_id, action_type, quantity, reason, reference)
-                   VALUES(?,?,?,?,?);""",
-                (material_id, action_type, quantity, reason, reference),
+                       (material_id, action_type, quantity, reason, reference,
+                        old_quantity, new_quantity, username)
+                   VALUES(?,?,?,?,?,?,?,?);""",
+                (material_id, action_type, quantity, reason, reference,
+                 float(old_quantity), float(new_quantity), str(username)),
             )
         except Exception:
             pass  # audit failures must never crash the app
@@ -716,8 +766,12 @@ class InventoryRawMaterialsView(tk.Frame):
                 new_id = self.db.fetchone(
                     "SELECT id FROM raw_materials WHERE name=?;", (r["name"],))
                 if new_id:
-                    self._log_movement(int(new_id["id"]), "ADD",
-                                       r["quantity"], "Initial Stock", "")
+                    self._log_movement(
+                        int(new_id["id"]), "ADD",
+                        r["quantity"], "Initial Stock", "",
+                        old_quantity=0.0, new_quantity=float(r["quantity"]),
+                        username=self._current_username(),
+                    )
             self.refresh_materials()
         except Exception as exc:
             if "UNIQUE" in str(exc).upper():
@@ -824,8 +878,13 @@ class InventoryRawMaterialsView(tk.Frame):
                 "updated_at=datetime('now','localtime') WHERE id=?;",
                 (qty, mid),
             )
-            self._log_movement(mid, "ADD", qty,
-                               dlg.result["reason"], dlg.result["reference"])
+            self._log_movement(
+                mid, "ADD", qty,
+                dlg.result["reason"], dlg.result["reference"],
+                old_quantity=float(cur),
+                new_quantity=float(cur + qty),
+                username=self._current_username(),
+            )
             self.refresh_materials()
             messagebox.showinfo(
                 "Stock Added",
@@ -833,7 +892,9 @@ class InventoryRawMaterialsView(tk.Frame):
                 f"New total: {cur + qty:.2f} {unit}",
             )
         except Exception as exc:
-            messagebox.showerror("Error", f"Could not add stock:\n{exc}")
+            from app.utils import log_error
+            log_error("Add stock", exc)
+            messagebox.showerror("Error", "Could not add stock. Please try again.")
 
     def _deduct_stock(self):
         mid = self._selected_id()
@@ -862,21 +923,29 @@ class InventoryRawMaterialsView(tk.Frame):
             )
             return
         try:
+            new_total = max(0.0, fresh - qty)
             self.db.execute(
                 "UPDATE raw_materials SET quantity=MAX(0, quantity-?), "
                 "updated_at=datetime('now','localtime') WHERE id=?;",
                 (qty, mid),
             )
-            self._log_movement(mid, "DEDUCT", qty,
-                               dlg.result["reason"], dlg.result["reference"])
+            self._log_movement(
+                mid, "DEDUCT", qty,
+                dlg.result["reason"], dlg.result["reference"],
+                old_quantity=float(fresh),
+                new_quantity=float(new_total),
+                username=self._current_username(),
+            )
             self.refresh_materials()
             messagebox.showinfo(
                 "Stock Deducted",
                 f"Deducted {qty:.2f} {unit} from '{name}'.\n"
-                f"New total: {max(0.0, fresh - qty):.2f} {unit}",
+                f"New total: {new_total:.2f} {unit}",
             )
         except Exception as exc:
-            messagebox.showerror("Error", f"Could not deduct stock:\n{exc}")
+            from app.utils import log_error
+            log_error("Deduct stock", exc)
+            messagebox.showerror("Error", "Could not deduct stock. Please try again.")
 
     def _view_history(self):
         mid = self._selected_id()

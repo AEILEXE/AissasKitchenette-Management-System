@@ -1213,15 +1213,36 @@ class TransactionDetailsDialog(tk.Toplevel):
             order_dict = {k: data[k]   for k in data.keys()}
             items_list = [{k: item[k]  for k in item.keys()} for item in items]
 
-            receipt_path = ReceiptService.generate_receipt(order_dict, items_list)
+            _u = self.auth.get_current_user() if getattr(self, "auth", None) else None
+            _by = (getattr(_u, "username", "") or "") if _u else ""
+            receipt_path = ReceiptService.generate_receipt(
+                order_dict, items_list, printed_by=_by
+            )
             ok = ReceiptService.open_file(receipt_path)
+            try:
+                import os as _os
+                u = self.auth.get_current_user() if getattr(self, "auth", None) else None
+                self.db.log_print(
+                    user_id=getattr(u, "user_id", None),
+                    username=getattr(u, "username", "") or "",
+                    print_type="RECEIPT",
+                    reference_id=str(self.order_id),
+                    detail=_os.path.basename(receipt_path),
+                )
+            except Exception:
+                pass
             if not ok:
                 messagebox.showwarning(
                     "Receipt",
                     f"Receipt generated but could not open automatically.\n\nSaved to:\n{receipt_path}",
                 )
         except Exception as e:
-            messagebox.showerror("Receipt Error", f"Failed to generate receipt.\n\n{e}")
+            from app.utils import log_error
+            log_error("Transactions print receipt", e)
+            messagebox.showerror(
+                "Receipt Error",
+                "Could not generate the receipt. Please try again.",
+            )
 
 
 # ── RESOLVE DIALOG ────────────────────────────────────────────────────────────
@@ -1533,7 +1554,8 @@ class VoidDialog(tk.Toplevel):
         reason_frame = tk.Frame(self, bg=THEME["bg"])
         reason_frame.pack(fill="x", padx=sp(16), pady=(sp(4), sp(8)))
         tk.Label(
-            reason_frame, text="Reason (optional):",
+            reason_frame,
+            text="Reason  (manager will be asked to confirm):",
             bg=THEME["bg"], fg=THEME["text"],
             font=("Segoe UI", f(9)),
         ).pack(anchor="w")
@@ -1585,6 +1607,45 @@ class VoidDialog(tk.Toplevel):
                 return int(u.user_id or 0), str(u.username or "")
         return 0, ""
 
+    def _require_manager_approval(self, action_label: str) -> dict | None:
+        """
+        If current user already has approval rights, skip prompt.
+        Otherwise open the manager approval dialog and return its result.
+        Returns None when the action should be aborted.
+        """
+        try:
+            from app.constants import (
+                ROLE_ADMIN, ROLE_MANAGER, P_VOID_APPROVE,
+            )
+            u = self.auth.get_current_user() if self.auth else None
+            role = (getattr(u, "role", "") or "").upper()
+            if role in (ROLE_ADMIN, ROLE_MANAGER):
+                return {
+                    "approver_id":       int(getattr(u, "user_id", 0) or 0),
+                    "approver_username": getattr(u, "username", "") or "",
+                    "approver_role":     role,
+                    "reason":             self.var_reason.get().strip(),
+                }
+            try:
+                if self.auth and self.auth.rbac_dao.has_permission(role, P_VOID_APPROVE):
+                    return {
+                        "approver_id":       int(getattr(u, "user_id", 0) or 0),
+                        "approver_username": getattr(u, "username", "") or "",
+                        "approver_role":     role,
+                        "reason":             self.var_reason.get().strip(),
+                    }
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        from app.ui.dialogs import ManagerApprovalDialog
+        dlg = ManagerApprovalDialog(
+            self, self.auth, action_label=action_label, require_reason=True,
+        )
+        self.wait_window(dlg)
+        return dlg.result
+
     def _void_full(self):
         actor_id, actor_name = self._get_actor()
         if not actor_id:
@@ -1597,18 +1658,46 @@ class VoidDialog(tk.Toplevel):
             icon="warning",
         ):
             return
+
+        approval = self._require_manager_approval(
+            f"voiding order #{self.order_id}"
+        )
+        if not approval:
+            return
+        # Apply approver's reason if cashier left it blank
+        if not self.var_reason.get().strip() and approval.get("reason"):
+            self.var_reason.set(approval["reason"])
+
         reason = self.var_reason.get().strip()
         try:
             self.orders.void_completed_order(
                 self.order_id, actor_id, actor_name, reason
             )
+            try:
+                from app.db.dao import AuditLogDAO as _ALD
+                _approver = approval.get("approver_username", "") or actor_name
+                _ALD(self.db).log(
+                    username=actor_name, action="VOID_ORDER",
+                    detail=(f"order_id={self.order_id} "
+                            f"approved_by={_approver} "
+                            f"reason={reason or '-'}"),
+                    user_id=actor_id,
+                    new_value=str(approval.get("approver_id") or actor_id),
+                )
+            except Exception:
+                pass
             if self.on_done:
                 self.on_done()
             top = self.winfo_toplevel()
             self.destroy()
             show_toast(top, f"Order #{self.order_id} has been voided.")
         except Exception as exc:
-            messagebox.showerror("Void Failed", f"Could not void order:\n{exc}")
+            from app.utils import log_error
+            log_error("Void full order", exc)
+            messagebox.showerror(
+                "Void Failed",
+                "Could not void this order. Please try again.",
+            )
 
     def _void_items(self):
         actor_id, actor_name = self._get_actor()
@@ -1635,6 +1724,14 @@ class VoidDialog(tk.Toplevel):
         ):
             return
 
+        approval = self._require_manager_approval(
+            f"voiding {len(selected)} item(s) on order #{self.order_id}"
+        )
+        if not approval:
+            return
+        if not self.var_reason.get().strip() and approval.get("reason"):
+            self.var_reason.set(approval["reason"])
+
         reason = self.var_reason.get().strip()
         errors = []
         for item in self._items:
@@ -1653,7 +1750,22 @@ class VoidDialog(tk.Toplevel):
                     voided_by_username=actor_name,
                     reason=reason,
                 )
+                try:
+                    from app.db.dao import AuditLogDAO as _ALD
+                    _approver = approval.get("approver_username", "") or actor_name
+                    _ALD(self.db).log(
+                        username=actor_name, action="VOID_ITEM",
+                        detail=(f"order_id={self.order_id} item_id={iid} "
+                                f"approved_by={_approver} "
+                                f"reason={reason or '-'}"),
+                        user_id=actor_id,
+                        new_value=str(approval.get("approver_id") or actor_id),
+                    )
+                except Exception:
+                    pass
             except Exception as exc:
+                from app.utils import log_error
+                log_error("Void item", exc)
                 errors.append(str(exc))
 
         top = self.winfo_toplevel()

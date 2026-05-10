@@ -26,21 +26,34 @@ if _is_frozen():
         "MATPLOTLIBDATA",
         os.path.join(sys._MEIPASS, "matplotlib", "mpl-data"),
     )
-
-    # Write a startup log next to the EXE so crashes are diagnosable.
-    # console=False hides all stderr in packaged mode; the log captures it.
     _log_path = os.path.join(os.path.dirname(_writable), "app.log")
+else:
+    # Dev mode: write log next to the project root so crashes are diagnosable.
+    _log_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "app.log"
+    )
+
+# Always-on internal error log — friendly UI messages stay clean while
+# technical exceptions and unhandled crashes go to disk for diagnosis.
+try:
     logging.basicConfig(
         filename=_log_path,
         level=logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         encoding="utf-8",
     )
-    # Also catch unhandled exceptions into the log
-    def _log_excepthook(exc_type, exc_value, exc_tb):
-        logging.critical("Unhandled exception", exc_info=(exc_type, exc_value, exc_tb))
-        sys.__excepthook__(exc_type, exc_value, exc_tb)
-    sys.excepthook = _log_excepthook
+except Exception:
+    pass
+
+def _log_excepthook(exc_type, exc_value, exc_tb):
+    try:
+        logging.critical("Unhandled exception",
+                         exc_info=(exc_type, exc_value, exc_tb))
+    except Exception:
+        pass
+    sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+sys.excepthook = _log_excepthook
 
 # ── Normal imports ────────────────────────────────────────────────────────
 from app.config import APP_NAME, APP_VERSION, ASSETS_DIR, LOGO_PATH
@@ -48,6 +61,7 @@ from app.db.database import Database
 from app.db.seed_users import seed_admin_user
 from app.db.seed_menu import seed_menu_if_empty
 from app.services.auth_service import AuthService
+from app.services.backup_service import BackupService
 from app.ui.app_window import AppWindow
 
 
@@ -177,6 +191,18 @@ def main() -> None:
             pass
 
     _set_window_icon(root)
+
+    # Daily auto-backup scheduler — runs once per calendar day in a daemon
+    # thread. Failures are logged silently and never block startup.
+    try:
+        backup_svc = BackupService(db.db_path)
+        def _on_auto_backup(ok: bool, msg: str) -> None:
+            if not ok:
+                logging.warning("Daily backup failed: %s", msg)
+        backup_svc.start_scheduler(on_backup=_on_auto_backup)
+        root._backup_svc = backup_svc  # type: ignore[attr-defined]
+    except Exception as exc:
+        logging.warning("Could not start backup scheduler: %s", exc)
 
     app_window = AppWindow(root, db, auth)
 

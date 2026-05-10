@@ -69,14 +69,15 @@ class ReportsView(tk.Frame):
                  font=("Segoe UI", 14, "bold"),
                  padx=14, pady=12).pack(side="left")
 
-        # Tab buttons
+        # Tab buttons (type-first ordering)
         tk.Frame(hdr_bar, bg="#7A6050", width=1).pack(side="left", fill="y", pady=8)
         tabs = [
-            ("reports",      "Overview"),
-            ("sales",        "Sales Analytics"),
-            ("top_sellers",  "Top Sellers"),
-            ("discounts",    "Discounts"),
-            ("raw_materials","Raw Materials"),
+            ("home",          "Home"),
+            ("sales",         "Total Sales"),
+            ("discounts",     "Discounts"),
+            ("raw_materials", "Inventory"),
+            ("void_history",  "Void History"),
+            ("top_sellers",   "Analytics"),
         ]
         for key, label in tabs:
             btn = tk.Button(
@@ -97,7 +98,9 @@ class ReportsView(tk.Frame):
         self._content = tk.Frame(self, bg=_BG)
         self._content.pack(fill="both", expand=True)
 
-        self._show_tab("reports")
+        # Land on the type-picker home view, not a mixed Overview
+        self._active_tab = "home"
+        self._show_tab("home")
 
     def _update_tab_style(self):
         for key, btn in self._tab_btns.items():
@@ -114,6 +117,21 @@ class ReportsView(tk.Frame):
         if old and old.winfo_exists():
             old.destroy()
         self._show_tab(self._active_tab)
+
+    def _log_report_print(self, report_type: str, path: str) -> None:
+        """Audit a report export/print to print_logs. Never raises."""
+        try:
+            import os as _os
+            u = self.auth.get_current_user() if getattr(self, "auth", None) else None
+            self.db.log_print(
+                user_id=getattr(u, "user_id", None),
+                username=getattr(u, "username", "") or "",
+                print_type=f"REPORT_{report_type}",
+                reference_id="",
+                detail=_os.path.basename(path or ""),
+            )
+        except Exception:
+            pass
 
     # ── Polling (cross-device auto-refresh) ──────────────────────────────────
 
@@ -173,8 +191,285 @@ class ReportsView(tk.Frame):
             self._build_discounts_tab(tab_frame)
         elif key == "raw_materials":
             self._build_raw_materials_tab(tab_frame)
+        elif key == "void_history":
+            self._build_void_history_tab(tab_frame)
+        elif key == "home":
+            self._build_home_picker(tab_frame)
         else:
             self._build_reports_tab(tab_frame)
+
+    # ── Home picker (type-first landing) ──────────────────────────────────────
+    def _build_home_picker(self, parent: tk.Frame) -> None:
+        outer = tk.Frame(parent, bg=_BG)
+        outer.pack(fill="both", expand=True)
+
+        tk.Label(outer, text="Choose a Report",
+                 bg=_BG, fg=_TEXT,
+                 font=("Segoe UI", 22, "bold")).pack(anchor="w", padx=28, pady=(20, 4))
+        tk.Label(outer, text="Pick the report type you want to view. "
+                             "Each report opens on its own — no mixed dashboards.",
+                 bg=_BG, fg=_MUTED,
+                 font=("Segoe UI", 10)).pack(anchor="w", padx=28, pady=(0, 18))
+
+        grid = tk.Frame(outer, bg=_BG)
+        grid.pack(fill="both", expand=True, padx=22, pady=(0, 22))
+        for c in range(3):
+            grid.columnconfigure(c, weight=1, uniform="rpt")
+
+        cards = [
+            ("sales",        "Total Sales",  "Daily, weekly, monthly and yearly revenue charts.", _RED),
+            ("discounts",    "Discounts",    "PWD, Senior, and special discounts breakdown.",     _SLATE),
+            ("raw_materials","Inventory",    "Raw materials movement and stock activity.",        _SB),
+            ("void_history", "Void History", "Voided / cancelled transactions with calendar.",    THEME["danger"]),
+            ("top_sellers",  "Analytics",    "Top selling products with quantity sold chart.",    _GREEN),
+        ]
+        for i, (key, title, sub, accent) in enumerate(cards):
+            r, c = divmod(i, 3)
+            card = tk.Frame(grid, bg=_PANEL,
+                            highlightthickness=1, highlightbackground=_BORDER, cursor="hand2")
+            card.grid(row=r, column=c, sticky="nsew", padx=8, pady=8)
+            tk.Frame(card, bg=accent, height=4).pack(fill="x")
+            tk.Label(card, text=title, bg=_PANEL, fg=_TEXT,
+                     font=("Segoe UI", 14, "bold"), anchor="w"
+                     ).pack(anchor="w", padx=18, pady=(14, 4))
+            tk.Label(card, text=sub, bg=_PANEL, fg=_MUTED,
+                     font=("Segoe UI", 9), anchor="w", justify="left",
+                     wraplength=260).pack(anchor="w", padx=18, pady=(0, 14))
+            tk.Label(card, text="Open  →", bg=_PANEL, fg=accent,
+                     font=("Segoe UI", 9, "bold"),
+                     ).pack(anchor="e", padx=18, pady=(0, 12))
+
+            for w in (card, *card.winfo_children()):
+                w.bind("<Button-1>", lambda _e, k=key: self._show_tab(k))
+            for w in card.winfo_children():
+                for ch in w.winfo_children():
+                    ch.bind("<Button-1>", lambda _e, k=key: self._show_tab(k))
+
+    # ── Void History tab ──────────────────────────────────────────────────────
+    def _build_void_history_tab(self, parent: tk.Frame) -> None:
+        outer = tk.Frame(parent, bg=_BG)
+        outer.pack(fill="both", expand=True)
+        outer.rowconfigure(2, weight=1)
+        outer.columnconfigure(0, weight=1)
+
+        _FILTER_BG = "#f5f0e8"
+        _LABEL_FG  = "#3d2b1f"
+        _SEL_BG    = "#8c6e3b"
+        _SEL_FG    = "white"
+        _UNSEL_BG  = _FILTER_BG
+        _UNSEL_FG  = _LABEL_FG
+
+        # Filter bar with calendar + period quick-buttons
+        bar = tk.Frame(outer, bg=_FILTER_BG,
+                       highlightthickness=1, highlightbackground=_BORDER)
+        bar.grid(row=0, column=0, sticky="ew", padx=24, pady=(12, 0))
+
+        tk.Label(bar, text="Period:", bg=_FILTER_BG, fg=_LABEL_FG,
+                 font=("Segoe UI", 9)).pack(side="left", padx=(12, 6), pady=8)
+
+        period_var = tk.StringVar(value="month")
+        _period_btns: dict[str, tk.Button] = {}
+
+        def _set_period(val: str) -> None:
+            period_var.set(val)
+            for v, b in _period_btns.items():
+                b.configure(
+                    bg=_SEL_BG if v == val else _UNSEL_BG,
+                    fg=_SEL_FG if v == val else _UNSEL_FG,
+                )
+
+        for lbl, val in [("Today", "today"), ("This Week", "week"),
+                          ("This Month", "month"), ("This Year", "year"),
+                          ("All Time", "all")]:
+            is_def = (val == "month")
+            btn = tk.Button(
+                bar, text=lbl,
+                command=lambda v=val: _set_period(v),
+                bg=_SEL_BG if is_def else _UNSEL_BG,
+                fg=_SEL_FG if is_def else _UNSEL_FG,
+                activebackground=_SEL_BG, activeforeground=_SEL_FG,
+                relief="flat", bd=0, padx=12, pady=5, cursor="hand2",
+                font=("Segoe UI", 9, "bold"),
+            )
+            btn.pack(side="left", padx=2, pady=8)
+            _period_btns[val] = btn
+
+        # Custom date range using DatePickerDialog
+        tk.Label(bar, text="From:", bg=_FILTER_BG, fg=_LABEL_FG,
+                 font=("Segoe UI", 9)).pack(side="left", padx=(14, 4), pady=8)
+        from_var = tk.StringVar()
+        from_ent = tk.Entry(bar, textvariable=from_var, width=12,
+                            bd=0, bg=THEME["panel2"], fg=_TEXT,
+                            insertbackground=_TEXT, insertwidth=2)
+        from_ent.pack(side="left", ipady=5, pady=8)
+        _bind_date_picker(from_ent, from_var)
+
+        tk.Label(bar, text="To:", bg=_FILTER_BG, fg=_LABEL_FG,
+                 font=("Segoe UI", 9)).pack(side="left", padx=(8, 4), pady=8)
+        to_var = tk.StringVar()
+        to_ent = tk.Entry(bar, textvariable=to_var, width=12,
+                          bd=0, bg=THEME["panel2"], fg=_TEXT,
+                          insertbackground=_TEXT, insertwidth=2)
+        to_ent.pack(side="left", ipady=5, pady=8)
+        _bind_date_picker(to_ent, to_var)
+
+        # Summary KPI row
+        kpi_frame = tk.Frame(outer, bg=_BG)
+        kpi_frame.grid(row=1, column=0, sticky="ew", padx=24, pady=(12, 0))
+        for i in range(3):
+            kpi_frame.columnconfigure(i, weight=1, uniform="vkpi")
+
+        kpi_vars = [tk.StringVar(value="—") for _ in range(3)]
+        kpi_labels = ["Voided Transactions", "Total Voided Amount", "Items Voided"]
+        kpi_accents = [THEME["danger"], _RED, _SB]
+        for i, (lbl, var, accent) in enumerate(zip(kpi_labels, kpi_vars, kpi_accents)):
+            outer_c = tk.Frame(kpi_frame, bg=_BG)
+            outer_c.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 10, 0))
+            card = tk.Frame(outer_c, bg=_PANEL,
+                            highlightthickness=1, highlightbackground=_BORDER)
+            card.pack(fill="both", expand=True)
+            tk.Frame(card, bg=accent, height=4).pack(fill="x")
+            tk.Label(card, text=lbl, bg=_PANEL, fg=_MUTED,
+                     font=("Segoe UI", 8), anchor="w").pack(anchor="w", padx=14, pady=(10, 2))
+            tk.Label(card, textvariable=var, bg=_PANEL, fg=accent,
+                     font=("Segoe UI", 18, "bold"), anchor="w").pack(anchor="w", padx=14, pady=(0, 12))
+
+        # Table
+        tbl_frame = tk.Frame(outer, bg=_PANEL,
+                             highlightthickness=1, highlightbackground=_BORDER)
+        tbl_frame.grid(row=2, column=0, sticky="nsew", padx=24, pady=12)
+        tbl_frame.rowconfigure(0, weight=1)
+        tbl_frame.columnconfigure(0, weight=1)
+
+        s = ttk.Style()
+        s.configure("VH.Treeview", rowheight=28, font=("Segoe UI", 9),
+                    background=_PANEL, fieldbackground=_PANEL, foreground=_TEXT,
+                    borderwidth=0, relief="flat")
+        s.configure("VH.Treeview.Heading", font=("Segoe UI", 9, "bold"),
+                    background=_SB, foreground="#FFFFFF",
+                    relief="flat", padding=(8, 7))
+        s.map("VH.Treeview",
+              background=[("selected", _RED), ("!selected", _PANEL)],
+              foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])
+
+        cols = ("dt", "trx", "type", "voided_by", "amount", "reason")
+        tbl = ttk.Treeview(tbl_frame, columns=cols, show="headings", style="VH.Treeview")
+        tbl.grid(row=0, column=0, sticky="nsew")
+
+        ysb = ttk.Scrollbar(tbl_frame, orient="vertical", command=tbl.yview)
+        ysb.grid(row=0, column=1, sticky="ns")
+        tbl.configure(yscrollcommand=ysb.set)
+
+        col_cfg = [
+            ("dt",        "Date & Time",   140, "center", False),
+            ("trx",       "Transaction #",  90, "center", False),
+            ("type",      "Void Type",     110, "center", False),
+            ("voided_by", "Voided By",     130, "w",      False),
+            ("amount",    "Amount",        110, "e",      False),
+            ("reason",    "Reason",        260, "w",      True),
+        ]
+        for cid, hdr, w, anc, stretch in col_cfg:
+            tbl.heading(cid, text=hdr, anchor="center")
+            tbl.column(cid, width=w, minwidth=60, anchor=anc, stretch=stretch)
+
+        tbl.tag_configure("odd",  background=_PANEL)
+        tbl.tag_configure("even", background="#FAFAF8")
+
+        empty_lbl = tk.Label(
+            tbl_frame, text="No voided transactions for the selected period.",
+            bg=_PANEL, fg=_MUTED, font=("Segoe UI", 11, "italic"),
+        )
+
+        # Footer
+        foot = tk.Frame(outer, bg=_BG)
+        foot.grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 12))
+        count_lbl = tk.Label(foot, text="", bg=_BG, fg=_MUTED, font=("Segoe UI", 9))
+        count_lbl.pack(side="left")
+
+        def _date_clause() -> str:
+            p = period_var.get()
+            df = from_var.get().strip()
+            dt = to_var.get().strip()
+            if df and dt:
+                return f"DATE(vr.created_at,'localtime') BETWEEN DATE('{df}') AND DATE('{dt}')"
+            if p == "today":
+                return "DATE(vr.created_at,'localtime') = DATE('now','localtime')"
+            if p == "week":
+                return "DATE(vr.created_at,'localtime') >= DATE('now','localtime','-6 days')"
+            if p == "year":
+                return "strftime('%Y',vr.created_at,'localtime') = strftime('%Y','now','localtime')"
+            if p == "all":
+                return "1=1"
+            return "strftime('%Y-%m',vr.created_at,'localtime') = strftime('%Y-%m','now','localtime')"
+
+        def load(*_args):
+            dc = _date_clause()
+            try:
+                rows = self.db.fetchall(
+                    f"""
+                    SELECT vr.created_at,
+                           vr.original_order_id AS order_id,
+                           vr.void_type,
+                           vr.voided_by_username,
+                           vr.reason,
+                           o.total      AS order_total,
+                           oi.subtotal  AS item_subtotal
+                    FROM void_records vr
+                    LEFT JOIN orders      o  ON o.id  = vr.original_order_id
+                    LEFT JOIN order_items oi ON oi.id = vr.order_item_id
+                    WHERE {dc}
+                    ORDER BY datetime(vr.created_at) DESC
+                    LIMIT 500;
+                    """
+                )
+            except Exception:
+                rows = []
+
+            for iid in tbl.get_children():
+                tbl.delete(iid)
+
+            if not rows:
+                empty_lbl.place(relx=0.5, rely=0.5, anchor="center")
+                for v in kpi_vars:
+                    v.set("—")
+                count_lbl.configure(text="No voided records found")
+                return
+
+            empty_lbl.place_forget()
+
+            tot_count    = 0
+            tot_amount   = 0.0
+            tot_items    = 0
+            for i, r in enumerate(rows):
+                tag = "odd" if i % 2 else "even"
+                vt = str(r["void_type"] or "").upper()
+                if vt == "FULL_ORDER":
+                    type_label = "Full Order"
+                    amount = float(r["order_total"] or 0.0)
+                else:
+                    type_label = "Item Void"
+                    amount = float(r["item_subtotal"] or 0.0)
+                    tot_items += 1
+                tot_count  += 1
+                tot_amount += amount
+                tbl.insert("", tk.END, tags=(tag,), values=(
+                    str(r["created_at"])[:16],
+                    f"#{r['order_id']}",
+                    type_label,
+                    str(r["voided_by_username"] or "—"),
+                    _money(amount),
+                    str(r["reason"] or "—"),
+                ))
+
+            kpi_vars[0].set(str(tot_count))
+            kpi_vars[1].set(_money(tot_amount))
+            kpi_vars[2].set(str(tot_items))
+            count_lbl.configure(text=f"{tot_count} voided record{'s' if tot_count != 1 else ''}")
+
+        period_var.trace_add("write", load)
+        from_ent.bind("<Return>", load)
+        to_ent.bind("<Return>", load)
+        load()
 
     def _build_sales_tab(self, parent: tk.Frame):
         from app.ui.inventory_sales_view import InventorySalesView
@@ -320,7 +615,7 @@ class ReportsView(tk.Frame):
     def _build_top_sellers_tab(self, parent: tk.Frame):
         outer = tk.Frame(parent, bg=_BG)
         outer.pack(fill="both", expand=True)
-        outer.rowconfigure(1, weight=1)
+        outer.rowconfigure(2, weight=1)   # table row expands; chart sits above
         outer.columnconfigure(0, weight=1)
 
         _FILTER_BG = "#f5f0e8"
@@ -388,10 +683,25 @@ class ReportsView(tk.Frame):
         to_ent.pack(side="left", ipady=5, pady=8)
         _bind_date_picker(to_ent, to_var)
 
+        # ── Quantity Sold chart card (row 1) ───────────────────────────────────
+        chart_card = tk.Frame(outer, bg=_PANEL,
+                              highlightthickness=1, highlightbackground=_BORDER)
+        chart_card.grid(row=1, column=0, sticky="ew", padx=24, pady=(12, 0))
+        tk.Frame(chart_card, bg=_GREEN, height=4).pack(fill="x")
+        tk.Label(chart_card, text="Quantity Sold — Top Products",
+                 bg=_PANEL, fg=_TEXT,
+                 font=("Segoe UI", 10, "bold"), anchor="w",
+                 ).pack(anchor="w", padx=14, pady=(8, 0))
+        chart_host = tk.Frame(chart_card, bg=_PANEL, height=240)
+        chart_host.pack(fill="x", padx=10, pady=(4, 10))
+        chart_host.pack_propagate(False)
+        self._ts_chart_host = chart_host
+        self._ts_chart_canvas = None
+
         # Table
         tbl_frame = tk.Frame(outer, bg=_PANEL,
                              highlightthickness=1, highlightbackground=_BORDER)
-        tbl_frame.grid(row=1, column=0, sticky="nsew", padx=24, pady=12)
+        tbl_frame.grid(row=2, column=0, sticky="nsew", padx=24, pady=12)
         tbl_frame.rowconfigure(0, weight=1)
         tbl_frame.columnconfigure(0, weight=1)
 
@@ -438,12 +748,69 @@ class ReportsView(tk.Frame):
 
         # Footer bar
         foot = tk.Frame(outer, bg=_BG)
-        foot.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 12))
+        foot.grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 12))
         count_lbl = tk.Label(foot, text="", bg=_BG, fg=_MUTED, font=("Segoe UI", 9))
         count_lbl.pack(side="left")
 
         rows_cache: list[dict] = []
         _ts_sort: dict = {"col": None, "reverse": False}
+
+        def _draw_qty_chart(rows: list[dict]) -> None:
+            """Render a horizontal bar chart of top products by qty sold."""
+            host = self._ts_chart_host
+            if host is None or not host.winfo_exists():
+                return
+            for w in host.winfo_children():
+                w.destroy()
+            self._ts_chart_canvas = None
+            top = rows[:10]
+            if not top:
+                tk.Label(host, text="No sales data to chart for this period.",
+                         bg=_PANEL, fg=_MUTED,
+                         font=("Segoe UI", 10, "italic")
+                         ).pack(expand=True)
+                return
+            try:
+                from matplotlib.figure import Figure
+                from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+                names = [str(r["name"])[:18] for r in top][::-1]
+                qtys  = [int(r["total_qty"] or 0) for r in top][::-1]
+                fig = Figure(figsize=(7, 2.4), dpi=92, facecolor=_PANEL)
+                ax = fig.add_subplot(111)
+                ax.set_facecolor(_PANEL)
+                bars = ax.barh(names, qtys, color="#2e7d32", edgecolor="#1b5e20")
+                ax.set_xlabel("Qty Sold", fontsize=8, color=_TEXT)
+                for spine in ("top", "right"):
+                    ax.spines[spine].set_visible(False)
+                ax.tick_params(labelsize=8, colors=_TEXT)
+                for bar, v in zip(bars, qtys):
+                    ax.text(bar.get_width() + max(qtys) * 0.01,
+                            bar.get_y() + bar.get_height() / 2,
+                            str(v), va="center", fontsize=8, color=_TEXT)
+                fig.tight_layout(pad=0.6)
+                canvas_widget = FigureCanvasTkAgg(fig, master=host)
+                canvas_widget.draw()
+                canvas_widget.get_tk_widget().pack(fill="both", expand=True)
+                self._ts_chart_canvas = canvas_widget
+            except Exception:
+                # Fallback: pure-Tkinter bar list when matplotlib unavailable
+                max_q = max((int(r["total_qty"] or 0) for r in top), default=1) or 1
+                for r in top:
+                    fr = tk.Frame(host, bg=_PANEL)
+                    fr.pack(fill="x", padx=10, pady=2)
+                    tk.Label(fr, text=str(r["name"])[:24], bg=_PANEL, fg=_TEXT,
+                             font=("Segoe UI", 8), width=22, anchor="w"
+                             ).pack(side="left")
+                    bar_outer = tk.Frame(fr, bg="#E8E2D9", height=14)
+                    bar_outer.pack(side="left", fill="x", expand=True, padx=6)
+                    bar_outer.pack_propagate(False)
+                    pct = max(2, int((int(r["total_qty"] or 0) / max_q) * 100))
+                    bar = tk.Frame(bar_outer, bg=_GREEN)
+                    bar.place(x=0, y=0, relwidth=pct / 100, relheight=1)
+                    tk.Label(fr, text=str(int(r["total_qty"] or 0)),
+                             bg=_PANEL, fg=_TEXT,
+                             font=("Segoe UI", 8, "bold"), width=6, anchor="e"
+                             ).pack(side="left")
 
         def _ts_display(rows: list[dict]) -> None:
             for iid in tbl.get_children():
@@ -520,9 +887,15 @@ class ReportsView(tk.Frame):
                     for i, r in enumerate(rows_cache, 1):
                         w.writerow([i, r["name"], r["category"],
                                     r["total_qty"], _money(r["total_revenue"])])
+                self._log_report_print("TOP_SELLERS", path)
                 messagebox.showinfo("Export", f"Saved to:\n{path}")
             except Exception as e:
-                messagebox.showerror("Export Error", str(e))
+                from app.utils import log_error
+                log_error("Reports export top sellers", e)
+                messagebox.showerror(
+                    "Export Error",
+                    "Could not save the export file. Please try again.",
+                )
 
         tk.Button(foot, text="Export CSV",
                   bg=THEME["success"], fg="white",
@@ -582,6 +955,7 @@ class ReportsView(tk.Frame):
                 tbl.heading(cid, text=hdr, anchor="center",
                             command=lambda c=cid: _ts_sort_by(c))
             _ts_display(rows_cache)
+            _draw_qty_chart(rows_cache)
 
         period_var.trace_add("write", load)
         from_ent.bind("<Return>", load)
@@ -748,9 +1122,15 @@ class ReportsView(tk.Frame):
                     for r in rows_cache_ref:
                         w.writerow([r["discount_type"], r["order_count"],
                                     _money(r["total_discount"]), _money(r["net_total"])])
+                self._log_report_print("DISCOUNTS", path)
                 messagebox.showinfo("Export", f"Saved to:\n{path}")
             except Exception as e:
-                messagebox.showerror("Export Error", str(e))
+                from app.utils import log_error
+                log_error("Reports export discounts", e)
+                messagebox.showerror(
+                    "Export Error",
+                    "Could not save the export file. Please try again.",
+                )
 
         tk.Button(foot, text="Export CSV",
                   bg=THEME["success"], fg="white",
@@ -1077,9 +1457,15 @@ class ReportsView(tk.Frame):
                             act, f"{sign}{r['quantity']}",
                             r["reason"] or "",
                         ])
+                self._log_report_print("RAW_MATERIALS", path)
                 messagebox.showinfo("Export", f"Saved to:\n{path}")
             except Exception as e:
-                messagebox.showerror("Export Error", str(e))
+                from app.utils import log_error
+                log_error("Reports export raw materials", e)
+                messagebox.showerror(
+                    "Export Error",
+                    "Could not save the export file. Please try again.",
+                )
 
         tk.Button(foot, text="Export CSV",
                   bg=THEME["success"], fg="white",

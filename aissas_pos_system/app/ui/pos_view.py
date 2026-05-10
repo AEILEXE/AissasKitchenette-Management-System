@@ -15,7 +15,7 @@ from app.db.dao import CategoryDAO, ProductDAO, DraftDAO, OrderDAO
 from app.services.auth_service import AuthService
 from app.services.pos_service import POSService
 from app.services.receipt_service import ReceiptService
-from app.ui.dialogs import DiscountDialog, DraftTitleDialog
+from app.ui.dialogs import DiscountDialog, DraftTitleDialog, show_toast
 from app.ui import ui_scale
 from app.utils import money
 from app.ml.recommender import Recommender
@@ -66,7 +66,7 @@ class POSView(tk.Frame):
 
         self._draft_id_by_index: list[int] = []
         self._cat_buttons: dict[str, tk.Button] = {}
-        self._selected_category: str = "All"
+        self._selected_category: str = ""    # "" = no selection (main level shows all active)
         self._cat_level: str = "main"        # "main" or "sub"
         self._cat_parent_id: int | None = None
         self._cat_parent_name: str = ""
@@ -514,8 +514,37 @@ class POSView(tk.Frame):
         cat_outer.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
         cat_outer.columnconfigure(0, weight=1)
 
+        # Breadcrumb / header strip — always visible so users can see the
+        # current category context and a clear way back to the main level.
+        self._cat_header = tk.Frame(cat_outer, bg=THEME.get("panel2", "#E8DDD0"),
+                                     highlightthickness=1,
+                                     highlightbackground=THEME.get("border", "#C8B79E"))
+        self._cat_header.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        self._cat_header.columnconfigure(1, weight=1)
+
+        self._cat_back_btn = tk.Button(
+            self._cat_header,
+            text="←  Back to Categories",
+            command=self._on_back_click,
+            bg=THEME.get("brown", "#6b4a3a"), fg="white",
+            activebackground=THEME.get("brown_dark", "#5a3a2a"),
+            activeforeground="white",
+            bd=0, padx=12, pady=4, cursor="hand2",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+        )
+        self._cat_breadcrumb_lbl = tk.Label(
+            self._cat_header,
+            text="All Categories",
+            bg=THEME.get("panel2", "#E8DDD0"),
+            fg=THEME.get("text", "#3d2b1f"),
+            font=("Segoe UI", 10, "bold"),
+            anchor="w", padx=10, pady=6,
+        )
+        self._cat_breadcrumb_lbl.grid(row=0, column=1, sticky="ew")
+
         self._cat_grid_frame = tk.Frame(cat_outer, bg=THEME["panel"])
-        self._cat_grid_frame.grid(row=0, column=0, sticky="ew")
+        self._cat_grid_frame.grid(row=1, column=0, sticky="ew")
 
         self._cat_grid_frame.bind("<Configure>", self._on_cat_grid_configure, add="+")
 
@@ -746,15 +775,25 @@ class POSView(tk.Frame):
             _ot_style(val)
             if val == "TAKE_OUT":
                 if self._lbl_table_no:
-                    self._lbl_table_no.configure(text="Order No.")
-                # Auto-fill order number only when field is currently empty
-                if self.var_table_number is not None and not self.var_table_number.get().strip():
+                    self._lbl_table_no.configure(text="Order No.  (auto)")
+                # Always auto-generate fresh order number for take-out — cashier
+                # never types this manually
+                if self.var_table_number is not None:
                     self.var_table_number.set(self._generate_order_number())
+                # Lock the entry — order number is auto-assigned
+                try:
+                    _tbl_entry.configure(state="readonly", readonlybackground=THEME["panel2"])
+                except Exception:
+                    pass
             else:
                 if self._lbl_table_no:
                     self._lbl_table_no.configure(text="Table No.")
                 if self.var_table_number is not None:
                     self.var_table_number.set("")
+                try:
+                    _tbl_entry.configure(state="normal")
+                except Exception:
+                    pass
 
         btn_dine = tk.Button(ot_btns, text="Dine In",
                              bg=THEME.get("brown_dark", "#8E0000"), fg="white",
@@ -1063,6 +1102,30 @@ class POSView(tk.Frame):
             else:
                 btn.configure(bg=THEME.get("brown", "#6b4a3a"), fg="white")
 
+    def _update_breadcrumb(self) -> None:
+        """Refresh the breadcrumb header + back-button visibility based on level."""
+        try:
+            lbl = getattr(self, "_cat_breadcrumb_lbl", None)
+            back = getattr(self, "_cat_back_btn", None)
+            if not lbl or not lbl.winfo_exists():
+                return
+            if self._cat_level == "sub" and self._cat_parent_name:
+                # On sub-level: show "Beef" or "Beef > Subcategory"
+                if (self._selected_category
+                        and self._selected_category != self._cat_parent_name):
+                    crumb = f"{self._cat_parent_name}  ›  {self._selected_category}"
+                else:
+                    crumb = self._cat_parent_name
+                lbl.configure(text=crumb)
+                if back is not None and back.winfo_exists():
+                    back.grid(row=0, column=0, sticky="w", padx=(6, 0), pady=4)
+            else:
+                lbl.configure(text="All Categories")
+                if back is not None and back.winfo_exists():
+                    back.grid_remove()
+        except Exception:
+            pass
+
     def _refresh_categories(self):
         if self._destroyed or not self.winfo_exists():
             return
@@ -1096,48 +1159,34 @@ class POSView(tk.Frame):
             self._cat_buttons[name] = btn
 
         if self._cat_level == "sub":
-            # Subcategory level: BACK button + subcategories of parent
-            back_btn = tk.Button(
-                frame,
-                text="←  Back",
-                anchor="center",
-                command=self._on_back_click,
-                bg=THEME.get("panel2", "#E8DDD0"),
-                fg=THEME.get("text", "#3d2b1f"),
-                activebackground=THEME.get("beige", "#F4EFEA"),
-                activeforeground=THEME.get("text", "#3d2b1f"),
-                bd=0,
-                width=14,
-                height=2,
-                cursor="hand2",
-                font=("Segoe UI", 9),
-                relief="flat",
-            )
-            self._cat_buttons["__back__"] = back_btn
+            # Subcategory level: only the parent's subcategories (back button is
+            # in the breadcrumb header above, so we no longer add it inline).
             if self._cat_parent_id is not None:
-                for r in self.cat_dao.list_subcategories(self._cat_parent_id):
+                subs = self.cat_dao.list_subcategories(self._cat_parent_id)
+                for r in subs:
                     add_btn(str(r["name"]))
         else:
-            # Main level: All button + top-level categories
-            add_btn("All")
+            # Main level: top-level categories ONLY (no "All" button — products area
+            # shows everything by default when nothing is selected)
             for r in self.cat_dao.list_main_categories():
                 add_btn(str(r["name"]))
 
-        default_sel = "All" if self._cat_level == "main" else (
-            self._selected_category if self._selected_category in self._cat_buttons else ""
-        )
-        self._set_active_category_btn(
-            self._selected_category if self._selected_category in self._cat_buttons else default_sel
-        )
+        # Highlight current selection if it still exists at this level
+        if self._selected_category in self._cat_buttons:
+            self._set_active_category_btn(self._selected_category)
+        else:
+            self._set_active_category_btn("")
+        self._update_breadcrumb()
         self._cancel_after(self._cat_grid_after)
         self._cat_grid_after = self._after(0, self._relayout_cat_grid)
 
     def _on_category_click(self, name: str) -> None:
-        if self._cat_level == "main" and name != "All":
-            # Check if this category has subcategories — drill down if so
+        if self._cat_level == "main":
+            # Always drill down when a main category is clicked. Sub-level shows
+            # ← Back plus this category's subcategories (or just ← Back if no subs).
             try:
                 cat = self.cat_dao.get_by_name(name)
-                if cat and self.cat_dao.has_subcategories(int(cat["category_id"])):
+                if cat:
                     self._cat_level = "sub"
                     self._cat_parent_id = int(cat["category_id"])
                     self._cat_parent_name = name
@@ -1150,22 +1199,23 @@ class POSView(tk.Frame):
                     return
             except Exception:
                 pass
-        # Standard click — highlight button and load products
+        # Sub-level click on a subcategory — show only that sub's products
         self._set_active_category_btn(name)
+        self._update_breadcrumb()
         self._cancel_after(self._cat_click_after)
         self._cat_click_after = self._after(100, lambda: self._do_category_load(name))
 
     def _on_back_click(self) -> None:
-        """Return from subcategory view to main category view."""
+        """Return from subcategory view to main category view (no selection)."""
         self._cat_level = "main"
         self._cat_parent_id = None
         self._cat_parent_name = ""
-        self._selected_category = "All"
+        self._selected_category = ""
         self._all_products_cache = []
         self._all_products_cache_cat = ""
         self._refresh_categories()
         self._cancel_after(self._cat_click_after)
-        self._cat_click_after = self._after(100, lambda: self._do_category_load("All"))
+        self._cat_click_after = self._after(100, lambda: self._do_category_load(""))
 
     # ── Auto order number ─────────────────────────────────────────────────────
     def _generate_order_number(self) -> str:
@@ -1203,7 +1253,7 @@ class POSView(tk.Frame):
 
     def _load_products_for_category(self) -> None:
         """Fetch products from DB in a background thread; continue on main thread."""
-        cat_name  = self._selected_category or "All"
+        cat_name  = self._selected_category or ""
         cat_level = self._cat_level
         self._load_gen += 1
         gen = self._load_gen
@@ -1216,7 +1266,8 @@ class POSView(tk.Frame):
                 thread_db.connect()
                 t_cat_dao = CategoryDAO(thread_db)
                 t_prod_dao = ProductDAO(thread_db)
-                if cat_name == "All":
+                if not cat_name:
+                    # No selection — show all active products (initial main-level state)
                     rows = t_prod_dao.list_all_active()
                 elif cat_level == "main":
                     # Main-level selection: include products in this category
@@ -1559,6 +1610,9 @@ class POSView(tk.Frame):
         price   = float(r["price"])
         desc    = str(_row_get(r, "description", "") or "").strip()
         img_rel = _row_get(r, "image_path", None) or ""
+        stock   = int(_row_get(r, "stock_qty", 0) or 0)
+        active  = int(_row_get(r, "active", 1) or 1)
+        unavail = (active == 0) or (stock <= 0)
 
         card = tk.Frame(
             parent,
@@ -1566,7 +1620,7 @@ class POSView(tk.Frame):
             highlightthickness=1,
             highlightbackground=THEME["border"],
             highlightcolor=THEME["border"],
-            cursor="hand2",
+            cursor="hand2" if not unavail else "arrow",
         )
         card.columnconfigure(1, weight=1)
 
@@ -1574,67 +1628,123 @@ class POSView(tk.Frame):
 
         def _bind_click(w: tk.Widget):
             clickables.append(w)
-            w.bind("<Button-1>",
-                   lambda _e, p=pid, n=name, pr=price: self._add_to_cart(p, n, pr),
-                   add="+")
+            if not unavail:
+                w.bind("<Button-1>",
+                       lambda _e, p=pid, n=name, pr=price: self._add_to_cart(p, n, pr),
+                       add="+")
 
         _bind_click(card)
 
-        # Left accent border
-        accent_bar = tk.Frame(card, bg=THEME["accent"], width=4)
+        # Left accent border — slightly thicker for clearer visual rhythm
+        accent_color = THEME.get("muted", "#7B6B57") if unavail else THEME["accent"]
+        accent_bar = tk.Frame(card, bg=accent_color, width=5)
         accent_bar.grid(row=0, column=0, rowspan=6, sticky="nsew")
         _bind_click(accent_bar)
 
         # ── Image (unified Label — shows image OR fallback emoji) ─────────────
         img_size = self._IMG_SIZE
         img_frame = tk.Frame(card, bg=self._CARD_BG,
-                             width=img_size, height=img_size, cursor="hand2")
-        img_frame.grid(row=0, column=1, pady=(8, 3), padx=(8, 6))
+                             width=img_size, height=img_size,
+                             cursor="hand2" if not unavail else "arrow")
+        img_frame.grid(row=0, column=1, pady=(10, 4), padx=(10, 8))
         img_frame.grid_propagate(False)
         _bind_click(img_frame)
 
-        img_lbl = tk.Label(img_frame, bg=self._CARD_BG, cursor="hand2")
+        img_lbl = tk.Label(img_frame, bg=self._CARD_BG,
+                            cursor="hand2" if not unavail else "arrow")
         img_lbl.place(relx=0.5, rely=0.5, anchor="center")
         clickables.append(img_lbl)
-        img_lbl.bind("<Button-1>",
-                     lambda _e, p=pid, n=name, pr=price: self._add_to_cart(p, n, pr),
-                     add="+")
+        if not unavail:
+            img_lbl.bind("<Button-1>",
+                         lambda _e, p=pid, n=name, pr=price: self._add_to_cart(p, n, pr),
+                         add="+")
 
         photo = self._load_image(img_rel)
         if photo:
             img_lbl.configure(image=photo, text="")
             img_lbl.image = photo
         else:
+            # Cleaner placeholder — emoji on slightly tinted background
             img_lbl.configure(text="🍽", image="",
-                              font=("Segoe UI", 24), fg=THEME["muted"])
+                              font=("Segoe UI", 26),
+                              fg=THEME.get("muted", "#7B6B57"),
+                              bg=self._CARD_BG)
 
         # ── Product name ──────────────────────────────────────────────────────
+        name_color = THEME.get("muted", "#7B6B57") if unavail else THEME["text"]
         name_lbl = tk.Label(
             card, text=name,
-            bg=self._CARD_BG, fg=THEME["text"],
-            font=("Segoe UI", 9, "bold"),
+            bg=self._CARD_BG, fg=name_color,
+            font=("Segoe UI", 10, "bold"),
             anchor="center", justify="center",
-            wraplength=120, cursor="hand2",
+            wraplength=124,
+            cursor="hand2" if not unavail else "arrow",
         )
-        name_lbl.grid(row=1, column=1, sticky="ew", padx=(4, 6), pady=(0, 1))
+        name_lbl.grid(row=1, column=1, sticky="ew", padx=(6, 8), pady=(0, 2))
         _bind_click(name_lbl)
         if len(name) > 32:
             self._add_tooltip(name_lbl, name)
 
         # ── Price ─────────────────────────────────────────────────────────────
-        price_row = tk.Frame(card, bg=self._CARD_BG, cursor="hand2")
-        price_row.grid(row=2, column=1, sticky="ew", padx=(4, 6), pady=(0, 6))
+        price_row = tk.Frame(card, bg=self._CARD_BG,
+                              cursor="hand2" if not unavail else "arrow")
+        price_row.grid(row=2, column=1, sticky="ew", padx=(6, 8), pady=(0, 4))
         price_row.columnconfigure(0, weight=1)
         _bind_click(price_row)
 
+        price_color = THEME.get("muted", "#7B6B57") if unavail else THEME["accent"]
         price_lbl = tk.Label(
             price_row, text=money(price),
-            bg=self._CARD_BG, fg=THEME["accent"],
-            font=("Segoe UI", 10, "bold"),
-            anchor="center", cursor="hand2",
+            bg=self._CARD_BG, fg=price_color,
+            font=("Segoe UI", 11, "bold"),
+            anchor="center",
+            cursor="hand2" if not unavail else "arrow",
         )
         price_lbl.grid(row=0, column=0, sticky="ew")
         _bind_click(price_lbl)
+
+        # ── Availability badge (only when unavailable / out-of-stock) ─────────
+        badge_lbl = tk.Label(
+            card,
+            text=("Unavailable" if active == 0 else "Out of Stock"),
+            bg=THEME.get("danger", "#991B1B"), fg="white",
+            font=("Segoe UI", 8, "bold"),
+            padx=8, pady=2,
+        )
+        if unavail:
+            badge_lbl.grid(row=3, column=1, sticky="ew", padx=(6, 8), pady=(0, 8))
+        else:
+            badge_lbl.grid_remove()
+
+        # ── Hover feedback (border colour) ────────────────────────────────────
+        # Closure reads the LIVE unavail state from card._pool_refs so a
+        # pooled card whose product changed from available → unavailable
+        # (or vice versa) still hovers correctly.
+        _BORDER       = THEME["border"]
+        _BORDER_HOVER = THEME.get("accent", "#D4956A")
+        def _on_enter(_e=None):
+            try:
+                if not card.winfo_exists():
+                    return
+                refs_now = getattr(card, "_pool_refs", {})
+                color = _BORDER if refs_now.get("unavail") else _BORDER_HOVER
+                card.configure(highlightbackground=color,
+                               highlightcolor=color)
+            except Exception:
+                pass
+        def _on_leave(_e=None):
+            try:
+                if card.winfo_exists():
+                    card.configure(highlightbackground=_BORDER,
+                                   highlightcolor=_BORDER)
+            except Exception:
+                pass
+        for w in (card, *clickables):
+            try:
+                w.bind("<Enter>", _on_enter, add="+")
+                w.bind("<Leave>", _on_leave, add="+")
+            except Exception:
+                pass
 
         # Store refs so this card can be updated in-place without recreation
         card._pool_refs = {   # type: ignore[attr-defined]
@@ -1642,7 +1752,10 @@ class POSView(tk.Frame):
             "img_lbl":   img_lbl,
             "name_lbl":  name_lbl,
             "price_lbl": price_lbl,
+            "badge_lbl": badge_lbl,
+            "accent":    accent_bar,
             "clickables": clickables,
+            "unavail":   unavail,
         }
 
         return card
@@ -1655,19 +1768,53 @@ class POSView(tk.Frame):
         price = float(r["price"])
         desc  = str(_row_get(r, "description", "") or "").strip()
         img_rel = _row_get(r, "image_path", None) or ""
+        stock   = int(_row_get(r, "stock_qty", 0) or 0)
+        active  = int(_row_get(r, "active", 1) or 1)
+        unavail = (active == 0) or (stock <= 0)
 
-        # Rebind all click targets to the new product
+        # Rebind click targets — only when product is available
         for w in refs["clickables"]:
             try:
                 w.unbind("<Button-1>")
-                w.bind("<Button-1>",
-                       lambda _e, p=pid, n=name, pr=price: self._add_to_cart(p, n, pr))
+                if not unavail:
+                    w.bind("<Button-1>",
+                           lambda _e, p=pid, n=name, pr=price: self._add_to_cart(p, n, pr))
             except Exception:
                 pass
 
-        # Update text labels
-        refs["name_lbl"].configure(text=name)
-        refs["price_lbl"].configure(text=money(price))
+        # Update text labels (color reflects availability)
+        name_color  = THEME.get("muted", "#7B6B57") if unavail else THEME["text"]
+        price_color = THEME.get("muted", "#7B6B57") if unavail else THEME["accent"]
+        refs["name_lbl"].configure(text=name, fg=name_color)
+        refs["price_lbl"].configure(text=money(price), fg=price_color)
+        try:
+            accent_color = THEME.get("muted", "#7B6B57") if unavail else THEME["accent"]
+            refs["accent"].configure(bg=accent_color)
+        except Exception:
+            pass
+
+        # Update cursor on hand-grabable widgets
+        cur = "hand2" if not unavail else "arrow"
+        try:
+            card.configure(cursor=cur)
+            for w in refs["clickables"]:
+                try:
+                    w.configure(cursor=cur)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Show/hide availability badge
+        try:
+            badge = refs["badge_lbl"]
+            badge.configure(text=("Unavailable" if active == 0 else "Out of Stock"))
+            if unavail:
+                badge.grid(row=3, column=1, sticky="ew", padx=(6, 8), pady=(0, 8))
+            else:
+                badge.grid_remove()
+        except Exception:
+            pass
 
         # Update image only when changed
         if img_rel != refs["image_rel"]:
@@ -1677,8 +1824,19 @@ class POSView(tk.Frame):
                 refs["img_lbl"].image = photo
             else:
                 refs["img_lbl"].configure(image="", text="🍽",
-                                          font=("Segoe UI", 24), fg=THEME["muted"])
+                                          font=("Segoe UI", 26),
+                                          fg=THEME.get("muted", "#7B6B57"))
             refs["image_rel"] = img_rel
+
+        refs["unavail"] = unavail
+
+        # Reset border to base — clears any stale hover highlight that was
+        # active on the previous product when the card was reused.
+        try:
+            _b = THEME["border"]
+            card.configure(highlightbackground=_b, highlightcolor=_b)
+        except Exception:
+            pass
 
         # Update tooltip on name label
         refs["name_lbl"].unbind("<Enter>")
@@ -2126,12 +2284,106 @@ class POSView(tk.Frame):
             self._suggestions_frame.grid()
 
     # ── Discount ──────────────────────────────────────────────────────────────
+    # Manager approval is required when discount magnitude exceeds either
+    # threshold below. PWD/Senior 20% legal-rate discounts are exempt because
+    # they are statutory and routinely applied by cashiers.
+    _LARGE_DISCOUNT_AMOUNT     = 200.0   # peso threshold
+    _LARGE_DISCOUNT_PERCENT_PCT = 20.0   # % subtotal threshold for SPECIAL/ % types
+
+    def _calc_subtotal(self) -> float:
+        try:
+            return float(sum(p * q for (_n, p, q, _r) in self.cart.values()))
+        except Exception:
+            return 0.0
+
+    def _discount_needs_approval(self, mode: str, value: float) -> bool:
+        """Return True when the chosen discount is 'large' and needs approval."""
+        m = (mode or "").upper()
+        # Statutory 20% PWD/Senior — no approval needed
+        if m in ("NONE", "PWD", "SENIOR"):
+            return False
+        try:
+            v = float(value or 0.0)
+        except Exception:
+            v = 0.0
+        if v <= 0:
+            return False
+        sub = self._calc_subtotal()
+        # SPECIAL/AMOUNT: peso threshold
+        if v >= self._LARGE_DISCOUNT_AMOUNT:
+            return True
+        # As % of subtotal
+        if sub > 0 and (v / sub) * 100.0 >= self._LARGE_DISCOUNT_PERCENT_PCT:
+            return True
+        return False
+
+    def _request_manager_approval(self, action_label: str,
+                                  require_reason: bool = True) -> dict | None:
+        """Skip prompt for ADMIN/MANAGER current user; otherwise prompt."""
+        try:
+            from app.constants import ROLE_ADMIN, ROLE_MANAGER, P_VOID_APPROVE
+            u = self.auth.get_current_user() if self.auth else None
+            role = (getattr(u, "role", "") or "").upper()
+            if role in (ROLE_ADMIN, ROLE_MANAGER):
+                return {
+                    "approver_id": int(getattr(u, "user_id", 0) or 0),
+                    "approver_username": getattr(u, "username", "") or "",
+                    "approver_role": role, "reason": "",
+                }
+            try:
+                if (self.auth
+                        and self.auth.rbac_dao.has_permission(role, P_VOID_APPROVE)):
+                    return {
+                        "approver_id": int(getattr(u, "user_id", 0) or 0),
+                        "approver_username": getattr(u, "username", "") or "",
+                        "approver_role": role, "reason": "",
+                    }
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        from app.ui.dialogs import ManagerApprovalDialog
+        dlg = ManagerApprovalDialog(
+            self, self.auth,
+            action_label=action_label, require_reason=require_reason,
+        )
+        self.wait_window(dlg)
+        return dlg.result
+
     def _add_discount(self):
         dlg = DiscountDialog(self)
         self.wait_window(dlg)
         if not dlg.result:
             return
         mode, value = dlg.result
+
+        # Large-discount approval gate
+        if self._discount_needs_approval(mode, value):
+            approval = self._request_manager_approval(
+                f"applying a discount of ₱{value:,.2f}",
+                require_reason=True,
+            )
+            if not approval:
+                show_toast(self,
+                            "Discount cancelled — manager approval required.",
+                            kind="warning")
+                return
+            try:
+                from app.db.dao import AuditLogDAO
+                u = self.auth.get_current_user() if self.auth else None
+                AuditLogDAO(self.db).log(
+                    username=getattr(u, "username", "") or "",
+                    action="DISCOUNT_APPROVED",
+                    detail=(f"mode={mode} value={value} "
+                            f"approved_by={approval.get('approver_username','')} "
+                            f"reason={approval.get('reason','-')}"),
+                    user_id=int(getattr(u, "user_id", 0) or 0),
+                    new_value=str(approval.get("approver_id") or 0),
+                )
+            except Exception:
+                pass
+
         self.discount_mode = str(mode)
         self.discount_value = float(value)
         self._refresh_cart()
@@ -2189,10 +2441,10 @@ class POSView(tk.Frame):
         }
         try:
             self.draft_dao.create_draft(title=title, payload=payload, total=total)
-            messagebox.showinfo("Draft saved", f"Draft saved: {title}")
+            show_toast(self, f"Draft saved: {title}", kind="success")
             self._refresh_drafts_panel()
             self.cart.clear()
-            self.discount_mode = "amount"
+            self.discount_mode = "NONE"
             self.discount_value = 0.0
             self._refresh_cart()
         except Exception as e:
@@ -2226,7 +2478,7 @@ class POSView(tk.Frame):
             pass
         self._refresh_cart()
         self._refresh_drafts_panel()
-        messagebox.showinfo("Draft loaded", f"Loaded: {d['title']}")
+        show_toast(self, f"Draft loaded: {d['title']}", kind="info")
 
     def _delete_selected_draft(self):
         did = self._get_selected_draft_id()
@@ -2269,9 +2521,14 @@ class POSView(tk.Frame):
         table_number = self.var_table_number.get().strip()
         order_type = self.var_order_type.get()
 
+        # Take-out order numbers are auto-generated; ensure one exists if missing
+        if order_type == "TAKE_OUT" and not table_number:
+            table_number = self._generate_order_number()
+            if self.var_table_number is not None:
+                self.var_table_number.set(table_number)
+
         if not table_number:
-            lbl = "Table No." if order_type == "DINE_IN" else "Order No."
-            messagebox.showerror(lbl, f"{lbl} is required before checkout.")
+            messagebox.showerror("Table No.", "Table number is required before checkout.")
             return
 
         if order_type == "DINE_IN":
@@ -2282,14 +2539,7 @@ class POSView(tk.Frame):
             except (ValueError, TypeError):
                 messagebox.showerror("Table Number", "Table number must be from 1 to 20 only.")
                 return
-        elif order_type == "TAKE_OUT":
-            try:
-                _ord_int = int(table_number)
-                if not table_number.lstrip("-").isdigit() or _ord_int < 1 or _ord_int > 30:
-                    raise ValueError
-            except (ValueError, TypeError):
-                messagebox.showerror("Order Number", "Order number must be from 1 to 30 only.")
-                return
+        # TAKE_OUT: no manual range — order number is auto-generated and accepted as-is
 
         _disc_labels = {"PWD": "PWD", "SENIOR": "SENIOR", "SPECIAL": "SPECIAL",
                         "amount": "AMOUNT", "percent": "PERCENT", "NONE": "NONE"}
@@ -2470,7 +2720,8 @@ class POSView(tk.Frame):
                     order_dict[key] = text_value or default
 
             items_list = [{k: item[k] for k in item.keys()} for item in items]
-            ReceiptPreviewDialog(self, order_dict, items_list)
+            ReceiptPreviewDialog(self, order_dict, items_list,
+                                  db=self.db, auth=self.auth)
         except Exception as exc:
             messagebox.showwarning(
                 "Receipt",
@@ -2494,10 +2745,13 @@ class ReceiptPreviewDialog(tk.Toplevel):
     _GREEN = str(THEME["success"])
     _RULE  = str(THEME["border"])
 
-    def __init__(self, parent, order_data: dict, items: list):
+    def __init__(self, parent, order_data: dict, items: list,
+                 db: Database | None = None, auth: AuthService | None = None):
         super().__init__(parent)
         self.order_data = order_data
         self.items = items
+        self.db = db
+        self.auth = auth
         self._closed = False
 
         self.title("Receipt")
@@ -2774,22 +3028,46 @@ class ReceiptPreviewDialog(tk.Toplevel):
         btn_frame.columnconfigure(0, weight=1, uniform="rb")
         btn_frame.columnconfigure(1, weight=1, uniform="rb")
 
-        def _print_pdf():
+        def _print_receipt():
+            """Generate the receipt and send straight to print preview / printer.
+            Cashier flow has no 'Save PDF' option — only Print."""
             try:
-                path = ReceiptService.generate_receipt(self.order_data, self.items)
+                _u = self.auth.get_current_user() if self.auth else None
+                _by = (getattr(_u, "username", "") or "") if _u else ""
+                path = ReceiptService.generate_receipt(
+                    self.order_data, self.items, printed_by=_by
+                )
                 ok = ReceiptService.open_file(path)
+                # Audit print regardless of preview success — the file exists.
+                try:
+                    u = self.auth.get_current_user() if self.auth else None
+                    if self.db is not None:
+                        self.db.log_print(
+                            user_id=getattr(u, "user_id", None),
+                            username=getattr(u, "username", "") or "",
+                            print_type="RECEIPT",
+                            reference_id=str(self.order_data.get("order_id", "")),
+                            detail=os.path.basename(path),
+                        )
+                except Exception:
+                    pass
                 if not ok:
                     messagebox.showwarning(
-                        "Receipt",
-                        f"PDF saved but could not open automatically.\n\nSaved to:\n{path}",
+                        "Print",
+                        f"Could not open print preview automatically.\n\nReceipt is at:\n{path}",
                         parent=self,
                     )
             except Exception as exc:
-                messagebox.showerror("Receipt Error",
-                                     f"Failed to generate PDF.\n\n{exc}", parent=self)
+                from app.utils import log_error
+                log_error("Receipt print", exc)
+                messagebox.showerror(
+                    "Print Error",
+                    "Could not print the receipt. Please try again.",
+                    parent=self,
+                )
 
-        tk.Button(btn_frame, text="Print / Save PDF",
-                  command=_print_pdf,
+        tk.Button(btn_frame, text="🖨  Print",
+                  command=_print_receipt,
                   bg=THEME.get("brown", "#6b4a3a"), fg="white",
                   activebackground=THEME.get("brown_dark", "#8E0000"),
                   activeforeground="white",
@@ -2805,467 +3083,3 @@ class ReceiptPreviewDialog(tk.Toplevel):
                   font=("Segoe UI", 9),
                   ).grid(row=0, column=1, sticky="ew")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ConfirmOrderDialog — unchanged from original
-# ══════════════════════════════════════════════════════════════════════════════
-class ConfirmOrderDialog(tk.Toplevel):
-    SCROLL_SPEED_UNITS = 3
-
-    def __init__(self, parent: POSView, db: Database, auth: AuthService,
-                 cart: dict[int, tuple[str, float, int, str]],
-                 discount_mode: str, discount_value: float, on_done=None):
-        super().__init__(parent)
-        self.parent_view = parent
-        self.db = db
-        self.auth = auth
-        self.svc = POSService(db)
-
-        self.parent_pos = parent
-        self.cart = dict(cart)
-        self.discount_mode = discount_mode
-        self.discount_value = discount_value
-        self.on_done = on_done
-
-        self.created_at = datetime.now()
-        u = self.auth.get_current_user()
-        self.created_by_role = (u.role.upper() if u else "—")
-        self.created_by_user = (u.username if u else "—")
-
-        self.title("Confirm Order")
-        self.configure(bg=THEME["bg"])
-        self.transient(parent)
-        self.grab_set()
-
-        self.var_order_type = tk.StringVar(value="DINE_IN")
-        self.var_table_number = tk.StringVar()
-        self.var_payment = tk.StringVar(value="Cash")
-        _prefill = ""
-        try:
-            if parent.var_amount_paid and parent.var_amount_paid.get().strip():
-                _prefill = parent.var_amount_paid.get().strip()
-        except Exception:
-            pass
-        self.var_amount_paid = tk.StringVar(value=_prefill)
-        self._details_expanded = tk.BooleanVar(value=False)
-        self._details_rows: list[tuple[str, str]] = []
-        self._build()
-
-    def _calc_totals(self):
-        subtotal = sum(qty * price for (_n, price, qty, _note) in self.cart.values())
-        discount = 0.0
-        mode = self.discount_mode
-        if mode == "PWD" or mode == "SENIOR":
-            discount = subtotal * 0.20
-        elif mode == "SPECIAL":
-            discount = max(0.0, min(float(self.discount_value), subtotal))
-        elif mode == "amount":
-            discount = max(0.0, min(float(self.discount_value), subtotal))
-        elif mode == "percent":
-            discount = max(0.0, min(100.0, float(self.discount_value))) / 100.0 * subtotal
-        tax = 0.0
-        total = max(0.0, subtotal - discount + tax)
-        return subtotal, discount, tax, total
-
-    def _build(self):
-        f  = ui_scale.scale_font
-        sp = ui_scale.s
-
-        subtotal, discount, tax, total = self._calc_totals()
-        self._discount_amount = discount
-        self._total_amount    = total
-
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        w  = min(860, sw - 80)
-        h  = min(560, sh - 80)
-        x  = (sw - w) // 2
-        y  = max(30, (sh - h) // 2)
-        self.geometry(f"{w}x{h}+{x}+{y}")
-        self.minsize(680, 460)
-        self.resizable(True, True)
-
-        self.rowconfigure(0, weight=0)
-        self.rowconfigure(1, weight=1)
-        self.columnconfigure(0, weight=1)
-
-        hdr = tk.Frame(self, bg=THEME["brown_dark"])
-        hdr.grid(row=0, column=0, sticky="ew")
-        tk.Label(hdr, text="Confirm Order", bg=THEME["brown_dark"], fg="white",
-                 font=("Segoe UI", f(13), "bold"), anchor="w").pack(side="left", padx=18, pady=12)
-        tk.Button(hdr, text="✕", bg=THEME["brown_dark"], fg="white",
-                  activebackground=THEME["brown"], activeforeground="white",
-                  bd=0, padx=14, pady=6, cursor="hand2",
-                  font=("Segoe UI", f(11)), command=self.destroy).pack(side="right", padx=6)
-        created_str = self.created_at.strftime("%b %d %Y  %I:%M %p")
-        tk.Label(hdr, text=f"{self.created_by_user} ({self.created_by_role})  ·  {created_str}",
-                 bg=THEME["brown_dark"], fg="#c9b8a8",
-                 font=("Segoe UI", f(8))).pack(side="right", padx=(0, 4))
-
-        body = tk.Frame(self, bg=THEME["bg"])
-        body.grid(row=1, column=0, sticky="nsew")
-        body.rowconfigure(0, weight=1)
-        body.columnconfigure(0, weight=55, minsize=360)
-        body.columnconfigure(1, weight=0)
-        body.columnconfigure(2, weight=45, minsize=270)
-
-        tk.Frame(body, bg=THEME["border"], width=1).grid(row=0, column=1, sticky="ns")
-
-        left = tk.Frame(body, bg=THEME["bg"])
-        left.grid(row=0, column=0, sticky="nsew")
-        left.rowconfigure(1, weight=1)
-        left.columnconfigure(0, weight=1)
-
-        items_hdr = tk.Frame(left, bg=THEME["beige"])
-        items_hdr.grid(row=0, column=0, sticky="ew")
-        tk.Label(items_hdr, text="Order Items", bg=THEME["beige"], fg=THEME["text"],
-                 font=("Segoe UI", f(9), "bold"), padx=16, pady=9).pack(side="left")
-        self.btn_toggle = tk.Button(items_hdr, text="▾ Hide",
-                                    bg=THEME["beige"], fg=THEME["brown"],
-                                    bd=0, padx=14, pady=9, cursor="hand2",
-                                    font=("Segoe UI", f(9), "bold"),
-                                    command=self._toggle_details)
-        self.btn_toggle.pack(side="right")
-
-        items_outer = tk.Frame(left, bg="#ffffff",
-                               highlightthickness=1, highlightbackground=THEME["border"])
-        items_outer.grid(row=1, column=0, sticky="nsew")
-        items_outer.rowconfigure(0, weight=1)
-        items_outer.columnconfigure(0, weight=1)
-
-        items_canvas = tk.Canvas(items_outer, bg="#ffffff", highlightthickness=0)
-        items_canvas.grid(row=0, column=0, sticky="nsew")
-        items_sb = ttk.Scrollbar(items_outer, orient="vertical", command=items_canvas.yview,
-                                 style="Thick.Vertical.TScrollbar")
-        items_sb.grid(row=0, column=1, sticky="ns")
-        items_canvas.configure(yscrollcommand=items_sb.set)
-
-        self.details_body = tk.Frame(items_canvas, bg="#ffffff")
-        items_win = items_canvas.create_window((0, 0), window=self.details_body, anchor="nw")
-        self.details_body.bind("<Configure>",
-                               lambda _e: items_canvas.configure(scrollregion=items_canvas.bbox("all")),
-                               add="+")
-        items_canvas.bind("<Configure>",
-                          lambda e: items_canvas.itemconfigure(items_win, width=e.width),
-                          add="+")
-
-        def _items_scroll(e):
-            items_canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
-            return "break"
-        items_canvas.bind("<MouseWheel>", _items_scroll, add="+")
-        items_canvas.bind("<Button-4>",
-                          lambda _e: items_canvas.yview_scroll(-self.SCROLL_SPEED_UNITS, "units"), add="+")
-        items_canvas.bind("<Button-5>",
-                          lambda _e: items_canvas.yview_scroll(self.SCROLL_SPEED_UNITS, "units"), add="+")
-
-        self._details_rows = []
-        for _pid, (name, price, qty, _note) in self.cart.items():
-            self._details_rows.append((f"{qty}× {name}", money(qty * price)))
-
-        self._details_expanded.set(True)
-        self._render_details()
-
-        right = tk.Frame(body, bg=THEME["panel"])
-        right.grid(row=0, column=2, sticky="nsew")
-        right.columnconfigure(0, weight=1)
-
-        pad = 18
-
-        total_bar = tk.Frame(right, bg=THEME["success"])
-        total_bar.pack(fill="x")
-        tk.Label(total_bar, text="TOTAL", bg=THEME["success"], fg="white",
-                 font=("Segoe UI", f(9), "bold"), padx=pad, pady=12).pack(side="left")
-        tk.Label(total_bar, text=money(total), bg=THEME["success"], fg="white",
-                 font=("Segoe UI", f(17), "bold"), padx=pad, pady=12).pack(side="right")
-
-        if discount > 0:
-            disc_bar = tk.Frame(right, bg="#FFF3E0")
-            disc_bar.pack(fill="x")
-            tk.Label(disc_bar, text="Discount applied:", bg="#FFF3E0", fg=THEME["brown"],
-                     font=("Segoe UI", f(8)), padx=pad, pady=5).pack(side="left")
-            tk.Label(disc_bar, text=f"−{money(discount)}", bg="#FFF3E0", fg=THEME["danger"],
-                     font=("Segoe UI", f(9), "bold"), padx=pad, pady=5).pack(side="right")
-
-        tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x", pady=(10, 0))
-        tk.Label(right, text="ORDER TYPE", bg=THEME["panel"], fg=THEME["muted"],
-                 font=("Segoe UI", f(8), "bold")).pack(anchor="w", padx=pad, pady=(8, 4))
-
-        order_type_frame = tk.Frame(right, bg=THEME["panel"])
-        order_type_frame.pack(fill="x", padx=pad, pady=(0, 6))
-        order_type_frame.columnconfigure(0, weight=1, uniform="ot")
-        order_type_frame.columnconfigure(1, weight=1, uniform="ot")
-
-        def _make_ot_btn(label: str, value: str, col: int):
-            def _select():
-                self.var_order_type.set(value)
-                _update_ot_buttons()
-            btn = tk.Button(order_type_frame, text=label, command=_select,
-                            bd=0, pady=sp(8), cursor="hand2",
-                            font=("Segoe UI", f(10), "bold"))
-            btn.grid(row=0, column=col, sticky="ew",
-                     padx=(0, 4) if col == 0 else (4, 0))
-            return btn
-
-        btn_dine = _make_ot_btn("Dine In", "DINE_IN", 0)
-        btn_take = _make_ot_btn("Take Out", "TAKE_OUT", 1)
-
-        def _update_ot_buttons():
-            if self.var_order_type.get() == "DINE_IN":
-                btn_dine.configure(bg=THEME["success"], fg="white")
-                btn_take.configure(bg=THEME["panel2"], fg=THEME["text"])
-                table_lbl.configure(text="Table No.  (required)")
-            else:
-                btn_take.configure(bg=THEME["success"], fg="white")
-                btn_dine.configure(bg=THEME["panel2"], fg=THEME["text"])
-                table_lbl.configure(text="Order No.  (required)")
-
-        tk.Label(right, text="TABLE / ORDER NO.", bg=THEME["panel"], fg=THEME["muted"],
-                 font=("Segoe UI", f(8), "bold")).pack(anchor="w", padx=pad, pady=(4, 2))
-        table_lbl = tk.Label(right, text="Table No.  (required)",
-                             bg=THEME["panel"], fg=THEME["muted"],
-                             font=("Segoe UI", f(8)))
-        table_lbl.pack(anchor="w", padx=pad, pady=(0, 3))
-
-        ent_table = tk.Entry(right, textvariable=self.var_table_number,
-                             bd=0, bg=THEME["panel2"], fg=THEME["text"],
-                             insertbackground="#3d2b1f", insertwidth=2,
-                             font=("Segoe UI", f(10)))
-        ent_table.pack(fill="x", padx=pad, ipady=sp(8), pady=(0, 6))
-        ent_table.bind("<FocusIn>",  lambda _e: setattr(self.parent_pos, "_keypad_target", self.var_table_number), add="+")
-        ent_table.focus_set()
-        _update_ot_buttons()
-
-        tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x")
-        tk.Label(right, text="Payment", bg=THEME["panel"], fg=THEME["muted"],
-                 font=("Segoe UI", f(8), "bold")).pack(anchor="w", padx=pad, pady=(8, 4))
-
-        radio_frame = tk.Frame(right, bg=THEME["panel"])
-        radio_frame.pack(fill="x", padx=pad, pady=(0, 4))
-        for val, label in [("Cash", "Cash"), ("Bank/E-Wallet", "Bank Transfer / E-Wallet")]:
-            tk.Radiobutton(radio_frame, text=label, value=val, variable=self.var_payment,
-                           bg=THEME["panel"], fg=THEME["text"], activebackground=THEME["panel"],
-                           font=("Segoe UI", f(10)), selectcolor=THEME["beige"]).pack(anchor="w", pady=sp(4))
-
-        tk.Label(right, text="Amount Paid", bg=THEME["panel"], fg=THEME["muted"],
-                 font=("Segoe UI", f(8))).pack(anchor="w", padx=pad, pady=(6, 3))
-
-        amt_frame = tk.Frame(right, bg=THEME["panel2"])
-        amt_frame.pack(fill="x", padx=pad, pady=(0, 3))
-        amt_frame.columnconfigure(1, weight=1)
-        tk.Label(amt_frame, text="₱", bg=THEME["panel2"], fg=THEME["muted"],
-                 font=("Segoe UI", f(10))).grid(row=0, column=0, padx=(8, 2), sticky="ns")
-        _amt_ent = tk.Entry(amt_frame, textvariable=self.var_amount_paid,
-                 bd=0, bg=THEME["panel2"], fg=THEME["text"],
-                 insertbackground="#3d2b1f", insertwidth=2,
-                 font=("Segoe UI", f(10)))
-        _amt_ent.grid(row=0, column=1, sticky="ew", ipady=sp(8), padx=(0, 4))
-        _amt_ent.bind("<FocusIn>",  lambda _e: setattr(self.parent_pos, "_keypad_target", self.var_amount_paid), add="+")
-        _amt_ent.bind("<Key>", self.parent_pos._on_amount_key, add="+")
-
-        self._change_lbl = tk.Label(right, text="", bg=THEME["panel"], fg=THEME["muted"],
-                                    font=("Segoe UI", f(9), "bold"), anchor="w")
-        self._change_lbl.pack(fill="x", padx=pad, pady=(0, 6), ipady=4)
-
-        def _update_change_lbl(*_):
-            try:
-                paid = float(self.var_amount_paid.get().strip() or "0")
-            except ValueError:
-                self._change_lbl.configure(text="", fg=THEME["muted"], bg=THEME["panel"])
-                return
-            if self.var_payment.get() == "Bank/E-Wallet":
-                self._change_lbl.configure(text="", fg=THEME["muted"], bg=THEME["panel"])
-                return
-            diff = paid - self._total_amount
-            if diff < 0:
-                self._change_lbl.configure(
-                    text=f"  Insufficient  —  need {money(abs(diff))} more",
-                    fg=THEME["danger"], bg="#FEF2F2")
-            else:
-                self._change_lbl.configure(
-                    text=f"  Change:  {money(diff)}",
-                    fg=THEME["success"], bg="#F0FDF4")
-
-        self.var_amount_paid.trace_add("write", _update_change_lbl)
-        self.var_payment.trace_add("write", _update_change_lbl)
-
-        tk.Frame(right, bg=THEME["panel"]).pack(fill="both", expand=True)
-        tk.Frame(right, bg=THEME["border"], height=1).pack(fill="x")
-
-        btn_row = tk.Frame(right, bg=THEME["panel"])
-        btn_row.pack(fill="x", padx=pad, pady=10)
-        btn_row.columnconfigure(0, weight=1, uniform="cbtn")
-        btn_row.columnconfigure(1, weight=2, uniform="cbtn")
-
-        tk.Button(btn_row, text="Cancel",
-                  bg=THEME["panel2"], fg=THEME["danger"],
-                  activebackground=THEME["danger"], activeforeground="white",
-                  bd=0, pady=sp(10), cursor="hand2",
-                  font=("Segoe UI", f(10)), command=self.destroy,
-                  ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
-
-        self.btn_confirm = tk.Button(btn_row, text="Confirm Checkout",
-                                     bg=THEME["success"], fg="white",
-                                     activebackground=THEME["brown_dark"], activeforeground="white",
-                                     bd=0, pady=sp(10), cursor="hand2",
-                                     font=("Segoe UI", f(10), "bold"),
-                                     command=self._confirm)
-        self.btn_confirm.grid(row=0, column=1, sticky="ew")
-
-        self.var_payment.trace_add("write", lambda *_: self._update_confirm_text())
-        self._update_confirm_text()
-
-        self.bind("<Return>", lambda _e: self._confirm(), add="+")
-        self.bind("<Escape>", lambda _e: self.destroy(), add="+")
-
-    def _section_label(self, parent: tk.Widget, text: str) -> None:
-        row = tk.Frame(parent, bg=THEME["bg"])
-        row.pack(fill="x", padx=18, pady=(10, 4))
-        tk.Label(row, text=text.upper(), bg=THEME["bg"], fg=THEME["muted"],
-                 font=("Segoe UI", ui_scale.scale_font(8), "bold")).pack(side="left")
-        tk.Frame(row, bg=THEME["border"], height=1).pack(
-            side="left", fill="x", expand=True, padx=(8, 0), pady=5)
-
-    def _toggle_details(self):
-        self._details_expanded.set(not self._details_expanded.get())
-        self._render_details()
-
-    def _render_details(self):
-        f  = ui_scale.scale_font
-        sp = ui_scale.s
-
-        for w in self.details_body.winfo_children():
-            w.destroy()
-
-        expanded = self._details_expanded.get()
-        self.btn_toggle.configure(text="▾ Hide" if expanded else "▸ Show")
-
-        rows = self._details_rows if expanded else self._details_rows[:5]
-        for i, (left_text, right_text) in enumerate(rows):
-            row_bg = "#F8F9FA" if i % 2 == 0 else "#ffffff"
-            r = tk.Frame(self.details_body, bg=row_bg)
-            r.pack(fill="x")
-            tk.Label(r, text=left_text, bg=row_bg, fg=THEME["text"],
-                     font=("Segoe UI", f(9)), anchor="w").pack(side="left", padx=(12, 4), pady=sp(6))
-            tk.Label(r, text=right_text, bg=row_bg, fg=THEME["text"],
-                     font=("Segoe UI", f(9), "bold"), anchor="e").pack(side="right", padx=(4, 12), pady=sp(6))
-
-        if not expanded and len(self._details_rows) > 5:
-            tk.Label(self.details_body,
-                     text=f"+ {len(self._details_rows) - 5} more items",
-                     bg="#ffffff", fg=THEME["muted"],
-                     font=("Segoe UI", f(8), "italic")).pack(anchor="w", pady=(sp(4), 0))
-
-        if self._discount_amount > 0:
-            subtotal_val = self._total_amount + self._discount_amount
-            srow = tk.Frame(self.details_body, bg="#ffffff")
-            srow.pack(fill="x", pady=(sp(6), 0))
-            tk.Label(srow, text="Subtotal", bg="#ffffff", fg=THEME["muted"],
-                     font=("Segoe UI", f(9))).pack(side="left", padx=(12, 4))
-            tk.Label(srow, text=money(subtotal_val), bg="#ffffff", fg=THEME["muted"],
-                     font=("Segoe UI", f(9))).pack(side="right", padx=(4, 12))
-
-            drow = tk.Frame(self.details_body, bg="#ffffff")
-            drow.pack(fill="x", pady=(sp(2), 0))
-            tk.Label(drow, text="Discount", bg="#ffffff", fg=THEME["muted"],
-                     font=("Segoe UI", f(9))).pack(side="left", padx=(12, 4))
-            tk.Label(drow, text=f"−{money(self._discount_amount)}", bg="#ffffff", fg=THEME["danger"],
-                     font=("Segoe UI", f(9), "bold")).pack(side="right", padx=(4, 12))
-
-        tk.Frame(self.details_body, bg=THEME["border"], height=1).pack(fill="x", pady=(sp(8), 0))
-
-        tot = tk.Frame(self.details_body, bg=THEME["success"])
-        tot.pack(fill="x", pady=(sp(2), 0))
-        tk.Label(tot, text="TOTAL", bg=THEME["success"], fg="white",
-                 font=("Segoe UI", f(9), "bold"), padx=sp(12), pady=sp(9)).pack(side="left")
-        tk.Label(tot, text=money(self._total_amount), bg=THEME["success"], fg="white",
-                 font=("Segoe UI", f(14), "bold"), padx=sp(12), pady=sp(9)).pack(side="right")
-
-    def _update_confirm_text(self):
-        if self.var_payment.get() == "Bank/E-Wallet":
-            self.btn_confirm.configure(text="Confirm as pending", bg="#d3a24a")
-        else:
-            self.btn_confirm.configure(text="Confirm Checkout", bg=THEME["success"])
-
-    def _confirm(self):
-        table_number = self.var_table_number.get().strip()
-        if not table_number:
-            messagebox.showerror("Table / Order No.", "Table or Order number is required.")
-            return
-
-        order_type = self.var_order_type.get()
-        if order_type == "DINE_IN":
-            try:
-                _tbl_int = int(table_number)
-                if not table_number.lstrip("-").isdigit() or _tbl_int < 1 or _tbl_int > 20:
-                    raise ValueError
-            except (ValueError, TypeError):
-                messagebox.showerror("Table Number", "Table number must be from 1 to 20 only.")
-                return
-        elif order_type == "TAKE_OUT":
-            try:
-                _ord_int = int(table_number)
-                if not table_number.lstrip("-").isdigit() or _ord_int < 1 or _ord_int > 30:
-                    raise ValueError
-            except (ValueError, TypeError):
-                messagebox.showerror("Order Number", "Order number must be from 1 to 30 only.")
-                return
-
-        _disc_labels = {"PWD": "PWD", "SENIOR": "SENIOR", "SPECIAL": "SPECIAL",
-                        "amount": "AMOUNT", "percent": "PERCENT", "NONE": "NONE"}
-        discount_type = _disc_labels.get(self.discount_mode, "NONE")
-
-        paid_str = self.var_amount_paid.get().strip()
-        if paid_str == "":
-            paid_str = "0"
-        try:
-            paid = float(paid_str)
-        except Exception:
-            messagebox.showerror("Amount Paid", "Invalid amount paid.")
-            return
-
-        subtotal, discount, tax, total = self._calc_totals()
-        payment = self.var_payment.get()
-        status = "Pending" if payment == "Bank/E-Wallet" else "Completed"
-
-        if payment == "Cash" and paid < total:
-            messagebox.showerror("Cash", f"Amount paid must be at least {money(total)}.")
-            return
-
-        change = max(0.0, paid - total) if payment == "Cash" else 0.0
-        cash_received = paid if payment == "Cash" else 0.0
-
-        u = self.auth.get_current_user()
-        cashier_id = u.user_id if u else 0
-        customer_name = table_number
-
-        items = [{"product_id": pid, "qty": qty, "unit_price": price, "note": note}
-                 for pid, (_name, price, qty, note) in self.cart.items()]
-        try:
-            order_id = self.svc.create_order(
-                cashier_id=cashier_id,
-                customer_name=customer_name,
-                payment_method=payment,
-                status=status,
-                reference_no="",
-                items=items,
-                subtotal=subtotal,
-                discount=discount,
-                tax=tax,
-                total=total,
-                amount_paid=paid,
-                cash_received=cash_received,
-                change_due=change,
-                order_type=order_type,
-                table_number=table_number,
-                discount_type=discount_type,
-            )
-            if status == "Pending":
-                messagebox.showinfo("Saved", f"Order saved as Pending.\n\nTransaction ID: {order_id}")
-            else:
-                messagebox.showinfo("Completed",
-                    f"Order completed.\n\nTransaction ID: {order_id}\nChange: {money(change)}")
-            if self.on_done:
-                self.on_done(True, status == "Completed")
-            self.destroy()
-        except Exception as e:
-            messagebox.showerror("Checkout Error", f"Failed to save order.\n\n{e}")

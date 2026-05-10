@@ -297,6 +297,21 @@ class Database:
             self._add_column_if_missing("raw_materials", "expiration_date", "TEXT DEFAULT NULL")
 
         # =====================================================================
+        # RAW_MATERIAL_LOGS — backfill columns added in later versions
+        # (old_quantity, new_quantity, username) so logs carry full detail.
+        # =====================================================================
+        if self._table_exists("raw_material_logs"):
+            self._add_column_if_missing(
+                "raw_material_logs", "old_quantity", "REAL NOT NULL DEFAULT 0"
+            )
+            self._add_column_if_missing(
+                "raw_material_logs", "new_quantity", "REAL NOT NULL DEFAULT 0"
+            )
+            self._add_column_if_missing(
+                "raw_material_logs", "username", "TEXT NOT NULL DEFAULT ''"
+            )
+
+        # =====================================================================
         # RAW_MATERIAL_LOGS TABLE — create if missing (new table)
         # =====================================================================
         if not self._table_exists("raw_material_logs"):

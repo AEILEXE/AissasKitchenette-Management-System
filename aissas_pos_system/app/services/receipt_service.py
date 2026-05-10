@@ -73,7 +73,8 @@ class ReceiptService:
     """Generates 80mm-style thermal receipt PDFs using reportlab."""
 
     @staticmethod
-    def generate_receipt(order_data: dict[str, Any], items: list[dict[str, Any]]) -> str:
+    def generate_receipt(order_data: dict[str, Any], items: list[dict[str, Any]],
+                         printed_by: str = "") -> str:
         """
         Build a PDF receipt and return its file path.
         Raises RuntimeError if reportlab is not installed.
@@ -258,8 +259,10 @@ class ReceiptService:
         draw_hr(1.0, 6.0)
 
         # ── Footer ────────────────────────────────────────────────────────────
-        draw_text(f"Printed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                  size=7, align="center")
+        printed_label = f"Printed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        draw_text(printed_label, size=7, align="center")
+        if printed_by:
+            draw_text(f"Printed by: {printed_by}", size=7, align="center")
         draw_text("Thank you for your order!", font=FONT_BOLD, size=8, align="center")
         move(4)
 

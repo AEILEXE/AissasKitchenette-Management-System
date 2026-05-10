@@ -55,6 +55,9 @@ def _format_display_name(user) -> str:
 
 
 class AppWindow:
+    # ── Inactivity lock policy ────────────────────────────────────────────
+    INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000   # 15 minutes (configurable)
+
     def __init__(self, root: tk.Tk, db: Database, auth_service: AuthService):
         self.root = root
         self.db = db
@@ -63,6 +66,13 @@ class AppWindow:
         self._view_cache: dict[str, tk.Widget] = {}
         self._resize_pending: bool = False
         self._wm_state: str = "normal"
+        # Single inactivity-lock state — one timer, no duplicates.
+        self._idle_after: Optional[str] = None
+        self._lock_overlay: Optional[tk.Toplevel] = None
+        self._idle_armed: bool = False
+        # Activity bindings are attached at most ONCE per AppWindow lifetime
+        # to prevent handler accumulation across logout/login cycles.
+        self._activity_bindings_attached: bool = False
 
         self.root.configure(bg=THEME["bg"])
         ui_styles.apply_global_styles()
@@ -355,6 +365,11 @@ class AppWindow:
             label="  Account Settings  ",
             command=self.show_account_settings,
         )
+        if self.auth_service.has_permission(P_DATABASE):
+            self.settings_menu.add_command(
+                label="  Database Backup  ",
+                command=self.show_backup,
+            )
         self.settings_menu.add_separator()
         self.settings_menu.add_command(
             label="  Logout  ",
@@ -388,6 +403,7 @@ class AppWindow:
     # ── Navigation ────────────────────────────────────────────────────────────
 
     def show_login(self) -> None:
+        self._disarm_inactivity_lock()
         self.auth_service.logout()
         self._show_shell(False)
         self._evict_all_cached_views()
@@ -443,6 +459,8 @@ class AppWindow:
         self._build_nav()
         self._show_welcome()
         self.root.after(30, self._finish_login_navigation)
+        # Arm inactivity lock now that a user is logged in.
+        self._arm_inactivity_lock()
 
     def _show_loading_screen(self) -> None:
         """Brief loading indicator shown while the main view is being built."""
@@ -613,6 +631,100 @@ class AppWindow:
         except Exception:
             pass
 
+    # ── Inactivity lock ──────────────────────────────────────────────────────
+
+    def _arm_inactivity_lock(self) -> None:
+        """Start tracking activity and (re)start the idle timer.
+        Idempotent — repeated calls don't add duplicate bindings or timers.
+        Activity bindings are attached at most ONCE per AppWindow lifetime
+        so logout/login cycles do not accumulate Tk event handlers."""
+        if not self._activity_bindings_attached:
+            for ev in ("<Any-KeyPress>", "<Any-ButtonPress>", "<Motion>"):
+                try:
+                    self.root.bind_all(ev, self._on_user_activity, add="+")
+                except Exception:
+                    pass
+            self._activity_bindings_attached = True
+        # Always (re)start a single timer
+        self._idle_armed = True
+        self._reset_idle_timer()
+
+    def _disarm_inactivity_lock(self) -> None:
+        """Stop tracking and cancel any pending lock timer.
+        Bindings stay attached (single-shot install) — the handler returns
+        early when no user is logged in, so no work is done."""
+        if self._idle_after is not None:
+            try:
+                self.root.after_cancel(self._idle_after)
+            except Exception:
+                pass
+            self._idle_after = None
+        self._idle_armed = False
+
+    def _on_user_activity(self, _event=None) -> None:
+        # While locked, activity should not silently restart the timer.
+        if self._lock_overlay is not None:
+            return
+        # Skip cheaply when no one is logged in or tracker is disarmed.
+        if not self._idle_armed:
+            return
+        if self.auth_service.get_current_user() is None:
+            return
+        self._reset_idle_timer()
+
+    def _reset_idle_timer(self) -> None:
+        if self._idle_after is not None:
+            try:
+                self.root.after_cancel(self._idle_after)
+            except Exception:
+                pass
+            self._idle_after = None
+        if self.auth_service.get_current_user() is None:
+            return  # not logged in — don't arm
+        self._idle_after = self.root.after(
+            self.INACTIVITY_TIMEOUT_MS, self._on_inactivity_lock
+        )
+
+    def _on_inactivity_lock(self) -> None:
+        self._idle_after = None
+        if self.auth_service.get_current_user() is None:
+            return
+        # Prevent overlay stacking — even if an existing overlay was
+        # destroyed externally, never instantiate a second concurrent one.
+        existing = self._lock_overlay
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    try:
+                        existing.lift()
+                    except Exception:
+                        pass
+                    return
+            except Exception:
+                pass
+            self._lock_overlay = None
+        try:
+            self._lock_overlay = _InactivityLockOverlay(
+                self.root, self.auth_service,
+                on_unlock=self._on_unlock,
+                on_logout=self._on_lock_logout,
+            )
+        except Exception as exc:
+            from app.utils import log_error
+            log_error("Inactivity lock overlay", exc)
+            # Fall back to logout if overlay can't render
+            self._on_lock_logout()
+
+    def _on_unlock(self) -> None:
+        self._lock_overlay = None
+        # Resume idle tracking with a fresh timer
+        self._reset_idle_timer()
+
+    def _on_lock_logout(self) -> None:
+        self._lock_overlay = None
+        self._disarm_inactivity_lock()
+        self.show_login()
+
     def _refresh_current_view(self) -> None:
         key = self._active_nav_key
         # Evict the cached view for this key so it's fully rebuilt (e.g. after zoom)
@@ -704,3 +816,193 @@ class _WelcomeToast(tk.Toplevel):
             self.destroy()
         except Exception:
             pass
+
+
+# ── Inactivity Lock Overlay ───────────────────────────────────────────────────
+
+class _InactivityLockOverlay(tk.Toplevel):
+    """
+    Modal screen-locking overlay shown after the inactivity timeout.
+
+    The current user must re-enter their password to unlock — preserves the
+    POS cart, transaction view state, etc. Logout button drops to login.
+    Any underlying view is left intact (not destroyed), so the cart never
+    gets cleared.
+    """
+
+    _BG    = "#1a1410"
+    _PANEL = "#FFFFFF"
+
+    def __init__(self, parent: tk.Tk, auth: AuthService,
+                 on_unlock, on_logout):
+        super().__init__(parent)
+        self.auth = auth
+        self.on_unlock = on_unlock
+        self.on_logout = on_logout
+        self._parent_ref = parent
+        self._resize_after: Optional[str] = None
+        self._resize_bind_id: Optional[str] = None
+
+        self.overrideredirect(True)
+        self.configure(bg=self._BG)
+        self.attributes("-topmost", True)
+        try:
+            self.attributes("-alpha", 0.97)
+        except Exception:
+            pass
+
+        # Cover the whole parent window.
+        self._sync_geometry()
+
+        self.grab_set()
+        self.transient(parent)
+
+        # Follow parent resize/maximize/minimize so the overlay never
+        # exposes edges of the underlying view.
+        try:
+            self._resize_bind_id = parent.bind(
+                "<Configure>", self._on_parent_configure, add="+"
+            )
+        except Exception:
+            self._resize_bind_id = None
+
+        # Card container, centered
+        card = tk.Frame(self, bg=self._PANEL, highlightthickness=2,
+                         highlightbackground=THEME.get("accent", "#D4956A"))
+        card.place(relx=0.5, rely=0.5, anchor="center", width=420, height=300)
+
+        tk.Label(
+            card, text="🔒  Session Locked",
+            bg=self._PANEL, fg=THEME["text"],
+            font=("Segoe UI", 16, "bold"),
+        ).pack(pady=(28, 4))
+
+        u = self.auth.get_current_user()
+        uname = getattr(u, "username", "") if u else ""
+        tk.Label(
+            card,
+            text=("Inactivity timeout. Enter your password to continue." +
+                  (f"\nLogged in as: {uname}" if uname else "")),
+            bg=self._PANEL, fg=THEME.get("muted", "#7B6B57"),
+            font=("Segoe UI", 9),
+            justify="center",
+        ).pack(pady=(0, 18))
+
+        # Password input
+        self._pw_var = tk.StringVar()
+        entry = tk.Entry(
+            card, textvariable=self._pw_var,
+            font=("Segoe UI", 12), bg="#F4EFEA",
+            bd=0, show="*",
+            insertbackground="#3d2b1f", insertwidth=2,
+            justify="center",
+        )
+        entry.pack(fill="x", padx=40, ipady=10)
+        entry.focus_set()
+
+        self._err_lbl = tk.Label(
+            card, text="", bg=self._PANEL,
+            fg=THEME.get("danger", "#991B1B"),
+            font=("Segoe UI", 9, "italic"),
+        )
+        self._err_lbl.pack(pady=(8, 0))
+
+        btns = tk.Frame(card, bg=self._PANEL)
+        btns.pack(fill="x", padx=40, pady=(18, 24))
+
+        tk.Button(
+            btns, text="Logout", command=self._do_logout,
+            bg="#FFFFFF", fg=THEME["text"], bd=1,
+            relief="solid", padx=14, pady=8, cursor="hand2",
+            font=("Segoe UI", 9),
+        ).pack(side="left")
+
+        tk.Button(
+            btns, text="Unlock", command=self._do_unlock,
+            bg=THEME.get("accent", "#D4956A"), fg="white", bd=0,
+            padx=18, pady=9, cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="right")
+
+        self.bind("<Return>", lambda _e: self._do_unlock())
+        # Block Escape so the overlay can't be casually dismissed
+        self.bind("<Escape>", lambda _e: "break")
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
+
+    def _do_unlock(self) -> None:
+        u = self.auth.get_current_user()
+        if u is None:
+            # Auth lost mid-lock — drop to login safely.
+            try:
+                self._cleanup()
+                self.destroy()
+            finally:
+                self.on_logout()
+            return
+        pw = self._pw_var.get() or ""
+        if not pw:
+            self._err_lbl.configure(text="Enter your password.")
+            return
+        try:
+            ok, _ = self.auth.verify_password(u.username, pw)
+        except Exception:
+            ok = False
+        if not ok:
+            self._err_lbl.configure(text="Incorrect password.")
+            self._pw_var.set("")
+            return
+        try:
+            self._cleanup()
+            self.destroy()
+        finally:
+            self.on_unlock()
+
+    def _do_logout(self) -> None:
+        try:
+            self._cleanup()
+            self.destroy()
+        finally:
+            self.on_logout()
+
+    # ── Geometry sync ─────────────────────────────────────────────────────
+    def _sync_geometry(self) -> None:
+        try:
+            parent = self._parent_ref
+            if not parent or not parent.winfo_exists():
+                return
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            pw = max(1, parent.winfo_width())
+            ph = max(1, parent.winfo_height())
+            if pw <= 1 or ph <= 1:
+                return
+            self.geometry(f"{pw}x{ph}+{px}+{py}")
+        except Exception:
+            pass
+
+    def _on_parent_configure(self, _event=None) -> None:
+        # Debounce — Tk fires <Configure> rapidly during drag/resize.
+        if self._resize_after is not None:
+            try:
+                self.after_cancel(self._resize_after)
+            except Exception:
+                pass
+        try:
+            self._resize_after = self.after(50, self._sync_geometry)
+        except Exception:
+            self._resize_after = None
+
+    def _cleanup(self) -> None:
+        if self._resize_after is not None:
+            try:
+                self.after_cancel(self._resize_after)
+            except Exception:
+                pass
+            self._resize_after = None
+        try:
+            if self._resize_bind_id and self._parent_ref \
+                    and self._parent_ref.winfo_exists():
+                self._parent_ref.unbind("<Configure>", self._resize_bind_id)
+        except Exception:
+            pass
+        self._resize_bind_id = None

@@ -168,6 +168,91 @@ class DashboardView(tk.Frame):
                     data["top_sellers"] = t_orders.best_sellers_today(limit=8)
                 except Exception:
                     data["top_sellers"] = []
+
+                # Sales-trend: last 7 days, completed only
+                try:
+                    rows = t_db.fetchall(
+                        """
+                        SELECT DATE(datetime,'localtime') AS d,
+                               COALESCE(SUM(total),0)     AS total,
+                               COALESCE(SUM(
+                                   (SELECT SUM(qty) FROM order_items oi
+                                    WHERE oi.order_id=o.id AND oi.voided=0)
+                               ),0) AS qty
+                        FROM orders o
+                        WHERE status='Completed'
+                          AND DATE(datetime,'localtime') >= DATE('now','localtime','-6 days')
+                        GROUP BY DATE(datetime,'localtime');
+                        """
+                    )
+                    by_d = {str(r["d"]): r for r in rows}
+                    import datetime as _d2
+                    today = _d2.date.today()
+                    series = []
+                    for off in range(6, -1, -1):
+                        day = today - _d2.timedelta(days=off)
+                        key = day.isoformat()
+                        r = by_d.get(key)
+                        series.append({
+                            "date":  day,
+                            "total": float(r["total"]) if r else 0.0,
+                            "qty":   int(r["qty"]) if r else 0,
+                        })
+                    data["sales_trend"] = series
+                except Exception:
+                    data["sales_trend"] = []
+
+                # Payment method breakdown (this month)
+                try:
+                    pay_rows = t_db.fetchall(
+                        """
+                        SELECT COALESCE(NULLIF(payment_method,''), 'Unknown') AS method,
+                               COUNT(*) AS cnt,
+                               COALESCE(SUM(total),0) AS total
+                        FROM orders
+                        WHERE status='Completed'
+                          AND strftime('%Y-%m', datetime,'localtime')
+                              = strftime('%Y-%m', 'now', 'localtime')
+                        GROUP BY method
+                        ORDER BY total DESC;
+                        """
+                    )
+                    data["payments"] = [dict(r) for r in pay_rows]
+                except Exception:
+                    data["payments"] = []
+
+                # Dine-In vs Take-Out (this month)
+                try:
+                    ot_rows = t_db.fetchall(
+                        """
+                        SELECT COALESCE(NULLIF(order_type,''), 'DINE_IN') AS otype,
+                               COUNT(*) AS cnt
+                        FROM orders
+                        WHERE status='Completed'
+                          AND strftime('%Y-%m', datetime,'localtime')
+                              = strftime('%Y-%m', 'now', 'localtime')
+                        GROUP BY otype;
+                        """
+                    )
+                    data["order_types"] = [dict(r) for r in ot_rows]
+                except Exception:
+                    data["order_types"] = []
+
+                # Status breakdown (today + month)
+                try:
+                    st_rows = t_db.fetchall(
+                        """
+                        SELECT status, COUNT(*) AS cnt
+                        FROM orders
+                        WHERE strftime('%Y-%m', datetime,'localtime')
+                              = strftime('%Y-%m', 'now', 'localtime')
+                        GROUP BY status;
+                        """
+                    )
+                    data["status_counts"] = {r["status"]: int(r["cnt"]) for r in st_rows}
+                except Exception:
+                    data["status_counts"] = {}
+
                 data["recent"] = []  # not displayed — removed from dashboard
             except Exception as exc:
                 import traceback
@@ -346,6 +431,24 @@ class DashboardView(tk.Frame):
                            str(len(low_mats)), "click to view inventory",
                            THEME["warning"], "\U0001f9c2", self.go_inventory)
 
+        # ── Sales trend + Quantity sold (last 7 days) ─────────────────────
+        try:
+            self._build_trend_charts(wrap, data.get("sales_trend") or [], PAD)
+        except Exception:
+            pass
+
+        # ── Payment / Dine-vs-Take / Status mini-charts ───────────────────
+        try:
+            self._build_breakdown_row(
+                wrap,
+                data.get("payments") or [],
+                data.get("order_types") or [],
+                data.get("status_counts") or {},
+                PAD,
+            )
+        except Exception:
+            pass
+
         # ── Top Sellers ───────────────────────────────────────────────────
         top_sellers = list(data.get("top_sellers", []))
         self._build_top_sellers(wrap, top_sellers, PAD)
@@ -444,6 +547,190 @@ class DashboardView(tk.Frame):
         sub_lbl.pack(anchor="w", padx=16, pady=(0, 16))
         if cmd:
             sub_lbl.bind("<Button-1>", lambda _e: cmd())
+
+    # ── Tk-Canvas charts (no extra deps) ──────────────────────────────────
+    def _draw_bar_chart(self, canvas: tk.Canvas, labels, values,
+                        bar_color: str, value_fmt=str,
+                        height: int = 180, padding=(40, 16, 12, 28)) -> None:
+        """Render a simple bar chart inside an existing canvas. Pure Tk."""
+        canvas.update_idletasks()
+        w = max(int(canvas.winfo_width() or canvas.winfo_reqwidth()), 200)
+        h = max(int(canvas.winfo_height() or height), height)
+        canvas.delete("all")
+
+        pad_l, pad_t, pad_r, pad_b = padding
+        plot_w = max(20, w - pad_l - pad_r)
+        plot_h = max(20, h - pad_t - pad_b)
+
+        nums = [float(v or 0) for v in values]
+        max_v = max(nums) if nums else 0.0
+        if max_v <= 0:
+            canvas.create_text(w / 2, h / 2,
+                               text="No data for the selected period",
+                               fill=_MUTED, font=("Segoe UI", 9, "italic"))
+            return
+
+        # Y-axis line
+        canvas.create_line(pad_l, pad_t, pad_l, pad_t + plot_h,
+                           fill=_BORDER)
+        canvas.create_line(pad_l, pad_t + plot_h, pad_l + plot_w, pad_t + plot_h,
+                           fill=_BORDER)
+
+        # Y label (max)
+        canvas.create_text(pad_l - 4, pad_t,
+                           text=value_fmt(max_v), anchor="e",
+                           fill=_MUTED, font=("Segoe UI", 8))
+        canvas.create_text(pad_l - 4, pad_t + plot_h,
+                           text="0", anchor="e",
+                           fill=_MUTED, font=("Segoe UI", 8))
+
+        n = max(1, len(nums))
+        slot = plot_w / n
+        bw   = max(8, slot * 0.6)
+
+        for i, v in enumerate(nums):
+            x_center = pad_l + slot * i + slot / 2
+            x0 = x_center - bw / 2
+            x1 = x_center + bw / 2
+            bh = (v / max_v) * plot_h if max_v else 0
+            y1 = pad_t + plot_h
+            y0 = y1 - bh
+            canvas.create_rectangle(x0, y0, x1, y1,
+                                     fill=bar_color, outline="")
+            # Value label above bar
+            if v > 0:
+                canvas.create_text((x0 + x1) / 2, y0 - 4,
+                                    text=value_fmt(v), anchor="s",
+                                    fill=_TEXT, font=("Segoe UI", 8))
+            # X label
+            canvas.create_text((x0 + x1) / 2, y1 + 4,
+                                text=str(labels[i] if i < len(labels) else ""),
+                                anchor="n",
+                                fill=_MUTED, font=("Segoe UI", 8))
+
+    def _build_trend_charts(self, wrap, series: list, PAD: int) -> None:
+        if not series:
+            return
+        self._section_header(wrap, "Sales Trend — Last 7 Days", PAD,
+                              top_pady=(0, 8))
+        sec = tk.Frame(wrap, bg=_BG)
+        sec.pack(fill="x", padx=PAD, pady=(0, 16))
+        sec.columnconfigure(0, weight=1, uniform="trend")
+        sec.columnconfigure(1, weight=1, uniform="trend")
+
+        labels = [s["date"].strftime("%a") for s in series]
+        sales  = [s["total"] for s in series]
+        qtys   = [s["qty"]   for s in series]
+
+        def _money_short(v: float) -> str:
+            try:
+                v = float(v)
+            except Exception:
+                v = 0.0
+            if v >= 1000:
+                return f"₱{v/1000:.1f}k"
+            return f"₱{v:.0f}"
+
+        # ── Sales card ──
+        card1 = tk.Frame(sec, bg=_PANEL, highlightthickness=1,
+                         highlightbackground=_BORDER)
+        card1.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        tk.Label(card1, text="Sales (₱)", bg=_PANEL, fg=_MUTED,
+                 font=("Segoe UI", 9, "bold")
+                 ).pack(anchor="w", padx=12, pady=(10, 0))
+        cv1 = tk.Canvas(card1, bg=_PANEL, height=190, highlightthickness=0)
+        cv1.pack(fill="x", padx=8, pady=(0, 10))
+
+        # ── Qty card ──
+        card2 = tk.Frame(sec, bg=_PANEL, highlightthickness=1,
+                         highlightbackground=_BORDER)
+        card2.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        tk.Label(card2, text="Quantity Sold", bg=_PANEL, fg=_MUTED,
+                 font=("Segoe UI", 9, "bold")
+                 ).pack(anchor="w", padx=12, pady=(10, 0))
+        cv2 = tk.Canvas(card2, bg=_PANEL, height=190, highlightthickness=0)
+        cv2.pack(fill="x", padx=8, pady=(0, 10))
+
+        # Re-render on resize so the chart fills its card
+        def _draw1(_e=None):
+            self._draw_bar_chart(cv1, labels, sales, _RED, _money_short)
+        def _draw2(_e=None):
+            self._draw_bar_chart(cv2, labels, qtys, _SB, lambda v: f"{int(v)}")
+        cv1.bind("<Configure>", _draw1, add="+")
+        cv2.bind("<Configure>", _draw2, add="+")
+        self.after(60, _draw1)
+        self.after(60, _draw2)
+
+    def _build_breakdown_row(self, wrap, payments, order_types,
+                              status_counts, PAD: int) -> None:
+        if not payments and not order_types and not status_counts:
+            return
+        self._section_header(wrap, "This Month — Breakdown", PAD,
+                              top_pady=(0, 8))
+        sec = tk.Frame(wrap, bg=_BG)
+        sec.pack(fill="x", padx=PAD, pady=(0, 16))
+        sec.columnconfigure(0, weight=1, uniform="brk")
+        sec.columnconfigure(1, weight=1, uniform="brk")
+        sec.columnconfigure(2, weight=1, uniform="brk")
+
+        # Payment methods
+        pcard = tk.Frame(sec, bg=_PANEL, highlightthickness=1,
+                          highlightbackground=_BORDER)
+        pcard.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        tk.Label(pcard, text="Payment Methods", bg=_PANEL, fg=_MUTED,
+                 font=("Segoe UI", 9, "bold")
+                 ).pack(anchor="w", padx=12, pady=(10, 0))
+        cv_p = tk.Canvas(pcard, bg=_PANEL, height=170, highlightthickness=0)
+        cv_p.pack(fill="x", padx=8, pady=(0, 10))
+        p_labels = [str(r.get("method") or "—")[:10] for r in payments]
+        p_values = [float(r.get("total") or 0) for r in payments]
+        def _draw_p(_e=None):
+            def _fmt(v):
+                v = float(v)
+                if v >= 1000: return f"₱{v/1000:.1f}k"
+                return f"₱{v:.0f}"
+            self._draw_bar_chart(cv_p, p_labels, p_values,
+                                  THEME["accent"], _fmt)
+        cv_p.bind("<Configure>", _draw_p, add="+")
+        self.after(60, _draw_p)
+
+        # Dine vs Takeout
+        ocard = tk.Frame(sec, bg=_PANEL, highlightthickness=1,
+                          highlightbackground=_BORDER)
+        ocard.grid(row=0, column=1, sticky="nsew", padx=6)
+        tk.Label(ocard, text="Dine-In vs Take-Out", bg=_PANEL, fg=_MUTED,
+                 font=("Segoe UI", 9, "bold")
+                 ).pack(anchor="w", padx=12, pady=(10, 0))
+        cv_o = tk.Canvas(ocard, bg=_PANEL, height=170, highlightthickness=0)
+        cv_o.pack(fill="x", padx=8, pady=(0, 10))
+        o_map = {
+            (r.get("otype") or "DINE_IN"): int(r.get("cnt") or 0)
+            for r in order_types
+        }
+        o_labels = ["Dine-In", "Take-Out"]
+        o_values = [o_map.get("DINE_IN", 0), o_map.get("TAKE_OUT", 0)]
+        def _draw_o(_e=None):
+            self._draw_bar_chart(cv_o, o_labels, o_values,
+                                  _RED, lambda v: f"{int(v)}")
+        cv_o.bind("<Configure>", _draw_o, add="+")
+        self.after(60, _draw_o)
+
+        # Status counts (Pending / Completed / Cancelled)
+        scard = tk.Frame(sec, bg=_PANEL, highlightthickness=1,
+                          highlightbackground=_BORDER)
+        scard.grid(row=0, column=2, sticky="nsew", padx=(6, 0))
+        tk.Label(scard, text="Order Status", bg=_PANEL, fg=_MUTED,
+                 font=("Segoe UI", 9, "bold")
+                 ).pack(anchor="w", padx=12, pady=(10, 0))
+        cv_s = tk.Canvas(scard, bg=_PANEL, height=170, highlightthickness=0)
+        cv_s.pack(fill="x", padx=8, pady=(0, 10))
+        s_labels = ["Completed", "Pending", "Cancelled"]
+        s_values = [int(status_counts.get(k, 0) or 0) for k in s_labels]
+        def _draw_s(_e=None):
+            self._draw_bar_chart(cv_s, s_labels, s_values,
+                                  THEME["success"], lambda v: f"{int(v)}")
+        cv_s.bind("<Configure>", _draw_s, add="+")
+        self.after(60, _draw_s)
 
     # ── Top Sellers ───────────────────────────────────────────────────────
 
