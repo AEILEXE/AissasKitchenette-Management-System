@@ -1078,12 +1078,14 @@ class POSView(tk.Frame):
 
     # Category tile dimensions (px). Square-ish to mirror product cards.
     _CAT_TILE_W = 118
-    _CAT_TILE_H = 78
+    _CAT_TILE_H = 50
 
     def _build_cat_tile(self, parent: tk.Widget, label: str, *,
-                         icon: str = "📂", is_back: bool = False,
+                         icon: str = "", is_back: bool = False,
                          on_click=None) -> tk.Frame:
-        """Build a single tile (Frame) that visually matches product cards."""
+        """Build a compact text-only tile (no reserved image / icon area).
+        The label is centred vertically and horizontally; a thin accent bar at
+        the top keeps the brand styling and serves as a selection cue."""
         bg = THEME.get("panel2", "#E8DDD0") if is_back else THEME.get("panel", "#FFFFFF")
         accent = THEME.get("muted", "#7B6B57") if is_back else THEME.get("accent", "#D4956A")
 
@@ -1097,26 +1099,34 @@ class POSView(tk.Frame):
         tile.columnconfigure(0, weight=1)
         tile.rowconfigure(1, weight=1)
 
-        # Top accent bar (visible selection cue)
+        # Top accent bar (visible selection cue) — kept thin for compactness
         accent_bar = tk.Frame(tile, bg=accent, height=3)
         accent_bar.grid(row=0, column=0, sticky="ew")
 
         body = tk.Frame(tile, bg=bg)
-        body.grid(row=1, column=0, sticky="nsew", padx=4, pady=(2, 4))
+        body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
 
-        ico_lbl = tk.Label(body, text=icon, bg=bg,
-                           fg=THEME.get("brown", "#6b4a3a"),
-                           font=("Segoe UI", 16))
-        ico_lbl.grid(row=0, column=0, sticky="s", pady=(2, 0))
+        # Inline the back arrow into the label so the back tile matches the
+        # same compact text-only style as every other category card.
+        display_label = label
+        if is_back and icon == "←":
+            display_label = f"←  {label}"
 
-        text_lbl = tk.Label(body, text=label, bg=bg,
-                            fg=THEME.get("text", "#3d2b1f"),
-                            font=("Segoe UI", 9, "bold"),
-                            wraplength=self._CAT_TILE_W - 14,
-                            justify="center")
-        text_lbl.grid(row=1, column=0, sticky="n", pady=(2, 4))
+        text_lbl = tk.Label(
+            body, text=display_label, bg=bg,
+            fg=THEME.get("text", "#3d2b1f"),
+            font=("Segoe UI", 10, "bold"),
+            wraplength=self._CAT_TILE_W - 14,
+            justify="center",
+            anchor="center",
+        )
+        text_lbl.grid(row=0, column=0, sticky="nsew", padx=6, pady=(2, 4))
+
+        # Hidden placeholder so existing code paths that reference an icon
+        # label (e.g. _apply_state) keep working without conditionals.
+        ico_lbl = tk.Label(body, text="", bg=bg)
 
         widgets = (tile, accent_bar, body, ico_lbl, text_lbl)
         for w in widgets:
@@ -1207,7 +1217,7 @@ class POSView(tk.Frame):
             for r in subs:
                 nm = str(r["name"])
                 tile = self._build_cat_tile(
-                    frame, label=nm, icon="🍽",
+                    frame, label=nm, icon="",
                     on_click=lambda n=nm: self._on_category_click(n),
                 )
                 self._cat_buttons[nm] = tile
@@ -1219,7 +1229,7 @@ class POSView(tk.Frame):
                 hint_tile = self._build_cat_tile(
                     frame,
                     label=f"All {parent_label}",
-                    icon="📋",
+                    icon="",
                     is_back=True,
                     on_click=lambda: None,
                 )
@@ -1228,7 +1238,7 @@ class POSView(tk.Frame):
             for r in self.cat_dao.list_main_categories():
                 nm = str(r["name"])
                 tile = self._build_cat_tile(
-                    frame, label=nm, icon="🍽",
+                    frame, label=nm, icon="",
                     on_click=lambda n=nm: self._on_category_click(n),
                 )
                 self._cat_buttons[nm] = tile
@@ -1364,6 +1374,15 @@ class POSView(tk.Frame):
                 rows = []
             finally:
                 thread_db.disconnect()
+
+            # POS displays image-driven cards. Products without an image_path
+            # are kept in inventory management but suppressed here so the grid
+            # never renders empty / placeholder tiles.
+            try:
+                rows = [r for r in rows
+                        if str(_row_get(r, "image_path", "") or "").strip()]
+            except Exception:
+                pass
 
             def _apply() -> None:
                 if self._destroyed or gen != self._load_gen:
@@ -1686,9 +1705,11 @@ class POSView(tk.Frame):
         price   = float(r["price"])
         desc    = str(_row_get(r, "description", "") or "").strip()
         img_rel = _row_get(r, "image_path", None) or ""
-        stock   = int(_row_get(r, "stock_qty", 0) or 0)
         active  = int(_row_get(r, "active", 1) or 1)
-        unavail = (active == 0) or (stock <= 0)
+        # Menu products are not inventory-tracked — only the active flag
+        # (Show / Hide in POS) decides availability. Raw-material stock is
+        # tracked separately.
+        unavail = (active == 0)
 
         card = tk.Frame(
             parent,
@@ -1740,11 +1761,8 @@ class POSView(tk.Frame):
             img_lbl.configure(image=photo, text="")
             img_lbl.image = photo
         else:
-            # Cleaner placeholder — emoji on slightly tinted background
-            img_lbl.configure(text="🍽", image="",
-                              font=("Segoe UI", 26),
-                              fg=THEME.get("muted", "#7B6B57"),
-                              bg=self._CARD_BG)
+            # No image — leave the image area blank (no fallback emoji/icon).
+            img_lbl.configure(text="", image="", bg=self._CARD_BG)
 
         # ── Product name ──────────────────────────────────────────────────────
         name_color = THEME.get("muted", "#7B6B57") if unavail else THEME["text"]
@@ -1779,10 +1797,10 @@ class POSView(tk.Frame):
         price_lbl.grid(row=0, column=0, sticky="ew")
         _bind_click(price_lbl)
 
-        # ── Availability badge (only when unavailable / out-of-stock) ─────────
+        # ── Availability badge (only when hidden from POS / inactive) ─────────
         badge_lbl = tk.Label(
             card,
-            text=("Unavailable" if active == 0 else "Out of Stock"),
+            text="Unavailable",
             bg=THEME.get("danger", "#991B1B"), fg="white",
             font=("Segoe UI", 8, "bold"),
             padx=8, pady=2,
@@ -1844,9 +1862,8 @@ class POSView(tk.Frame):
         price = float(r["price"])
         desc  = str(_row_get(r, "description", "") or "").strip()
         img_rel = _row_get(r, "image_path", None) or ""
-        stock   = int(_row_get(r, "stock_qty", 0) or 0)
         active  = int(_row_get(r, "active", 1) or 1)
-        unavail = (active == 0) or (stock <= 0)
+        unavail = (active == 0)
 
         # Rebind click targets — only when product is available
         for w in refs["clickables"]:
@@ -1884,7 +1901,7 @@ class POSView(tk.Frame):
         # Show/hide availability badge
         try:
             badge = refs["badge_lbl"]
-            badge.configure(text=("Unavailable" if active == 0 else "Out of Stock"))
+            badge.configure(text="Unavailable")
             if unavail:
                 badge.grid(row=3, column=1, sticky="ew", padx=(6, 8), pady=(0, 8))
             else:
@@ -1899,9 +1916,7 @@ class POSView(tk.Frame):
                 refs["img_lbl"].configure(image=photo, text="")
                 refs["img_lbl"].image = photo
             else:
-                refs["img_lbl"].configure(image="", text="🍽",
-                                          font=("Segoe UI", 26),
-                                          fg=THEME.get("muted", "#7B6B57"))
+                refs["img_lbl"].configure(image="", text="")
             refs["image_rel"] = img_rel
 
         refs["unavail"] = unavail
@@ -2082,14 +2097,8 @@ class POSView(tk.Frame):
             del self.cart[pid]
             self._refresh_cart()
             return
-        if delta > 0:
-            live_stock = self._get_live_stock(pid)
-            if new_qty > live_stock:
-                messagebox.showwarning(
-                    "Stock Limit",
-                    f"Only {live_stock} unit(s) of '{n}' available.",
-                )
-                return
+        # Menu products are not inventory-tracked — qty is only bounded by the
+        # raw-material check performed at checkout. No per-card stock limit.
         self.cart[pid] = (n, p, new_qty, note)
         # Fast path: update qty/subtotal labels in-place (avoids full widget rebuild)
         refs = self._cart_row_refs.get(pid)

@@ -119,25 +119,86 @@ class CategoryDAO:
             (name,),
         )
 
-    def create(self, name: str) -> int:
-        """Create new category."""
-        return self.db.execute_id(
-            "INSERT INTO categories(name) VALUES(?);",
-            (name,),
-        )
+    def create(self, name: str, parent_id: int | None = None) -> int:
+        """Create new category. parent_id=None makes it a top-level category."""
+        try:
+            return self.db.execute_id(
+                "INSERT INTO categories(name, parent_id) VALUES(?, ?);",
+                (name, int(parent_id) if parent_id else None),
+            )
+        except Exception:
+            return self.db.execute_id(
+                "INSERT INTO categories(name) VALUES(?);", (name,),
+            )
+
+    def update(self, category_id: int, name: str,
+               parent_id: int | None = None) -> None:
+        """Rename a category and/or move it under a different parent."""
+        try:
+            self.db.execute(
+                "UPDATE categories SET name=?, parent_id=? WHERE id=?;",
+                (str(name), int(parent_id) if parent_id else None, int(category_id)),
+            )
+        except Exception:
+            self.db.execute(
+                "UPDATE categories SET name=? WHERE id=?;",
+                (str(name), int(category_id)),
+            )
 
     def list_with_counts(self):
-        """List all categories with the number of products assigned to each."""
-        return self.db.fetchall(
-            """
-            SELECT c.id AS category_id, c.name,
-                   COUNT(p.id) AS product_count
-            FROM categories c
-            LEFT JOIN products p ON p.category_id = c.id
-            GROUP BY c.id, c.name
-            ORDER BY c.name;
-            """
-        )
+        """List all categories with product counts AND parent info if available."""
+        try:
+            return self.db.fetchall(
+                """
+                SELECT c.id AS category_id, c.name, c.parent_id,
+                       COALESCE(p.name, '') AS parent_name,
+                       COUNT(prod.id) AS product_count
+                FROM categories c
+                LEFT JOIN categories p     ON p.id = c.parent_id
+                LEFT JOIN products   prod  ON prod.category_id = c.id
+                GROUP BY c.id, c.name, c.parent_id, p.name
+                ORDER BY COALESCE(p.name, c.name), c.name;
+                """
+            )
+        except Exception:
+            return self.db.fetchall(
+                """
+                SELECT c.id AS category_id, c.name,
+                       COUNT(p.id) AS product_count
+                FROM categories c
+                LEFT JOIN products p ON p.category_id = c.id
+                GROUP BY c.id, c.name
+                ORDER BY c.name;
+                """
+            )
+
+    def list_hierarchy_paths(self):
+        """Return categories with a 'path' string like 'Drinks > Hot Coffee'.
+        Suitable for product-form dropdowns where the user needs to see
+        whether they're picking a main or sub category."""
+        try:
+            rows = self.db.fetchall(
+                """
+                SELECT c.id AS category_id, c.name, c.parent_id,
+                       COALESCE(p.name, '') AS parent_name
+                FROM categories c
+                LEFT JOIN categories p ON p.id = c.parent_id
+                ORDER BY COALESCE(p.name, c.name), c.name;
+                """
+            )
+        except Exception:
+            return [{"category_id": r["category_id"],
+                     "name": r["name"], "path": r["name"]}
+                    for r in self.list_categories()]
+        out = []
+        for r in rows:
+            nm = str(r["name"])
+            pn = str(r["parent_name"] or "")
+            path = f"{pn} > {nm}" if pn else nm
+            out.append({"category_id": int(r["category_id"]),
+                        "name": nm, "path": path,
+                        "parent_id": r["parent_id"]})
+        return out
 
     def has_products(self, category_id: int) -> bool:
         """Return True if any product is assigned to this category."""
@@ -148,7 +209,8 @@ class CategoryDAO:
         return (int(r["c"]) if r else 0) > 0
 
     def delete(self, category_id: int) -> None:
-        """Delete a category (caller must ensure has_products() is False first)."""
+        """Delete a category (caller must ensure has_products() and
+        has_subcategories() are False first)."""
         self.db.execute("DELETE FROM categories WHERE id=?;", (int(category_id),))
 
     def list_main_categories(self):

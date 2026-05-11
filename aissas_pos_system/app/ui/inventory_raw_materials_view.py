@@ -65,129 +65,167 @@ class _MaterialDialog(tk.Toplevel):
         self.resizable(False, False)
         self.grab_set()
 
-        pad = 14
         UNIT_CHOICES = ["pcs", "grams", "kilograms", "liters", "milliliters",
                         "bottles", "packs", "boxes", "cans", "trays"]
+        ENTRY_W = 22  # consistent input width across all fields
 
-        # ── Plain text/dropdown fields ────────────────────────────────────────
-        fields = [
-            ("Name *",          "var_name", _safe(material, "name", ""),              "entry"),
-            ("Unit",             "var_unit", _safe(material, "unit", "pcs"),           "unit"),
-            ("Quantity",         "var_qty",  str(_safe(material, "quantity", 0)),     "entry"),
-            ("Low Stock Alert",  "var_low",  str(_safe(material, "low_stock", 5)),    "entry"),
-        ]
-        for row_i, (lbl_txt, attr, default, kind) in enumerate(fields):
-            tk.Label(self, text=lbl_txt, bg=THEME["bg"], fg=THEME["text"],
-                     font=("Segoe UI", 10)).grid(
-                row=row_i, column=0, sticky="w",
-                padx=pad, pady=(pad if row_i == 0 else 4, 4))
-            sv = tk.StringVar(value=default)
-            setattr(self, attr, sv)
-            if kind == "unit":
-                cb = ttk.Combobox(
-                    self, textvariable=sv, values=UNIT_CHOICES,
-                    width=26, font=("Segoe UI", 10), state="normal",
-                )
-                cb.grid(row=row_i, column=1, padx=pad,
-                        pady=(pad if row_i == 0 else 4, 4), sticky="w")
-            else:
-                tk.Entry(self, textvariable=sv, width=28,
-                         bg=THEME["beige"], fg=THEME["text"],
-                         insertbackground="#3d2b1f", insertwidth=2,
-                         font=("Segoe UI", 10)).grid(
-                    row=row_i, column=1, padx=pad,
-                    pady=(pad if row_i == 0 else 4, 4), sticky="w")
+        outer = tk.Frame(self, bg=THEME["bg"])
+        outer.pack(fill="both", expand=True, padx=20, pady=18)
 
-        n = len(fields)
+        # ── Card header ───────────────────────────────────────────────────────
+        tk.Label(outer,
+                 text=("Edit Raw Material" if material else "Add Raw Material"),
+                 bg=THEME["bg"], fg=THEME["text"],
+                 font=("Segoe UI", 14, "bold")
+                 ).grid(row=0, column=0, columnspan=4, sticky="w")
+        tk.Label(outer,
+                 text="Required fields are marked with *",
+                 bg=THEME["bg"], fg=THEME["muted"],
+                 font=("Segoe UI", 9)
+                 ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(2, 12))
 
-        # ── Delivered Date (calendar picker) ──────────────────────────────────
-        self.var_delivered = tk.StringVar(value=_safe(material, "delivered_date", "") or "")
-        tk.Label(self, text="Delivered Date", bg=THEME["bg"], fg=THEME["text"],
-                 font=("Segoe UI", 10)).grid(row=n, column=0, sticky="w", padx=pad, pady=4)
-        del_row = tk.Frame(self, bg=THEME["bg"])
-        del_row.grid(row=n, column=1, sticky="w", padx=pad, pady=4)
-        ent_del = tk.Entry(del_row, textvariable=self.var_delivered, width=16,
+        # 2-column form. Cols 0,2 = labels, cols 1,3 = fields.
+        for c in (0, 2):
+            outer.columnconfigure(c, weight=0)
+        for c in (1, 3):
+            outer.columnconfigure(c, weight=1)
+
+        def _label(row, col, text):
+            return tk.Label(outer, text=text, bg=THEME["bg"], fg=THEME["text"],
+                            font=("Segoe UI", 10), anchor="w")
+
+        def _entry(textvar, width=ENTRY_W):
+            return tk.Entry(outer, textvariable=textvar, width=width,
+                            bg=THEME["beige"], fg=THEME["text"],
+                            insertbackground="#3d2b1f", insertwidth=2,
+                            font=("Segoe UI", 10), bd=0,
+                            highlightthickness=1,
+                            highlightbackground=THEME["border"])
+
+        # Row 2 — Name (full width) ────────────────────────────────────────────
+        _label(2, 0, "Name *").grid(row=2, column=0, sticky="w", pady=(0, 4))
+        self.var_name = tk.StringVar(value=_safe(material, "name", ""))
+        tk.Entry(outer, textvariable=self.var_name,
+                 bg=THEME["beige"], fg=THEME["text"],
+                 insertbackground="#3d2b1f", insertwidth=2,
+                 font=("Segoe UI", 10), bd=0,
+                 highlightthickness=1,
+                 highlightbackground=THEME["border"]
+                 ).grid(row=2, column=1, columnspan=3, sticky="ew",
+                        ipady=6, pady=(0, 8))
+
+        # Row 3 — Unit | Quantity ─────────────────────────────────────────────
+        _label(3, 0, "Unit").grid(row=3, column=0, sticky="w", pady=4)
+        self.var_unit = tk.StringVar(value=_safe(material, "unit", "pcs"))
+        ttk.Combobox(outer, textvariable=self.var_unit, values=UNIT_CHOICES,
+                     width=ENTRY_W, font=("Segoe UI", 10), state="normal"
+                     ).grid(row=3, column=1, sticky="ew", pady=4, padx=(0, 18))
+        _label(3, 2, "Quantity").grid(row=3, column=2, sticky="w", pady=4)
+        self.var_qty = tk.StringVar(value=str(_safe(material, "quantity", 0)))
+        _entry(self.var_qty).grid(row=3, column=3, sticky="ew",
+                                  ipady=6, pady=4)
+
+        # Row 4 — Low Stock Alert ─────────────────────────────────────────────
+        _label(4, 0, "Low Stock Alert").grid(row=4, column=0, sticky="w", pady=4)
+        self.var_low = tk.StringVar(value=str(_safe(material, "low_stock", 5)))
+        _entry(self.var_low).grid(row=4, column=1, sticky="ew",
+                                  ipady=6, pady=4, padx=(0, 18))
+        _label(4, 2, "Active").grid(row=4, column=2, sticky="w", pady=4)
+        self.var_active = tk.BooleanVar(value=bool(_safe(material, "active", 1)))
+        tk.Checkbutton(outer, text="Available for use", variable=self.var_active,
+                       bg=THEME["bg"], fg=THEME["text"],
+                       selectcolor=THEME["bg"], anchor="w",
+                       font=("Segoe UI", 10)
+                       ).grid(row=4, column=3, sticky="w", pady=4)
+
+        # ── Date row (Delivered | Expiration) ─────────────────────────────────
+        def _date_field(target_var: tk.StringVar):
+            box = tk.Frame(outer, bg=THEME["bg"])
+            ent = tk.Entry(box, textvariable=target_var, width=12,
                            bg=THEME["beige"], fg=THEME["text"],
                            insertbackground="#3d2b1f", insertwidth=2,
-                           font=("Segoe UI", 10))
-        ent_del.pack(side="left")
-        tk.Button(del_row, text="📅 Pick",
-                  command=lambda: _open_date_picker(self, self.var_delivered),
-                  bg=THEME["panel2"], fg=THEME["text"],
-                  bd=0, padx=10, pady=3, cursor="hand2",
-                  font=("Segoe UI", 9)).pack(side="left", padx=(6, 0))
-        tk.Button(del_row, text="Clear",
-                  command=lambda: self.var_delivered.set(""),
-                  bg=THEME["border"], fg=THEME["text"],
-                  bd=0, padx=8, pady=3, cursor="hand2",
-                  font=("Segoe UI", 9)).pack(side="left", padx=(4, 0))
+                           font=("Segoe UI", 10), bd=0,
+                           highlightthickness=1,
+                           highlightbackground=THEME["border"])
+            ent.pack(side="left", ipady=6)
+            tk.Button(box, text="📅",
+                      command=lambda: _open_date_picker(self, target_var),
+                      bg=THEME["primary"], fg="white",
+                      activebackground=THEME["primary_dark"],
+                      activeforeground="white",
+                      bd=0, padx=10, cursor="hand2",
+                      font=("Segoe UI", 11, "bold")
+                      ).pack(side="left", padx=(6, 0), ipady=4)
+            tk.Button(box, text="✕",
+                      command=lambda: target_var.set(""),
+                      bg=THEME["panel2"], fg=THEME["muted"],
+                      bd=0, padx=8, cursor="hand2",
+                      font=("Segoe UI", 9, "bold")
+                      ).pack(side="left", padx=(4, 0), ipady=4)
+            return box
 
-        # ── Expiration Date (calendar picker) ─────────────────────────────────
-        self.var_expiration = tk.StringVar(value=_safe(material, "expiration_date", "") or "")
-        tk.Label(self, text="Expiration Date", bg=THEME["bg"], fg=THEME["text"],
-                 font=("Segoe UI", 10)).grid(row=n + 1, column=0, sticky="w", padx=pad, pady=4)
-        exp_row = tk.Frame(self, bg=THEME["bg"])
-        exp_row.grid(row=n + 1, column=1, sticky="w", padx=pad, pady=4)
-        ent_exp = tk.Entry(exp_row, textvariable=self.var_expiration, width=16,
-                           bg=THEME["beige"], fg=THEME["text"],
-                           insertbackground="#3d2b1f", insertwidth=2,
-                           font=("Segoe UI", 10))
-        ent_exp.pack(side="left")
-        tk.Button(exp_row, text="📅 Pick",
-                  command=lambda: _open_date_picker(self, self.var_expiration),
-                  bg=THEME["panel2"], fg=THEME["text"],
-                  bd=0, padx=10, pady=3, cursor="hand2",
-                  font=("Segoe UI", 9)).pack(side="left", padx=(6, 0))
-        tk.Button(exp_row, text="Clear",
-                  command=lambda: self.var_expiration.set(""),
-                  bg=THEME["border"], fg=THEME["text"],
-                  bd=0, padx=8, pady=3, cursor="hand2",
-                  font=("Segoe UI", 9)).pack(side="left", padx=(4, 0))
+        _label(5, 0, "Delivered Date").grid(row=5, column=0, sticky="w",
+                                             pady=(10, 4))
+        self.var_delivered = tk.StringVar(
+            value=_safe(material, "delivered_date", "") or "")
+        _date_field(self.var_delivered).grid(row=5, column=1, sticky="w",
+                                              pady=(10, 4), padx=(0, 18))
 
-        n2 = n + 2
+        _label(5, 2, "Expiration Date").grid(row=5, column=2, sticky="w",
+                                              pady=(10, 4))
+        self.var_expiration = tk.StringVar(
+            value=_safe(material, "expiration_date", "") or "")
+        _date_field(self.var_expiration).grid(row=5, column=3, sticky="w",
+                                               pady=(10, 4))
 
-        # ── Type segmented buttons (Dry / Wet) ───────────────────────────────
-        tk.Label(self, text="Type", bg=THEME["bg"], fg=THEME["text"],
-                 font=("Segoe UI", 10)).grid(row=n2, column=0, sticky="w", padx=pad, pady=(8, 4))
+        # ── Type segmented (Dry / Wet) — bigger, clearer ──────────────────────
+        _label(6, 0, "Type").grid(row=6, column=0, sticky="w", pady=(14, 6))
         self.var_type = tk.StringVar(value=_safe(material, "material_type", "DRY"))
-        seg = tk.Frame(self, bg=THEME["bg"])
-        seg.grid(row=n2, column=1, sticky="w", padx=pad, pady=(8, 4))
+        seg = tk.Frame(outer, bg=THEME["bg"])
+        seg.grid(row=6, column=1, columnspan=3, sticky="w", pady=(14, 6))
         self._type_seg_btns: dict[str, tk.Button] = {}
-        for val, lbl in (("DRY", "🌾  Dry"), ("WET", "💧  Wet")):
+        for val, lbl in (("DRY", "Dry"), ("WET", "Wet")):
             b = tk.Button(seg, text=lbl,
                           command=lambda v=val: self._set_type(v),
-                          bd=0, padx=18, pady=8, cursor="hand2",
-                          font=("Segoe UI", 10, "bold"),
-                          relief="flat")
-            b.pack(side="left", padx=(0, 6))
+                          bd=0, padx=30, pady=12, cursor="hand2",
+                          font=("Segoe UI", 11, "bold"),
+                          relief="flat",
+                          width=10)
+            b.pack(side="left", padx=(0, 8))
             self._type_seg_btns[val] = b
         self._set_type(self.var_type.get())
 
-        # ── Active checkbox ──────────────────────────────────────────────────
-        self.var_active = tk.BooleanVar(value=bool(_safe(material, "active", 1)))
-        tk.Checkbutton(self, text="Active", variable=self.var_active,
-                       bg=THEME["bg"], fg=THEME["text"], selectcolor=THEME["bg"],
-                       font=("Segoe UI", 10)).grid(
-            row=n2 + 1, column=1, sticky="w", padx=pad, pady=4)
-
-        # ── Buttons (clearer / aligned) ──────────────────────────────────────
-        btn_row = tk.Frame(self, bg=THEME["bg"])
-        btn_row.grid(row=n2 + 2, column=0, columnspan=2,
-                     sticky="ew", padx=pad, pady=(14, pad))
+        # ── Action buttons ────────────────────────────────────────────────────
+        btn_row = tk.Frame(outer, bg=THEME["bg"])
+        btn_row.grid(row=7, column=0, columnspan=4,
+                     sticky="ew", pady=(20, 0))
         btn_row.columnconfigure(0, weight=1)
         tk.Button(btn_row, text="Cancel", command=self.destroy,
                   bg=THEME["panel2"], fg=THEME["text"],
                   activebackground=THEME["border"], activeforeground=THEME["text"],
-                  padx=22, pady=10, bd=0,
+                  padx=24, pady=11, bd=0,
                   relief="flat", cursor="hand2",
-                  font=("Segoe UI", 10)).grid(row=0, column=1, padx=(0, 8))
-        save_lbl = "Update" if material else "Save"
+                  font=("Segoe UI", 10)).grid(row=0, column=1, padx=(0, 10))
+        save_lbl = "Update" if material else "Save Material"
         tk.Button(btn_row, text=save_lbl, command=self._save,
                   bg=THEME["success"], fg="white",
-                  activebackground=THEME["primary_dark"], activeforeground="white",
-                  padx=22, pady=10, bd=0,
+                  activebackground=THEME["primary_dark"],
+                  activeforeground="white",
+                  padx=28, pady=11, bd=0,
                   relief="flat", cursor="hand2",
-                  font=("Segoe UI", 10, "bold")).grid(row=0, column=2)
+                  font=("Segoe UI", 10, "bold")
+                  ).grid(row=0, column=2)
+
+        # Center on parent
+        try:
+            self.update_idletasks()
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            w  = self.winfo_reqwidth()
+            h  = self.winfo_reqheight()
+            self.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
+        except Exception:
+            pass
 
         self.transient(parent)
         self.wait_window()
@@ -197,10 +235,20 @@ class _MaterialDialog(tk.Toplevel):
         for v, b in self._type_seg_btns.items():
             if v == val:
                 b.configure(bg=THEME["primary"], fg="white",
-                            activebackground=THEME["primary_dark"], activeforeground="white")
+                            activebackground=THEME["primary_dark"],
+                            activeforeground="white",
+                            relief="flat",
+                            highlightthickness=2,
+                            highlightbackground=THEME["primary_dark"],
+                            highlightcolor=THEME["primary_dark"])
             else:
                 b.configure(bg=THEME["panel2"], fg=THEME["text"],
-                            activebackground=THEME["border"], activeforeground=THEME["text"])
+                            activebackground=THEME["border"],
+                            activeforeground=THEME["text"],
+                            relief="flat",
+                            highlightthickness=1,
+                            highlightbackground=THEME["border"],
+                            highlightcolor=THEME["border"])
 
     def _validate_date(self, val: str) -> Optional[str]:
         v = val.strip()
@@ -215,19 +263,47 @@ class _MaterialDialog(tk.Toplevel):
     def _save(self):
         name = self.var_name.get().strip()
         if not name:
-            messagebox.showerror("Validation", "Name is required.", parent=self)
+            messagebox.showerror("Missing Name",
+                                 "Please enter a name for this raw material.",
+                                 parent=self)
             return
         try:
             qty = float(self.var_qty.get())
+        except ValueError:
+            messagebox.showerror("Invalid Quantity",
+                                 "Quantity must be a number (e.g. 10 or 2.5).",
+                                 parent=self)
+            return
+        if qty < 0:
+            messagebox.showerror("Invalid Quantity",
+                                 "Quantity cannot be negative.",
+                                 parent=self)
+            return
+        try:
             low = float(self.var_low.get())
         except ValueError:
-            messagebox.showerror("Validation", "Quantity and Low Stock must be numbers.", parent=self)
+            messagebox.showerror("Invalid Low Stock Alert",
+                                 "Low Stock Alert must be a number.",
+                                 parent=self)
+            return
+        if low < 0:
+            messagebox.showerror("Invalid Low Stock Alert",
+                                 "Low Stock Alert cannot be negative.",
+                                 parent=self)
             return
         try:
             delivered = self._validate_date(self.var_delivered.get())
             expiration = self._validate_date(self.var_expiration.get())
         except ValueError as exc:
-            messagebox.showerror("Validation", str(exc), parent=self)
+            messagebox.showerror("Invalid Date", str(exc), parent=self)
+            return
+        if (delivered and expiration
+                and date.fromisoformat(expiration) < date.fromisoformat(delivered)):
+            messagebox.showerror(
+                "Invalid Date",
+                "Expiration Date cannot be earlier than Delivered Date.",
+                parent=self,
+            )
             return
         self.result = {
             "name":            name,
@@ -512,8 +588,77 @@ class InventoryRawMaterialsView(tk.Frame):
             "deduct": "Deduct / Use Stock — select a row, then click Deduct.",
         }
         self._hint_lbl.configure(text=hints.get(mode, ""))
+        self._apply_mode_toolbar(mode)
         self._list_frame.pack(fill="both", expand=True)
         self.refresh_materials()
+
+    def _apply_mode_toolbar(self, mode: str) -> None:
+        """Show only the action buttons that fit the current panel's purpose.
+        - list   : everything (full editor view).
+        - edit   : Edit + Deactivate + Delete + Refresh (no stock movements).
+        - deduct : Deduct + Refresh only (no add / edit / delete).
+        - low    : read-only list with Refresh (no clutter).
+        """
+        per_mode = {
+            "list":   {"add_material": True,  "edit": True,  "add_stock": True,
+                       "deduct": True,  "history": True,
+                       "deactivate": True, "delete": True,
+                       "sort_fifo": True, "refresh": True},
+            "edit":   {"add_material": False, "edit": True,  "add_stock": False,
+                       "deduct": False, "history": True,
+                       "deactivate": True, "delete": True,
+                       "sort_fifo": False, "refresh": True},
+            "deduct": {"add_material": False, "edit": False, "add_stock": False,
+                       "deduct": True,  "history": True,
+                       "deactivate": False, "delete": False,
+                       "sort_fifo": False, "refresh": True},
+            "low":    {"add_material": False, "edit": False, "add_stock": True,
+                       "deduct": False, "history": False,
+                       "deactivate": False, "delete": False,
+                       "sort_fifo": False, "refresh": True},
+        }.get(mode, None)
+        if per_mode is None:
+            return
+
+        # Ordered list — pack_forget then re-pack ones we want, preserving order
+        # within each parent frame. The separator stays as-is (never repacked)
+        # so it always sits between the `left` and `right` frames.
+        ordered = [
+            ("add_material", self._btn_add_material, (0, 6)),
+            ("edit",         self._btn_edit,         3),
+            ("add_stock",    self._btn_add_stock,    3),
+            ("deduct",       self._btn_deduct,       3),
+            ("history",      self._btn_history,      3),
+            ("deactivate",   self._toggle_btn,       3),
+            ("delete",       self._btn_delete,       3),
+            ("sort_fifo",    self._btn_sort_fifo,    3),
+            ("refresh",      self._btn_refresh,      3),
+        ]
+        for _key, btn, _padx in ordered:
+            try:
+                btn.pack_forget()
+            except Exception:
+                pass
+        for key, btn, padx in ordered:
+            if not per_mode.get(key, False):
+                continue
+            try:
+                btn.pack(side="left", padx=padx)
+            except Exception:
+                pass
+
+        # Hide the visual separator entirely when the right-hand cluster
+        # (Deactivate / Delete) is empty for this mode — avoids a hanging strip.
+        right_visible = (per_mode.get("deactivate") or per_mode.get("delete"))
+        try:
+            if right_visible:
+                if not self._toolbar_sep.winfo_ismapped():
+                    self._toolbar_sep.pack(side="left", fill="y", pady=8,
+                                           before=self._toggle_btn.master)
+            else:
+                self._toolbar_sep.pack_forget()
+        except Exception:
+            pass
 
     def _show_logs(self):
         self._mode = "logs"
@@ -628,20 +773,30 @@ class InventoryRawMaterialsView(tk.Frame):
         ent.pack(side="left", fill="x", expand=True, ipady=6, padx=(0, 10))
         ent.bind("<KeyRelease>", lambda _e: self._on_search_change())
 
-        # ── Filter chips row ──────────────────────────────────────────────────
+        # ── Filter chips row (segmented tab style) ────────────────────────────
         chips = tk.Frame(host, bg=THEME["bg"])
         chips.pack(fill="x", padx=16, pady=(2, 4))
+
+        def _seg_btn(parent, text, key, current_key, cmd):
+            active = (key == current_key)
+            return tk.Button(
+                parent, text=text, command=cmd,
+                bg=THEME["primary"] if active else THEME["panel2"],
+                fg="white" if active else THEME["text"],
+                activebackground=THEME["primary_dark"] if active else THEME["border"],
+                activeforeground="white" if active else THEME["text"],
+                padx=14, pady=6, bd=0, relief="flat", cursor="hand2",
+                font=("Segoe UI", 9, "bold" if active else "normal"),
+                highlightthickness=1,
+                highlightbackground=THEME["primary_dark"] if active else THEME["border"],
+            )
 
         ff = tk.Frame(chips, bg=THEME["bg"])
         ff.pack(side="left")
         self._type_btns: dict[str, tk.Button] = {}
         for key, lbl in (("ALL", "All Types"), ("DRY", "Dry"), ("WET", "Wet")):
-            b = tk.Button(ff, text=lbl,
-                          command=lambda k=key: self._set_type_filter(k),
-                          bg=THEME["primary"] if key == self._type_filter else THEME["border"],
-                          fg="white" if key == self._type_filter else THEME["text"],
-                          padx=12, pady=4, relief="flat", cursor="hand2",
-                          font=("Segoe UI", 9))
+            b = _seg_btn(ff, lbl, key, self._type_filter,
+                         lambda k=key: self._set_type_filter(k))
             b.pack(side="left", padx=2)
             self._type_btns[key] = b
 
@@ -653,75 +808,94 @@ class InventoryRawMaterialsView(tk.Frame):
         for key in ("Active", "Inactive", "All"):
             b = tk.Button(sf, text=key,
                           command=lambda k=key: self._set_status_filter(k),
-                          bg=THEME["primary"] if key == self._status_filter else THEME["border"],
+                          bg=THEME["primary"] if key == self._status_filter else THEME["panel2"],
                           fg="white" if key == self._status_filter else THEME["text"],
-                          padx=10, pady=4, relief="flat", cursor="hand2",
+                          padx=12, pady=6, bd=0, relief="flat", cursor="hand2",
+                          highlightthickness=1,
+                          highlightbackground=THEME["primary_dark"]
+                              if key == self._status_filter else THEME["border"],
                           font=("Segoe UI", 9))
             b.pack(side="left", padx=2)
             self._status_btns[key] = b
 
-        # ── Action toolbar ────────────────────────────────────────────────────
+        # ── Action toolbar (POS-style — consistent button heights) ───────────
+        TBPADX = 14
+        TBPADY = 8
+        TBFONT = ("Segoe UI", 9, "bold")
         toolbar = tk.Frame(host, bg=THEME["panel"],
                            highlightthickness=1, highlightbackground=THEME["border"])
         toolbar.pack(fill="x", padx=16, pady=(0, 6))
 
         left = tk.Frame(toolbar, bg=THEME["panel"])
-        left.pack(side="left", padx=8, pady=6)
+        left.pack(side="left", padx=10, pady=8)
 
-        tk.Button(left, text="+ Add Material", command=self._add_material,
-                  bg=THEME["primary"], fg="white", padx=12, pady=5,
-                  relief="flat", cursor="hand2",
-                  font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
+        self._btn_add_material = tk.Button(left, text="＋  Add Material",
+                                           command=self._add_material,
+                                           bg=THEME["primary"], fg="white",
+                                           activebackground=THEME["primary_dark"],
+                                           activeforeground="white",
+                                           padx=TBPADX, pady=TBPADY, bd=0,
+                                           relief="flat", cursor="hand2",
+                                           font=TBFONT)
+        self._btn_add_material.pack(side="left", padx=(0, 6))
 
         self._btn_edit = tk.Button(left, text="Edit", command=self._edit_material,
-                                   bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
-                                   relief="flat", cursor="hand2", font=("Segoe UI", 9))
-        self._btn_edit.pack(side="left", padx=2)
+                                   padx=TBPADX, pady=TBPADY, bd=0,
+                                   relief="flat", cursor="hand2", font=TBFONT)
+        self._btn_edit.pack(side="left", padx=3)
 
         self._btn_add_stock = tk.Button(left, text="Add Stock", command=self._add_stock,
-                                        bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
-                                        relief="flat", cursor="hand2", font=("Segoe UI", 9))
-        self._btn_add_stock.pack(side="left", padx=2)
+                                        padx=TBPADX, pady=TBPADY, bd=0,
+                                        relief="flat", cursor="hand2", font=TBFONT)
+        self._btn_add_stock.pack(side="left", padx=3)
 
         self._btn_deduct = tk.Button(left, text="Deduct", command=self._deduct_stock,
-                                     bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
-                                     relief="flat", cursor="hand2", font=("Segoe UI", 9))
-        self._btn_deduct.pack(side="left", padx=2)
+                                     padx=TBPADX, pady=TBPADY, bd=0,
+                                     relief="flat", cursor="hand2", font=TBFONT)
+        self._btn_deduct.pack(side="left", padx=3)
 
         self._btn_history = tk.Button(left, text="History", command=self._view_history,
-                                      bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
-                                      relief="flat", cursor="hand2", font=("Segoe UI", 9))
-        self._btn_history.pack(side="left", padx=2)
+                                      padx=TBPADX, pady=TBPADY, bd=0,
+                                      relief="flat", cursor="hand2", font=TBFONT)
+        self._btn_history.pack(side="left", padx=3)
 
-        tk.Frame(toolbar, bg=THEME["border"], width=1).pack(side="left", fill="y", pady=4)
+        self._toolbar_sep = tk.Frame(toolbar, bg=THEME["border"], width=1)
+        self._toolbar_sep.pack(side="left", fill="y", pady=8)
 
         right = tk.Frame(toolbar, bg=THEME["panel"])
-        right.pack(side="left", padx=8, pady=6)
+        right.pack(side="left", padx=10, pady=8)
 
         self._toggle_btn = tk.Button(right, text="Deactivate",
                                      command=self._toggle_active,
-                                     bg=THEME["border"], fg=THEME["text"],
-                                     padx=10, pady=5, relief="flat", cursor="hand2",
-                                     font=("Segoe UI", 9))
-        self._toggle_btn.pack(side="left", padx=2)
+                                     padx=TBPADX, pady=TBPADY, bd=0,
+                                     relief="flat", cursor="hand2", font=TBFONT)
+        self._toggle_btn.pack(side="left", padx=3)
 
         self._btn_delete = tk.Button(right, text="Delete", command=self._delete_material,
-                                     bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
-                                     relief="flat", cursor="hand2", font=("Segoe UI", 9))
-        self._btn_delete.pack(side="left", padx=2)
+                                     padx=TBPADX, pady=TBPADY, bd=0,
+                                     relief="flat", cursor="hand2", font=TBFONT)
+        self._btn_delete.pack(side="left", padx=3)
 
         util = tk.Frame(toolbar, bg=THEME["panel"])
-        util.pack(side="right", padx=8, pady=6)
+        util.pack(side="right", padx=10, pady=8)
 
-        tk.Button(util, text="Sort FIFO", command=self._sort_by_expiry,
-                  bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
-                  relief="flat", cursor="hand2",
-                  font=("Segoe UI", 9)).pack(side="left", padx=2)
+        self._btn_sort_fifo = tk.Button(util, text="Sort FIFO",
+                                        command=self._sort_by_expiry,
+                                        bg=THEME["panel2"], fg=THEME["text"],
+                                        activebackground=THEME["border"],
+                                        padx=TBPADX, pady=TBPADY, bd=0,
+                                        relief="flat", cursor="hand2",
+                                        font=("Segoe UI", 9))
+        self._btn_sort_fifo.pack(side="left", padx=3)
 
-        tk.Button(util, text="Refresh", command=self.refresh_materials,
-                  bg=THEME["border"], fg=THEME["text"], padx=10, pady=5,
-                  relief="flat", cursor="hand2",
-                  font=("Segoe UI", 9)).pack(side="left", padx=2)
+        self._btn_refresh = tk.Button(util, text="↻ Refresh",
+                                      command=self.refresh_materials,
+                                      bg=THEME["panel2"], fg=THEME["text"],
+                                      activebackground=THEME["border"],
+                                      padx=TBPADX, pady=TBPADY, bd=0,
+                                      relief="flat", cursor="hand2",
+                                      font=("Segoe UI", 9))
+        self._btn_refresh.pack(side="left", padx=3)
 
         # ── Treeview ──────────────────────────────────────────────────────────
         tf = tk.Frame(host, bg=THEME["bg"])
@@ -809,6 +983,57 @@ class InventoryRawMaterialsView(tk.Frame):
                  bg=THEME["bg"], fg=THEME["muted"],
                  font=("Segoe UI", 9, "italic")).pack(anchor="w", padx=16, pady=(0, 4))
 
+        # ── Filters: search box + action chips + refresh ─────────────────────
+        filter_bar = tk.Frame(host, bg=THEME["panel"],
+                              highlightthickness=1,
+                              highlightbackground=THEME["border"])
+        filter_bar.pack(fill="x", padx=16, pady=(0, 6))
+
+        tk.Label(filter_bar, text="Search:",
+                 bg=THEME["panel"], fg=THEME["muted"],
+                 font=("Segoe UI", 9)).pack(side="left", padx=(10, 6), pady=8)
+        log_search_var = tk.StringVar()
+        ent = tk.Entry(filter_bar, textvariable=log_search_var, bd=0,
+                       bg=THEME["panel"], fg=THEME["text"],
+                       insertbackground="#3d2b1f", insertwidth=2,
+                       font=("Segoe UI", 10))
+        ent.pack(side="left", fill="x", expand=True, ipady=6, padx=(0, 10),
+                 pady=8)
+
+        log_action_var = tk.StringVar(value="ALL")
+        chip_frame = tk.Frame(filter_bar, bg=THEME["panel"])
+        chip_frame.pack(side="left", padx=(0, 10), pady=6)
+        chip_btns: dict[str, tk.Button] = {}
+
+        def _set_action(key: str) -> None:
+            log_action_var.set(key)
+            for k, b in chip_btns.items():
+                active = (k == key)
+                b.configure(
+                    bg=THEME["primary"] if active else THEME["panel2"],
+                    fg="white" if active else THEME["text"],
+                    font=("Segoe UI", 9, "bold" if active else "normal"),
+                )
+            _reload()
+
+        for key, lbl in (("ALL", "All"), ("ADD", "Add"), ("DEDUCT", "Deduct")):
+            b = tk.Button(chip_frame, text=lbl,
+                          command=lambda k=key: _set_action(k),
+                          bd=0, padx=12, pady=6, cursor="hand2",
+                          font=("Segoe UI", 9,
+                                "bold" if key == "ALL" else "normal"),
+                          bg=THEME["primary"] if key == "ALL" else THEME["panel2"],
+                          fg="white" if key == "ALL" else THEME["text"])
+            b.pack(side="left", padx=2)
+            chip_btns[key] = b
+
+        tk.Button(filter_bar, text="↻ Refresh",
+                  command=lambda: _reload(),
+                  bg=THEME["panel2"], fg=THEME["text"],
+                  activebackground=THEME["border"],
+                  bd=0, padx=14, pady=6, cursor="hand2",
+                  font=("Segoe UI", 9)).pack(side="right", padx=10, pady=6)
+
         tf = tk.Frame(host, bg=THEME["bg"])
         tf.pack(fill="both", expand=True, padx=16, pady=(0, 12))
 
@@ -830,39 +1055,64 @@ class InventoryRawMaterialsView(tk.Frame):
         tree.tag_configure("ADD",    foreground=THEME["success"])
         tree.tag_configure("DEDUCT", foreground=THEME["danger"])
 
-        try:
-            rows = self.db.fetchall(
-                """SELECT l.created_at, l.action_type, l.quantity, l.reason, l.reference,
-                          COALESCE(l.old_quantity, 0) AS old_quantity,
-                          COALESCE(l.new_quantity, 0) AS new_quantity,
-                          COALESCE(l.username, '')    AS username,
-                          COALESCE(m.name, '—')       AS material_name
-                   FROM raw_material_logs l
-                   LEFT JOIN raw_materials m ON m.id = l.material_id
-                   ORDER BY datetime(l.created_at) DESC
-                   LIMIT 500;""",
-            )
-        except Exception:
-            rows = []
+        def _reload() -> None:
+            for iid in tree.get_children():
+                tree.delete(iid)
+            where_parts: list[str] = []
+            params: list = []
+            action = log_action_var.get()
+            if action in ("ADD", "DEDUCT"):
+                where_parts.append("UPPER(l.action_type) = ?")
+                params.append(action)
+            q = (log_search_var.get() or "").strip().lower()
+            if q:
+                where_parts.append(
+                    "(LOWER(COALESCE(m.name, '')) LIKE ?"
+                    " OR LOWER(COALESCE(l.reason, '')) LIKE ?"
+                    " OR LOWER(COALESCE(l.username, '')) LIKE ?"
+                    " OR LOWER(COALESCE(l.reference, '')) LIKE ?)"
+                )
+                like = f"%{q}%"
+                params.extend([like, like, like, like])
+            where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+            try:
+                rows = self.db.fetchall(
+                    f"""SELECT l.created_at, l.action_type, l.quantity,
+                              l.reason, l.reference,
+                              COALESCE(l.old_quantity, 0) AS old_quantity,
+                              COALESCE(l.new_quantity, 0) AS new_quantity,
+                              COALESCE(l.username, '')    AS username,
+                              COALESCE(m.name, '—')       AS material_name
+                       FROM raw_material_logs l
+                       LEFT JOIN raw_materials m ON m.id = l.material_id
+                       {where_sql}
+                       ORDER BY datetime(l.created_at) DESC
+                       LIMIT 500;""",
+                    tuple(params),
+                )
+            except Exception:
+                rows = []
+            if not rows:
+                tree.insert("", "end", values=(
+                    "No stock movements match the current filters.",
+                    "", "", "", "", "", "", "", ""))
+                return
+            for r in rows:
+                action_v = str(_safe(r, "action_type", ""))
+                tree.insert("", "end", tags=(action_v,), values=(
+                    _safe(r, "created_at", ""),
+                    _safe(r, "material_name", ""),
+                    action_v,
+                    f"{float(_safe(r, 'quantity', 0)):.3f}",
+                    f"{float(_safe(r, 'old_quantity', 0)):.3f}",
+                    f"{float(_safe(r, 'new_quantity', 0)):.3f}",
+                    _safe(r, "reason", ""),
+                    _safe(r, "username", ""),
+                    _safe(r, "reference", ""),
+                ))
 
-        if not rows:
-            tree.insert("", "end", values=(
-                "No stock movements recorded yet.", "", "", "", "", "", "", "", ""))
-            return
-
-        for r in rows:
-            action = str(_safe(r, "action_type", ""))
-            tree.insert("", "end", tags=(action,), values=(
-                _safe(r, "created_at", ""),
-                _safe(r, "material_name", ""),
-                action,
-                f"{float(_safe(r, 'quantity', 0)):.3f}",
-                f"{float(_safe(r, 'old_quantity', 0)):.3f}",
-                f"{float(_safe(r, 'new_quantity', 0)):.3f}",
-                _safe(r, "reason", ""),
-                _safe(r, "username", ""),
-                _safe(r, "reference", ""),
-            ))
+        ent.bind("<KeyRelease>", lambda _e: _reload())
+        _reload()
 
     # ── Sorting ────────────────────────────────────────────────────────────────
 
@@ -893,18 +1143,23 @@ class InventoryRawMaterialsView(tk.Frame):
     def _set_type_filter(self, key: str):
         self._type_filter = key
         for k, btn in self._type_btns.items():
+            active = (k == key)
             btn.configure(
-                bg=THEME["primary"] if k == key else THEME["border"],
-                fg="white" if k == key else THEME["text"],
+                bg=THEME["primary"] if active else THEME["panel2"],
+                fg="white" if active else THEME["text"],
+                font=("Segoe UI", 9, "bold" if active else "normal"),
+                highlightbackground=THEME["primary_dark"] if active else THEME["border"],
             )
         self.refresh_materials()
 
     def _set_status_filter(self, key: str):
         self._status_filter = key
         for k, btn in self._status_btns.items():
+            active = (k == key)
             btn.configure(
-                bg=THEME["primary"] if k == key else THEME["border"],
-                fg="white" if k == key else THEME["text"],
+                bg=THEME["primary"] if active else THEME["panel2"],
+                fg="white" if active else THEME["text"],
+                highlightbackground=THEME["primary_dark"] if active else THEME["border"],
             )
         self.refresh_materials()
 
@@ -1049,9 +1304,16 @@ class InventoryRawMaterialsView(tk.Frame):
     def _selected_id(self) -> Optional[int]:
         sel = self.tree.selection()
         if not sel:
-            messagebox.showwarning("Selection", "Select a material first.")
+            try:
+                show_toast(self, "Select a raw material first.", kind="warning")
+            except Exception:
+                messagebox.showwarning("Selection", "Select a material first.")
             return None
-        return int(sel[0])
+        try:
+            return int(sel[0])
+        except (TypeError, ValueError):
+            # Empty-state row picked up a non-integer iid; ignore.
+            return None
 
     def _get_material(self, mid: int) -> Optional[dict]:
         row = self.db.fetchone("SELECT * FROM raw_materials WHERE id=?;", (mid,))

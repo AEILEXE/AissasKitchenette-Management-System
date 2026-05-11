@@ -36,6 +36,11 @@ class InventorySalesView(tk.Frame):
         self.var_view_type  = tk.StringVar(value="Daily")
         self.canvas_figure  = None
 
+        # Custom date range (only used when view_type = "Custom")
+        self.var_from = tk.StringVar()
+        self.var_to   = tk.StringVar()
+        self._custom_bar: tk.Frame | None = None
+
         self._build()
         self._refresh_data()
 
@@ -74,7 +79,7 @@ class InventorySalesView(tk.Frame):
         toggle_frame.grid(row=0, column=1, rowspan=2, sticky="e")
 
         self._toggle_btns: dict[str, tk.Button] = {}
-        for vt in ["Daily", "Weekly", "Monthly", "Yearly"]:
+        for vt in ["Daily", "Weekly", "Monthly", "Yearly", "Custom"]:
             btn = tk.Button(
                 toggle_frame, text=vt,
                 bg=THEME["beige"], fg=THEME["muted"],
@@ -86,6 +91,56 @@ class InventorySalesView(tk.Frame):
             btn.pack(side="left", padx=2, pady=2)
             self._toggle_btns[vt] = btn
         self._update_toggle_style()
+
+        # ── Custom date range bar (visible only when view_type = "Custom") ───
+        self._custom_bar = tk.Frame(self, bg=THEME["panel"],
+                                     highlightthickness=1,
+                                     highlightbackground=THEME["border"])
+        # Not gridded yet — _set_view_type controls visibility.
+        self._custom_bar.columnconfigure(99, weight=1)
+
+        tk.Label(self._custom_bar, text="From:",
+                 bg=THEME["panel"], fg=THEME["text"],
+                 font=("Segoe UI", f(9))
+                 ).pack(side="left", padx=(12, 4), pady=8)
+        ent_from = tk.Entry(self._custom_bar, textvariable=self.var_from,
+                            width=12, bd=0,
+                            bg=THEME["beige"], fg=THEME["text"],
+                            insertbackground="#3d2b1f", insertwidth=2,
+                            font=("Segoe UI", f(9)))
+        ent_from.pack(side="left", ipady=5, pady=8)
+        tk.Button(self._custom_bar, text="📅",
+                  command=lambda: self._open_picker(self.var_from),
+                  bg=THEME["primary"], fg="white",
+                  bd=0, padx=10, cursor="hand2",
+                  font=("Segoe UI", f(10), "bold")
+                  ).pack(side="left", padx=(4, 12), ipady=4, pady=8)
+
+        tk.Label(self._custom_bar, text="To:",
+                 bg=THEME["panel"], fg=THEME["text"],
+                 font=("Segoe UI", f(9))
+                 ).pack(side="left", padx=(0, 4), pady=8)
+        ent_to = tk.Entry(self._custom_bar, textvariable=self.var_to,
+                          width=12, bd=0,
+                          bg=THEME["beige"], fg=THEME["text"],
+                          insertbackground="#3d2b1f", insertwidth=2,
+                          font=("Segoe UI", f(9)))
+        ent_to.pack(side="left", ipady=5, pady=8)
+        tk.Button(self._custom_bar, text="📅",
+                  command=lambda: self._open_picker(self.var_to),
+                  bg=THEME["primary"], fg="white",
+                  bd=0, padx=10, cursor="hand2",
+                  font=("Segoe UI", f(10), "bold")
+                  ).pack(side="left", padx=(4, 8), ipady=4, pady=8)
+
+        tk.Button(self._custom_bar, text="Apply",
+                  command=self._apply_custom_range,
+                  bg=THEME["success"], fg="white",
+                  activebackground=THEME["primary_dark"],
+                  activeforeground="white",
+                  bd=0, padx=sp(14), pady=sp(6), cursor="hand2",
+                  font=("Segoe UI", f(9), "bold")
+                  ).pack(side="left", padx=(8, 12), pady=8)
 
         # ── KPI cards row ─────────────────────────────────────────────────────
         self.kpi_row = tk.Frame(self, bg=THEME["bg"])
@@ -129,13 +184,41 @@ class InventorySalesView(tk.Frame):
         self.canvas_frame = tk.Frame(chart_card, bg="white")
         self.canvas_frame.grid(row=1, column=0, sticky="nsew", padx=2, pady=(0, 2))
 
+        # ── Payment breakdown card ────────────────────────────────────────────
+        # Mirrors the dashboard's "Payment Methods" widget but scoped to the
+        # currently-selected period (Daily / Weekly / Monthly / Yearly /
+        # Custom).  Refreshed by _refresh_data() alongside the KPI cards.
+        self._pay_card = tk.Frame(
+            self, bg=THEME["panel"],
+            highlightthickness=1, highlightbackground=THEME["border"],
+        )
+        self._pay_card.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 10))
+
+        pay_hdr = tk.Frame(self._pay_card, bg=THEME["panel"])
+        pay_hdr.pack(fill="x", padx=14, pady=(10, 4))
+        self._pay_title_lbl = tk.Label(
+            pay_hdr, text="Payment Breakdown",
+            bg=THEME["panel"], fg=THEME["text"],
+            font=("Segoe UI", f(11), "bold"), anchor="w",
+        )
+        self._pay_title_lbl.pack(side="left")
+        tk.Label(
+            pay_hdr,
+            text="Totals per payment method for the selected period",
+            bg=THEME["panel"], fg=THEME["muted"],
+            font=("Segoe UI", f(9)),
+        ).pack(side="left", padx=(10, 0))
+
+        self._pay_body = tk.Frame(self._pay_card, bg=THEME["panel"])
+        self._pay_body.pack(fill="x", padx=14, pady=(0, 12))
+
         # ── Export bar (only shown if user has export permission) ─────────────
         if self.auth.has_permission(P_EXPORT):
             export_bar = tk.Frame(
                 self, bg=THEME["panel"],
                 highlightthickness=1, highlightbackground=THEME["border"],
             )
-            export_bar.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 16))
+            export_bar.grid(row=5, column=0, sticky="ew", padx=18, pady=(0, 16))
 
             tk.Label(
                 export_bar, text="Export",
@@ -171,6 +254,55 @@ class InventorySalesView(tk.Frame):
     def _set_view_type(self, vt: str):
         self.var_view_type.set(vt)
         self._update_toggle_style()
+        self._toggle_custom_bar()
+        self._refresh_data()
+
+    def _toggle_custom_bar(self):
+        """Show the date-range bar only when Custom is active."""
+        bar = getattr(self, "_custom_bar", None)
+        if bar is None:
+            return
+        try:
+            if self.var_view_type.get() == "Custom":
+                bar.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 8))
+            else:
+                bar.grid_remove()
+        except Exception:
+            pass
+
+    def _open_picker(self, target: tk.StringVar):
+        """Open the shared pure-Tk DatePickerDialog for a date entry."""
+        try:
+            from app.ui.transactions_view import DatePickerDialog
+            dlg = DatePickerDialog(self, initial=target.get() or None)
+            if dlg.result:
+                target.set(dlg.result)
+        except Exception:
+            pass
+
+    def _apply_custom_range(self):
+        """Validate and re-render with the chosen [from, to] range."""
+        from datetime import date as _date
+        f = (self.var_from.get() or "").strip()
+        t = (self.var_to.get() or "").strip()
+        if not f or not t:
+            messagebox.showerror("Missing Date",
+                                 "Please pick both Start and End dates.",
+                                 parent=self)
+            return
+        try:
+            df = _date.fromisoformat(f)
+            dt = _date.fromisoformat(t)
+        except ValueError:
+            messagebox.showerror("Invalid Date",
+                                 "Dates must be valid YYYY-MM-DD values.",
+                                 parent=self)
+            return
+        if df > dt:
+            messagebox.showerror("Invalid Range",
+                                 "Start Date must be on or before End Date.",
+                                 parent=self)
+            return
         self._refresh_data()
 
     def _update_toggle_style(self):
@@ -227,6 +359,16 @@ class InventorySalesView(tk.Frame):
         if not rows:
             return [], 0.0, 0
 
+        # Custom range bounds (only used when view_type = "Custom")
+        custom_from = custom_to = None
+        if view_type == "Custom":
+            try:
+                custom_from = _date.fromisoformat(self.var_from.get().strip())
+                custom_to   = _date.fromisoformat(self.var_to.get().strip())
+            except Exception:
+                # Range not set — return empty so the view shows empty state
+                return [], 0.0, 0
+
         now = datetime.now()
         current_year_month = now.strftime("%Y-%m")
 
@@ -241,18 +383,28 @@ class InventorySalesView(tk.Frame):
                 dt     = datetime.fromisoformat(dt_str) if isinstance(dt_str, str) else dt_str
 
                 if view_type == "Daily":
-                    # Only include orders from the current month
                     if dt.strftime("%Y-%m") != current_year_month:
                         total_sales += total
                         order_count += 1
                         continue
-                    key = dt.strftime("%d")  # day of month as label
+                    key = dt.strftime("%d")
                 elif view_type == "Weekly":
                     key = dt.strftime("%Y-W%W")
                 elif view_type == "Monthly":
                     key = dt.strftime("%Y-%m")
-                else:
+                elif view_type == "Yearly":
                     key = dt.strftime("%Y")
+                else:  # Custom
+                    d_only = dt.date()
+                    if not (custom_from <= d_only <= custom_to):
+                        continue
+                    span_days = (custom_to - custom_from).days
+                    if span_days <= 60:
+                        key = dt.strftime("%Y-%m-%d")
+                    elif span_days <= 365:
+                        key = dt.strftime("%Y-W%W")
+                    else:
+                        key = dt.strftime("%Y-%m")
 
                 sales_dict[key] = sales_dict.get(key, 0.0) + total
                 total_sales    += total
@@ -261,20 +413,139 @@ class InventorySalesView(tk.Frame):
                 continue
 
         sorted_keys = sorted(sales_dict.keys())
-        if view_type == "Daily":
-            # Use readable labels: "01", "02", ... up to end of month
-            return [(k, sales_dict[k]) for k in sorted_keys], total_sales, order_count
         return [(k, sales_dict[k]) for k in sorted_keys], total_sales, order_count
 
     def _refresh_data(self):
         data, total_sales, order_count = self._get_sales_data()
         self._refresh_kpi(total_sales, order_count)
 
-        # Update chart title
         vt = self.var_view_type.get()
-        self._chart_title_lbl.configure(text=f"Sales — {vt} View")
+        if vt == "Custom":
+            f = (self.var_from.get() or "").strip()
+            t = (self.var_to.get() or "").strip()
+            if f and t:
+                self._chart_title_lbl.configure(text=f"Sales — Custom: {f} → {t}")
+            else:
+                self._chart_title_lbl.configure(
+                    text="Sales — Custom: pick a date range")
+        else:
+            self._chart_title_lbl.configure(text=f"Sales — {vt} View")
 
         self._draw_graph(data)
+        self._refresh_payment_breakdown()
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Payment Breakdown
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _payment_period_clause(self) -> tuple[str, tuple]:
+        """SQL clause + params restricting to the currently selected period.
+        Targets the `datetime` column in `orders` (localtime)."""
+        vt = self.var_view_type.get()
+        now = datetime.now()
+        if vt == "Daily":
+            return ("strftime('%Y-%m', datetime, 'localtime') = ?",
+                    (now.strftime("%Y-%m"),))
+        if vt == "Weekly":
+            return ("DATE(datetime, 'localtime') >= DATE('now', 'localtime', '-6 days')",
+                    ())
+        if vt == "Monthly":
+            return ("strftime('%Y', datetime, 'localtime') = ?",
+                    (now.strftime("%Y"),))
+        if vt == "Yearly":
+            return ("1=1", ())
+        if vt == "Custom":
+            from datetime import date as _date
+            try:
+                df = _date.fromisoformat(self.var_from.get().strip())
+                dt = _date.fromisoformat(self.var_to.get().strip())
+            except Exception:
+                return ("1=0", ())  # no range chosen — return nothing
+            return ("DATE(datetime, 'localtime') BETWEEN DATE(?) AND DATE(?)",
+                    (df.isoformat(), dt.isoformat()))
+        return ("1=1", ())
+
+    def _fetch_payment_breakdown(self) -> list[dict]:
+        clause, params = self._payment_period_clause()
+        try:
+            rows = self.db.fetchall(
+                f"""
+                SELECT COALESCE(NULLIF(payment_method, ''), 'Unknown') AS method,
+                       COUNT(*) AS cnt,
+                       COALESCE(SUM(total), 0) AS total
+                FROM orders
+                WHERE status = 'Completed' AND {clause}
+                GROUP BY method
+                ORDER BY total DESC;
+                """,
+                params,
+            )
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def _refresh_payment_breakdown(self) -> None:
+        body = getattr(self, "_pay_body", None)
+        if body is None or not body.winfo_exists():
+            return
+        for w in body.winfo_children():
+            w.destroy()
+
+        f  = ui_scale.scale_font
+        sp = ui_scale.s
+
+        rows = self._fetch_payment_breakdown()
+        total = sum(float(r.get("total") or 0) for r in rows)
+
+        if not rows or total <= 0:
+            tk.Label(
+                body,
+                text="No completed orders for the selected period.",
+                bg=THEME["panel"], fg=THEME["muted"],
+                font=("Segoe UI", f(10), "italic"),
+            ).pack(anchor="w", pady=8)
+            return
+
+        accents = [
+            THEME["success"], THEME["primary"], THEME["accent"],
+            THEME["brown"], THEME["warning"], THEME["danger"],
+        ]
+        grid = tk.Frame(body, bg=THEME["panel"])
+        grid.pack(fill="x")
+        # Up to four columns side-by-side; wraps to additional rows if more.
+        per_row = min(4, max(1, len(rows)))
+        for c in range(per_row):
+            grid.columnconfigure(c, weight=1, uniform="pay")
+
+        for i, r in enumerate(rows):
+            method = str(r.get("method") or "—")
+            amt    = float(r.get("total") or 0.0)
+            cnt    = int(r.get("cnt") or 0)
+            pct    = (amt / total * 100.0) if total else 0.0
+            accent = accents[i % len(accents)]
+
+            row_i, col_i = divmod(i, per_row)
+            card = tk.Frame(
+                grid, bg=THEME["panel"],
+                highlightthickness=1, highlightbackground=THEME["border"],
+            )
+            card.grid(row=row_i, column=col_i, sticky="nsew",
+                      padx=(0 if col_i == 0 else 8, 0),
+                      pady=(0 if row_i == 0 else 8, 0))
+            tk.Frame(card, bg=accent, height=3).pack(fill="x")
+            tk.Label(card, text=method, bg=THEME["panel"], fg=THEME["muted"],
+                     font=("Segoe UI", f(9), "bold"),
+                     anchor="w").pack(anchor="w", padx=12, pady=(8, 0))
+            tk.Label(card, text=money(amt), bg=THEME["panel"], fg=accent,
+                     font=("Segoe UI", f(16), "bold"),
+                     anchor="w").pack(anchor="w", padx=12, pady=(2, 0))
+            tk.Label(
+                card,
+                text=f"{cnt} order{'s' if cnt != 1 else ''}  •  {pct:.1f}%",
+                bg=THEME["panel"], fg=THEME["muted"],
+                font=("Segoe UI", f(8)),
+                anchor="w",
+            ).pack(anchor="w", padx=12, pady=(0, 10))
 
     # ──────────────────────────────────────────────────────────────────────────
     # Chart (unchanged matplotlib logic)

@@ -36,6 +36,15 @@ _UNAVAIL_BG = "#fff5f5"   # very light red
 _HOVER_BG   = "#eef3ff"   # blue-tint hover
 
 
+def _safe_row(row, key, default=None):
+    """sqlite3.Row has no .get(); guard column-may-be-missing access."""
+    try:
+        v = row[key]
+        return default if v is None else v
+    except Exception:
+        return default
+
+
 class InventoryProductsView(tk.Frame):
     def __init__(self, parent: tk.Frame, db: Database, auth: AuthService,
                  on_change_cb=None):
@@ -318,6 +327,14 @@ class InventoryProductsView(tk.Frame):
 
         self._refresh_category_options()
 
+        # Build category-name -> hierarchy-path map so the list can show
+        # "Drinks > Hot Coffee" instead of just "Hot Coffee".
+        try:
+            _paths = self.categories.list_hierarchy_paths()
+            self._cat_path_map: dict[str, str] = {p["name"]: p["path"] for p in _paths}
+        except Exception:
+            self._cat_path_map = {}
+
         q      = (self.var_search.get() or "").strip().lower()
         cat    = self.var_category.get()
         status = self.var_status.get()
@@ -364,12 +381,14 @@ class InventoryProductsView(tk.Frame):
             active = int(r["active"])
             tag          = "avail" if active else "unavail"
             status_text  = "● Available" if active else "● Unavailable"
+            cat_name     = str(r["category"] or "")
+            cat_display  = self._cat_path_map.get(cat_name, cat_name)
             self.tbl.insert(
                 "", tk.END,
                 iid=str(pid),
                 values=(
                     f"#{pid}",
-                    str(r["name"]), str(r["category"]),
+                    str(r["name"]), cat_display,
                     money(r["price"]),
                     status_text,
                     "Edit ›",
@@ -437,6 +456,10 @@ class ProductEditor(tk.Toplevel):
         # Image preview reference (prevent garbage collection)
         self._img_ref = None
         self._preview_lbl: tk.Label | None = None
+
+        # Path/Name lookup for hierarchical category dropdown
+        self._path_to_name: dict[str, str] = {}
+        self._name_to_path: dict[str, str] = {}
 
         self._build()
         self._load()
@@ -611,9 +634,9 @@ class ProductEditor(tk.Toplevel):
         self.cbo_cat.grid(row=0, column=1, sticky="ew", padx=(10, 10))
 
         tk.Button(
-            cat_row, text="+",
+            cat_row, text="+ Add",
             bg=THEME["panel2"], fg=THEME["text"],
-            bd=0, width=3, cursor="hand2",
+            bd=0, padx=8, cursor="hand2",
             font=("Segoe UI", f(9)),
             command=self._add_category,
         ).grid(row=0, column=2)
@@ -641,11 +664,22 @@ class ProductEditor(tk.Toplevel):
         ).grid(row=10, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 14))
 
     def _refresh_categories(self):
-        cats  = self.categories.list_categories()
-        names = [c["name"] for c in cats]
-        self.cbo_cat["values"] = names
-        if not self.var_category.get() and names:
-            self.var_category.set(names[0])
+        # Hierarchy paths: "Beef", "Drinks > Hot Coffee", etc. Stored separately
+        # from the displayed text so we can resolve back to a name on save.
+        try:
+            paths = self.categories.list_hierarchy_paths()
+        except Exception:
+            paths = [{"name": c["name"], "path": c["name"]}
+                     for c in self.categories.list_categories()]
+        self._path_to_name = {p["path"]: p["name"] for p in paths}
+        self._name_to_path = {p["name"]: p["path"] for p in paths}
+        labels = [p["path"] for p in paths]
+        self.cbo_cat["values"] = labels
+        cur_name = self.var_category.get()
+        if cur_name and cur_name in self._name_to_path:
+            self.var_category.set(self._name_to_path[cur_name])
+        elif not self.var_category.get() and labels:
+            self.var_category.set(labels[0])
 
     def _load(self):
         self._refresh_categories()
@@ -771,15 +805,35 @@ class ProductEditor(tk.Toplevel):
             messagebox.showerror("Error", f"Failed to copy image:\n{e}")
 
     def _add_category(self):
-        name = simple_input(self, "New Category", "Category name:")
-        if not name:
+        """Open the shared category dialog (supports Main + Subcategory with a
+        parent picker) without leaving the Product form. On success, refresh
+        the dropdown and auto-select the new entry."""
+        dlg = _CategoryDialog(self, self.db)
+        if not dlg.result:
+            return
+        new_name = (dlg.result.get("name") or "").strip()
+        parent_id = dlg.result.get("parent_id")
+        if not new_name:
             return
         try:
-            self.categories.create(name.strip())
-        except Exception:
-            pass
+            self.categories.create(new_name, parent_id)
+        except Exception as exc:
+            if "UNIQUE" in str(exc).upper():
+                messagebox.showwarning(
+                    "Duplicate Category",
+                    f"A category named \"{new_name}\" already exists.",
+                    parent=self,
+                )
+            else:
+                messagebox.showerror(
+                    "Error", f"Could not create category:\n{exc}", parent=self,
+                )
+            return
+        # The dropdown shows hierarchy paths ("Drinks > Hot Coffee"). Refresh
+        # so the new row is included, then select it by its full path.
         self._refresh_categories()
-        self.var_category.set(name.strip())
+        new_path = self._name_to_path.get(new_name, new_name)
+        self.var_category.set(new_path)
 
     def _save(self):
         name = self.var_name.get().strip()
@@ -805,9 +859,12 @@ class ProductEditor(tk.Toplevel):
             messagebox.showerror("Invalid", "Price/stock/low must be numbers.")
             return
 
-        cat_name = self.var_category.get().strip()
-        cat      = self.categories.get_by_name(cat_name) if cat_name else None
-        cat_id   = int(cat["category_id"]) if cat else None
+        # Combobox stores hierarchy path (e.g. "Drinks > Hot Coffee"). Resolve
+        # it back to the leaf category name before looking up the FK.
+        cat_label = self.var_category.get().strip()
+        cat_name  = self._path_to_name.get(cat_label, cat_label) if cat_label else ""
+        cat       = self.categories.get_by_name(cat_name) if cat_name else None
+        cat_id    = int(cat["category_id"]) if cat else None
 
         was_update = bool(self.product_id)
         if self.product_id:
@@ -894,6 +951,165 @@ def simple_input(parent: tk.Widget, title: str, label: str) -> str | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Category Add/Edit dialog (supports main category + subcategory)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _CategoryDialog(tk.Toplevel):
+    """Add/Edit category. Supports Main vs. Subcategory + parent dropdown."""
+
+    def __init__(self, parent: tk.Widget, db: Database,
+                 category: dict | None = None):
+        super().__init__(parent)
+        self.db = db
+        self.cat = category
+        self.result: dict | None = None
+        self.title("Edit Category" if category else "Add Category")
+        self.configure(bg=THEME["bg"])
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        cats = self.db.fetchall(
+            "SELECT id, name FROM categories ORDER BY name;"
+        )
+        self._main_options = [(int(r["id"]), str(r["name"])) for r in cats]
+        if category:
+            cur_id = int(category.get("category_id", 0) or 0)
+            self._main_options = [(i, n) for (i, n) in self._main_options if i != cur_id]
+
+        # ── Header ────────────────────────────────────────────────────────────
+        tk.Label(self,
+                 text="Edit Category" if category else "New Category",
+                 bg=THEME["bg"], fg=THEME["text"],
+                 font=("Segoe UI", 13, "bold")
+                 ).grid(row=0, column=0, columnspan=2,
+                        sticky="w", padx=16, pady=(14, 4))
+        tk.Label(self,
+                 text="Categories can be top-level (Main) or nested under a parent (Subcategory).",
+                 bg=THEME["bg"], fg=THEME["muted"],
+                 font=("Segoe UI", 9)
+                 ).grid(row=1, column=0, columnspan=2,
+                        sticky="w", padx=16, pady=(0, 10))
+
+        # ── Name ──────────────────────────────────────────────────────────────
+        tk.Label(self, text="Name", bg=THEME["bg"], fg=THEME["text"],
+                 font=("Segoe UI", 10)).grid(row=2, column=0,
+                                              sticky="w", padx=16, pady=4)
+        self.var_name = tk.StringVar(value=str((category or {}).get("name", "")))
+        tk.Entry(self, textvariable=self.var_name, width=32,
+                 bg=THEME["beige"], fg=THEME["text"],
+                 insertbackground="#3d2b1f", insertwidth=2,
+                 font=("Segoe UI", 10)
+                 ).grid(row=2, column=1, sticky="w", padx=16, pady=4)
+
+        # ── Type segmented buttons ───────────────────────────────────────────
+        tk.Label(self, text="Type", bg=THEME["bg"], fg=THEME["text"],
+                 font=("Segoe UI", 10)).grid(row=3, column=0, sticky="w",
+                                              padx=16, pady=(8, 4))
+        seg = tk.Frame(self, bg=THEME["bg"])
+        seg.grid(row=3, column=1, sticky="w", padx=16, pady=(8, 4))
+        initial_type = "SUB" if (category and category.get("parent_id")) else "MAIN"
+        self.var_type = tk.StringVar(value=initial_type)
+        self._type_btns: dict[str, tk.Button] = {}
+        for v, lbl in (("MAIN", "Main Category"), ("SUB", "Subcategory")):
+            b = tk.Button(seg, text=lbl, command=lambda vv=v: self._set_type(vv),
+                          bd=0, padx=14, pady=8, cursor="hand2",
+                          font=("Segoe UI", 10, "bold"), relief="flat")
+            b.pack(side="left", padx=(0, 6))
+            self._type_btns[v] = b
+
+        # ── Parent dropdown (visible only for Sub) ───────────────────────────
+        self._parent_lbl = tk.Label(self, text="Parent Category",
+                                     bg=THEME["bg"], fg=THEME["text"],
+                                     font=("Segoe UI", 10))
+        self._parent_lbl.grid(row=4, column=0, sticky="w", padx=16, pady=4)
+        self.var_parent = tk.StringVar()
+        names = [n for (_i, n) in self._main_options]
+        self._parent_cb = ttk.Combobox(self, textvariable=self.var_parent,
+                                        values=names, state="readonly",
+                                        width=30, font=("Segoe UI", 10))
+        self._parent_cb.grid(row=4, column=1, sticky="w", padx=16, pady=4)
+        if category and category.get("parent_id"):
+            for (i, n) in self._main_options:
+                if i == int(category["parent_id"]):
+                    self.var_parent.set(n)
+                    break
+        elif names:
+            self.var_parent.set(names[0])
+
+        # ── Buttons ──────────────────────────────────────────────────────────
+        btn_row = tk.Frame(self, bg=THEME["bg"])
+        btn_row.grid(row=5, column=0, columnspan=2,
+                     sticky="ew", padx=16, pady=(14, 14))
+        btn_row.columnconfigure(0, weight=1)
+        tk.Button(btn_row, text="Cancel", command=self.destroy,
+                  bg=THEME["panel2"], fg=THEME["text"],
+                  bd=0, padx=22, pady=10, cursor="hand2",
+                  font=("Segoe UI", 10)
+                  ).grid(row=0, column=1, padx=(0, 8))
+        tk.Button(btn_row,
+                  text=("Update" if category else "Save"),
+                  command=self._save,
+                  bg=THEME["success"], fg="white",
+                  activebackground=THEME["primary_dark"], activeforeground="white",
+                  bd=0, padx=22, pady=10, cursor="hand2",
+                  font=("Segoe UI", 10, "bold")
+                  ).grid(row=0, column=2)
+
+        self._set_type(initial_type)
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.wait_window()
+
+    def _set_type(self, val: str):
+        self.var_type.set(val)
+        for v, b in self._type_btns.items():
+            if v == val:
+                b.configure(bg=THEME["primary"], fg="white",
+                            activebackground=THEME["primary_dark"],
+                            activeforeground="white")
+            else:
+                b.configure(bg=THEME["panel2"], fg=THEME["text"],
+                            activebackground=THEME["border"],
+                            activeforeground=THEME["text"])
+        # Show/hide parent picker
+        try:
+            if val == "SUB":
+                self._parent_lbl.grid()
+                self._parent_cb.grid()
+                if not self._main_options:
+                    self._parent_cb.configure(state="disabled")
+            else:
+                self._parent_lbl.grid_remove()
+                self._parent_cb.grid_remove()
+        except Exception:
+            pass
+
+    def _save(self):
+        name = (self.var_name.get() or "").strip()
+        if not name:
+            messagebox.showerror("Validation", "Category name is required.",
+                                 parent=self)
+            return
+        parent_id: int | None = None
+        if self.var_type.get() == "SUB":
+            sel = (self.var_parent.get() or "").strip()
+            for (i, n) in self._main_options:
+                if n == sel:
+                    parent_id = i
+                    break
+            if parent_id is None:
+                messagebox.showerror(
+                    "Validation",
+                    "Pick a parent category, or switch the type to Main.",
+                    parent=self,
+                )
+                return
+        self.result = {"name": name, "parent_id": parent_id}
+        self.destroy()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # InventoryCategoriesView
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -943,7 +1159,9 @@ class InventoryCategoriesView(tk.Frame):
         ).grid(row=0, column=0, sticky="w")
 
         tk.Label(
-            title_row, text="Manage menu categories",
+            title_row,
+            text="Manage main categories and subcategories. "
+                 "Subcategories appear under their parent in POS.",
             bg=THEME["panel"], fg=THEME["muted"],
             font=("Segoe UI", f(9)),
         ).grid(row=1, column=0, sticky="w")
@@ -960,16 +1178,29 @@ class InventoryCategoriesView(tk.Frame):
             command=self._create_category,
         ).grid(row=0, column=1, rowspan=2, sticky="e")
 
-        # ── Action bar (Delete button, enabled on selection) ──────────────
+        # ── Action bar (Edit + Delete, enabled on selection) ──────────────
         action_bar = tk.Frame(self, bg=THEME["bg"])
         action_bar.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 6))
 
+        self._edit_btn = tk.Button(
+            action_bar,
+            text="Edit",
+            bg=THEME["primary"], fg="white",
+            activebackground=THEME["primary_dark"], activeforeground="white",
+            bd=0, padx=sp(14), pady=sp(7),
+            cursor="hand2",
+            font=("Segoe UI", f(9), "bold"),
+            state="disabled",
+            command=self._edit_selected,
+        )
+        self._edit_btn.pack(side="left", padx=(0, 6))
+
         self._del_btn = tk.Button(
             action_bar,
-            text="Delete Selected",
+            text="Delete",
             bg=THEME["danger"], fg="white",
             activebackground="#c0392b", activeforeground="white",
-            bd=0, padx=sp(12), pady=sp(7),
+            bd=0, padx=sp(14), pady=sp(7),
             cursor="hand2",
             font=("Segoe UI", f(9), "bold"),
             state="disabled",
@@ -979,7 +1210,7 @@ class InventoryCategoriesView(tk.Frame):
 
         tk.Label(
             action_bar,
-            text="Select a category row, then click Delete.",
+            text="Select a row, then Edit or Delete. Double-click to edit.",
             bg=THEME["bg"], fg=THEME["muted"],
             font=("Segoe UI", f(8), "italic"),
         ).pack(side="left", padx=(10, 0))
@@ -1025,7 +1256,7 @@ class InventoryCategoriesView(tk.Frame):
         tbl_card.rowconfigure(0, weight=1)
         tbl_card.columnconfigure(0, weight=1)
 
-        cols = ("name", "products")
+        cols = ("id", "name", "type", "parent", "products")
         self.tbl = ttk.Treeview(
             tbl_card, columns=cols, show="headings",
             style="Cat.Treeview",
@@ -1037,15 +1268,24 @@ class InventoryCategoriesView(tk.Frame):
         self.tbl.configure(yscrollcommand=ysb.set)
 
         col_cfg = [
-            ("name",     "Category Name", sp(320), "w",      True),
-            ("products", "Products",      sp(120), "center", False),
+            ("id",       "ID",            sp(70),  "center", False),
+            ("name",     "Category Name", sp(280), "w",      True),
+            ("type",     "Type",          sp(110), "center", False),
+            ("parent",   "Parent",        sp(160), "w",      False),
+            ("products", "Products",      sp(100), "center", False),
         ]
         for cid, heading, width, anchor, stretch in col_cfg:
-            self.tbl.heading(cid, text=heading, anchor="w" if cid == "name" else "center")
-            self.tbl.column(cid, width=width, minwidth=sp(80),
+            self.tbl.heading(cid, text=heading,
+                             anchor="w" if cid in ("name", "parent") else "center")
+            self.tbl.column(cid, width=width, minwidth=sp(60),
                             anchor=anchor, stretch=stretch)
 
+        # Visual cue: subcategories highlighted in muted text colour
+        self.tbl.tag_configure("main", foreground=THEME["text"])
+        self.tbl.tag_configure("sub",  foreground=THEME["brown"])
+
         self.tbl.bind("<<TreeviewSelect>>", self._on_select)
+        self.tbl.bind("<Double-Button-1>", lambda _e: self._edit_selected())
         self.tbl.bind("<Delete>", lambda _e: self._delete_selected())
 
     # ── Data ─────────────────────────────────────────────────────────────────
@@ -1055,56 +1295,150 @@ class InventoryCategoriesView(tk.Frame):
             self.tbl.delete(iid)
 
         rows = self.categories.list_with_counts()
+        # Build hierarchy: render mains first, then their subs indented.
+        mains = [r for r in rows if not _safe_row(r, "parent_id")]
+        subs_by_parent: dict[int, list] = {}
         for r in rows:
+            pid = _safe_row(r, "parent_id")
+            if pid:
+                subs_by_parent.setdefault(int(pid), []).append(r)
+
+        def insert_main(r):
             cid   = int(r["category_id"])
             name  = str(r["name"])
             count = int(r["product_count"])
             self.tbl.insert("", tk.END, iid=str(cid),
-                            values=(name, count))
+                            tags=("main",),
+                            values=(f"#{cid}", name, "Main", "—", count))
+
+        def insert_sub(parent_name, r):
+            cid   = int(r["category_id"])
+            name  = str(r["name"])
+            count = int(r["product_count"])
+            self.tbl.insert("", tk.END, iid=str(cid),
+                            tags=("sub",),
+                            values=(f"#{cid}", f"    └ {name}",
+                                    "Subcategory", parent_name, count))
+
+        if mains or subs_by_parent:
+            for m in mains:
+                insert_main(m)
+                for s in subs_by_parent.get(int(m["category_id"]), []):
+                    insert_sub(str(m["name"]), s)
+            # Orphans (parent_id pointing nowhere) — surface so they aren't lost
+            seen = {int(m["category_id"]) for m in mains}
+            for pid, srows in subs_by_parent.items():
+                if pid not in seen:
+                    for s in srows:
+                        insert_sub("(missing parent)", s)
+        else:
+            # Schema without parent_id — fall back to flat
+            for r in rows:
+                cid   = int(r["category_id"])
+                name  = str(r["name"])
+                count = int(r["product_count"])
+                self.tbl.insert("", tk.END, iid=str(cid),
+                                tags=("main",),
+                                values=(f"#{cid}", name, "Main", "—", count))
 
         if self._del_btn:
             self._del_btn.configure(state="disabled")
+        if getattr(self, "_edit_btn", None):
+            self._edit_btn.configure(state="disabled")
 
     # ── Event handlers ────────────────────────────────────────────────────────
 
     def _on_select(self, _event=None):
-        if self._del_btn is None:
-            return
         sel = self.tbl.selection()
         state = "normal" if sel else "disabled"
-        self._del_btn.configure(state=state)
+        if self._del_btn is not None:
+            self._del_btn.configure(state=state)
+        if getattr(self, "_edit_btn", None) is not None:
+            self._edit_btn.configure(state=state)
 
     def _create_category(self):
-        name = simple_input(self, "New Category", "Category name:")
-        if not name:
+        dlg = _CategoryDialog(self, self.db)
+        if not dlg.result:
             return
-        name = name.strip()
-        if not name:
+        try:
+            self.categories.create(dlg.result["name"], dlg.result.get("parent_id"))
+        except Exception as exc:
+            if "UNIQUE" in str(exc).upper():
+                messagebox.showwarning(
+                    "Duplicate",
+                    f"A category named '{dlg.result['name']}' already exists.",
+                    parent=self,
+                )
+            else:
+                messagebox.showerror("Error", f"Could not create category:\n{exc}",
+                                     parent=self)
             return
-        existing = self.categories.get_by_name(name)
-        if existing:
-            from tkinter import messagebox
-            messagebox.showwarning("Duplicate", f"A category named '{name}' already exists.",
-                                   parent=self)
-            return
-        self.categories.create(name)
         self.refresh()
         self._refresh_pos_cats()
+        try:
+            show_toast(self, f"Category '{dlg.result['name']}' added.")
+        except Exception:
+            pass
+
+    def _edit_selected(self):
+        sel = self.tbl.selection()
+        if not sel:
+            return
+        cat_id = int(sel[0])
+        cur = self.db.fetchone(
+            "SELECT id, name, parent_id FROM categories WHERE id=?;",
+            (cat_id,),
+        )
+        if not cur:
+            return
+        dlg = _CategoryDialog(self, self.db, category={
+            "category_id": cat_id,
+            "name": cur["name"],
+            "parent_id": _safe_row(cur, "parent_id"),
+        })
+        if not dlg.result:
+            return
+        # Self-parent guard
+        if (dlg.result.get("parent_id") is not None
+                and int(dlg.result["parent_id"]) == cat_id):
+            messagebox.showerror("Invalid Parent",
+                                 "A category cannot be its own parent.",
+                                 parent=self)
+            return
+        try:
+            self.categories.update(cat_id, dlg.result["name"],
+                                    dlg.result.get("parent_id"))
+        except Exception as exc:
+            if "UNIQUE" in str(exc).upper():
+                messagebox.showwarning(
+                    "Duplicate",
+                    f"A category named '{dlg.result['name']}' already exists.",
+                    parent=self,
+                )
+            else:
+                messagebox.showerror("Error", f"Could not update:\n{exc}",
+                                     parent=self)
+            return
+        self.refresh()
+        self._refresh_pos_cats()
+        try:
+            show_toast(self, f"Category '{dlg.result['name']}' updated.")
+        except Exception:
+            pass
 
     def _delete_selected(self):
         sel = self.tbl.selection()
         if not sel:
-            from tkinter import messagebox
-            messagebox.showinfo("No Selection", "Select a category to delete.", parent=self)
+            messagebox.showinfo("No Selection", "Select a category to delete.",
+                                parent=self)
             return
 
         cat_id   = int(sel[0])
         item     = self.tbl.item(str(cat_id))
-        cat_name = str(item["values"][0])
-        count    = int(item["values"][1])
+        cat_name = str(item["values"][1]).strip().lstrip("└ ").strip()
+        count    = int(item["values"][4])
 
         if count > 0:
-            from tkinter import messagebox
             messagebox.showerror(
                 "Cannot Delete",
                 f"Cannot delete category while products are assigned to it.\n\n"
@@ -1114,16 +1448,34 @@ class InventoryCategoriesView(tk.Frame):
             )
             return
 
-        from tkinter import messagebox
-        confirmed = messagebox.askyesno(
+        # Block delete if subcategories exist
+        try:
+            sub_count = self.db.fetchone(
+                "SELECT COUNT(*) AS c FROM categories WHERE parent_id=?;",
+                (cat_id,),
+            )
+            if sub_count and int(sub_count["c"]) > 0:
+                messagebox.showerror(
+                    "Cannot Delete",
+                    f"'{cat_name}' has {int(sub_count['c'])} subcategory/ies.\n\n"
+                    "Delete or reassign the subcategories first.",
+                    parent=self,
+                )
+                return
+        except Exception:
+            pass
+
+        if not messagebox.askyesno(
             "Confirm Delete",
             f"Delete category '{cat_name}'?\n\nThis cannot be undone.",
-            icon="warning",
-            parent=self,
-        )
-        if not confirmed:
+            icon="warning", parent=self,
+        ):
             return
 
         self.categories.delete(cat_id)
         self.refresh()
         self._refresh_pos_cats()
+        try:
+            show_toast(self, f"Category '{cat_name}' deleted.")
+        except Exception:
+            pass
