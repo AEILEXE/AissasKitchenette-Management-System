@@ -633,6 +633,51 @@ class OrderDAO:
             tuple(params),
         )
 
+    def list_discounted_orders(self, period: str = "month",
+                                date_from: str | None = None,
+                                date_to: str | None = None):
+        """List individual Completed orders that had a discount applied.
+        Used by the Discounts report to render a transaction-level breakdown
+        (one row per order) including the order ID.
+
+        Filters:
+        - When *date_from* and *date_to* are both provided, use that custom
+          inclusive range.
+        - Otherwise *period* is one of: today, week, month (default), year.
+        """
+        if date_from and date_to:
+            clause = "DATE(datetime,'localtime') BETWEEN DATE(?) AND DATE(?)"
+            params: tuple = (str(date_from), str(date_to))
+        elif period == "today":
+            clause = "DATE(datetime,'localtime') = DATE('now','localtime')"
+            params = ()
+        elif period == "week":
+            clause = "DATE(datetime,'localtime') >= DATE('now','localtime','-6 days')"
+            params = ()
+        elif period == "year":
+            clause = "strftime('%Y',datetime,'localtime') = strftime('%Y','now','localtime')"
+            params = ()
+        else:
+            clause = "strftime('%Y-%m',datetime,'localtime') = strftime('%Y-%m','now','localtime')"
+            params = ()
+        return self.db.fetchall(
+            f"""
+            SELECT id                                            AS order_id,
+                   datetime                                      AS dt,
+                   COALESCE(NULLIF(discount_type,''), 'NONE')    AS discount_type,
+                   COALESCE(discount, 0)                         AS discount_amount,
+                   COALESCE(subtotal, 0)                         AS subtotal,
+                   COALESCE(total, 0)                            AS net_total
+            FROM orders
+            WHERE status = 'Completed'
+              AND COALESCE(discount, 0) > 0
+              AND {clause}
+            ORDER BY datetime(datetime) DESC
+            LIMIT 1000;
+            """,
+            params,
+        )
+
     def get_order(self, order_id: int):
         """Get order details including cashier username."""
         return self.db.fetchone(

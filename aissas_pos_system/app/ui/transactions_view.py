@@ -1156,7 +1156,8 @@ class TransactionDetailsDialog(tk.Toplevel):
         ).pack(side="right")
 
     def _open_resolve(self):
-        ResolveDialog(self, self.db, self.order_id, on_done=self._resolved)
+        ResolveDialog(self, self.db, self.order_id,
+                      auth=self.auth, on_done=self._resolved)
 
     def _resolved(self):
         if self.on_refresh:
@@ -1251,10 +1252,12 @@ class TransactionDetailsDialog(tk.Toplevel):
 # ── RESOLVE DIALOG ────────────────────────────────────────────────────────────
 
 class ResolveDialog(tk.Toplevel):
-    def __init__(self, parent: tk.Widget, db: Database, order_id: int, on_done=None):
+    def __init__(self, parent: tk.Widget, db: Database, order_id: int,
+                 auth: AuthService | None = None, on_done=None):
         super().__init__(parent)
         self.db       = db
         self.order_id = order_id
+        self.auth     = auth
         self.on_done  = on_done
         self.orders   = OrderDAO(db)
 
@@ -1389,6 +1392,24 @@ class ResolveDialog(tk.Toplevel):
         self.destroy()
 
     def _cancel(self):
+        # Permission gate: cancelling a pending order is a void operation.
+        # Cashier-level roles must NOT be able to cancel without admin/manager
+        # authorisation. Mirrors the gate on _open_void above.
+        if not (self.auth and self.auth.has_permission(P_VOID)):
+            # No P_VOID — require a manager/admin approver to authorise.
+            from app.ui.dialogs import ManagerApprovalDialog
+            dlg = ManagerApprovalDialog(
+                self, self.auth,
+                action_label=f"cancelling order #{self.order_id}",
+                require_reason=True,
+            )
+            self.wait_window(dlg)
+            if not getattr(dlg, "result", None):
+                return
+            approver = dlg.result
+        else:
+            approver = None  # Actor is already authorised.
+
         confirmed = messagebox.askyesno(
             "Cancel Transaction",
             f"Cancel order #{self.order_id}?\n\n"
@@ -1399,6 +1420,22 @@ class ResolveDialog(tk.Toplevel):
             return
         try:
             self.orders.cancel_order(self.order_id)
+            # Audit the cancellation alongside its approver (if any).
+            try:
+                from app.db.dao import AuditLogDAO as _ALD
+                u = self.auth.get_current_user() if self.auth else None
+                actor_id = int(getattr(u, "user_id", 0) or 0)
+                actor    = getattr(u, "username", "") or ""
+                _approver = (approver or {}).get("approver_username", "") or actor
+                _ALD(self.db).log(
+                    username=actor, action="CANCEL_ORDER",
+                    detail=(f"order_id={self.order_id} "
+                            f"approved_by={_approver}"),
+                    user_id=actor_id,
+                    new_value=str((approver or {}).get("approver_id") or actor_id),
+                )
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror(
                 "Cancel Failed",

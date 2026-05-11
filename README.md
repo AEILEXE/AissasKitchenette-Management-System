@@ -2,7 +2,7 @@
 
 A standalone desktop **Point-of-Sale and Inventory Management System** built for a small food service business. Developed with **Python 3 + Tkinter + SQLite**. Fully offline — no internet connection required.
 
-> **Current release: v2.0-beta** — Feature-complete beta, stable for daily use
+> **Current release: v3.0** — Reporting, role hardening, and POS UX polish on top of the v2.0-beta foundation
 
 ---
 
@@ -108,7 +108,7 @@ See [Section 12](#12-reports--dashboard).
 
 > No Python or development tools required.
 
-1. Double-click `AissasKitchenette_POS_v2.0-beta_Setup.exe` and follow the wizard.
+1. Double-click `AissasKitchenette_POS_v3.0_Setup.exe` and follow the wizard.
 2. Launch via the **desktop shortcut** or **Start Menu → Aissa's Kitchenette**.
 3. Log in with the default credentials:
 
@@ -206,8 +206,8 @@ build.bat
 |------|--------|
 | Generate icon | `assets/logo.ico` |
 | PyInstaller | `dist/AissasKitchenette.exe` |
-| Rename copy | `dist/AissasKitchenette_POS_v2.0-beta.exe` |
-| Inno Setup | `dist/AissasKitchenette_POS_v2.0-beta_Setup.exe` |
+| Rename copy | `dist/AissasKitchenette_POS_v3.0.exe` |
+| Inno Setup | `dist/AissasKitchenette_POS_v3.0_Setup.exe` |
 
 ### Manual build
 
@@ -224,11 +224,12 @@ pyinstaller --clean main.spec
 Requires **Inno Setup 6**: [https://jrsoftware.org/isdl.php](https://jrsoftware.org/isdl.php)
 
 ```powershell
-# PowerShell — note the & operator required when path has spaces
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+# PowerShell — note the & operator required when path has spaces.
+# /DMyAppVersion lets you override the version baked into installer.iss.
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=3.0 installer.iss
 ```
 
-Output: `dist/AissasKitchenette_POS_v2.0-beta_Setup.exe`
+Output: `dist/AissasKitchenette_POS_v3.0_Setup.exe`
 
 ---
 
@@ -273,6 +274,23 @@ A timestamped backup of the current database is created automatically before any
 | **CASHIER** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | **INVENTORY** | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
 
+### Enforcement
+
+- Permissions live in `app/constants.py`; live overrides are stored in the
+  `role_permissions` table and resolved by `AuthService.has_permission()`.
+- Reports / Inventory / Backup nav buttons are **hidden** for roles without
+  the matching permission, and the route handlers (`show_reports`,
+  `show_inventory`, `show_backup`) re-check on entry (defense-in-depth).
+- The Reports view re-checks `can_view_reports` per sub-tab — Analytics,
+  Void History, Breakdowns, and the rest fall back to the picker if the
+  current session no longer holds the permission.
+- **Voids and cancellations of completed orders** require Admin/Manager
+  (or a holder of `can_approve_void`) via `ManagerApprovalDialog`. The
+  approver username and id are written to the audit log alongside every
+  void/cancel action.
+- The Resolve-Pending dialog's cancel button is gated the same way —
+  cashiers without `can_void_transaction` get a manager-approval prompt.
+
 ### Password Policy
 
 - Minimum 12 characters
@@ -314,9 +332,25 @@ Tracks ingredients and kitchen supplies separately from finished products.
 | Report | Description |
 |--------|-------------|
 | **Daily** | Bar chart of sales per day for the selected month |
+| **Weekly** | Bar chart of sales per ISO week |
 | **Monthly** | Bar chart of sales per month for the selected year |
 | **Yearly** | Total sales per year |
+| **Custom Range** | Pick any From / To dates with the date picker |
 | **KPI Summary** | Total Sales, Total Orders, Average Order Value |
+| **Payment Breakdown** | Cash / GCash / Maya totals + transaction counts and percentages for the active period |
+
+### Report Tabs
+
+The Reports module opens to a card picker — each tab is a focused page (no mixed dashboards):
+
+| Tab | Contents |
+|-----|----------|
+| **Total Sales** | Daily / Weekly / Monthly / Yearly / Custom bar chart, category pie chart, payment-method breakdown, PDF + Excel export |
+| **Discounts** | Per-order detail table with Date & Time, **Transaction #**, Discount Type, Discount Amount, Net Sales (CSV export) |
+| **Inventory** | Raw materials movement report |
+| **Void History** | Voided / cancelled transactions with the **real original line amount** (`qty × unit_price`), not the post-void ₱0.00 |
+| **Analytics** | Top-selling products by period |
+| **Breakdowns** | Payment Methods, Dine-In vs Take-Out, and Order Status charts — all honour the active date filter; uses matplotlib with the brown palette |
 
 ### Exports
 
@@ -324,6 +358,7 @@ Tracks ingredients and kitchen supplies separately from finished products.
 |--------|---------|
 | **PDF** | Chart image + KPI summary |
 | **Excel** | Raw sales data rows |
+| **CSV** | Per-tab CSV export (Discounts, Void History, etc.) |
 
 Saved to `%APPDATA%\AissasPOS\exports\`
 

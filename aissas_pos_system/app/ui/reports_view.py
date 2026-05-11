@@ -157,7 +157,40 @@ class ReportsView(tk.Frame):
             pass
         self._poll_after = self.after(self._POLL_INTERVAL_MS, self._poll_tick)
 
+    # Sub-tab → required permission. Defense-in-depth: ReportsView itself is
+    # already gated by P_REPORTS at the nav level, but a hostile call into
+    # _show_tab (e.g. from a future refactor or a stale callback) must not be
+    # able to open Analytics / Void History / Breakdowns / etc for a session
+    # whose role lost permission since the view was first opened.
+    _TAB_PERMISSIONS: dict[str, str] = {
+        "sales":         "can_view_reports",
+        "top_sellers":   "can_view_reports",
+        "discounts":     "can_view_reports",
+        "raw_materials": "can_view_reports",
+        "void_history":  "can_view_reports",
+        "breakdowns":    "can_view_reports",
+        # "home" intentionally omitted — the picker itself is reachable for
+        # anyone who already passed the outer P_REPORTS gate.
+    }
+
     def _show_tab(self, key: str):
+        # ── Permission re-check (defense-in-depth) ───────────────────────────
+        required = self._TAB_PERMISSIONS.get(key)
+        if required and not self.auth.has_permission(required):
+            try:
+                messagebox.showerror(
+                    "Access Denied",
+                    "You do not have permission to open this report.",
+                )
+            except Exception:
+                pass
+            # Fall back to the home picker so the user is not left on a stale
+            # tab. If the user can't even reach home, route them out cleanly.
+            if key != "home" and self.auth.has_permission("can_view_reports"):
+                key = "home"
+            else:
+                return
+
         self._active_tab = key
         self._update_tab_style()
         if not self._content:
@@ -189,6 +222,8 @@ class ReportsView(tk.Frame):
             self._build_raw_materials_tab(tab_frame)
         elif key == "void_history":
             self._build_void_history_tab(tab_frame)
+        elif key == "breakdowns":
+            self._build_breakdowns_tab(tab_frame)
         elif key == "home":
             self._build_home_picker(tab_frame)
         else:
@@ -218,6 +253,7 @@ class ReportsView(tk.Frame):
             ("raw_materials","Inventory",    "Raw materials movement and stock activity.",        _SB),
             ("void_history", "Void History", "Voided / cancelled transactions with calendar.",    THEME["danger"]),
             ("top_sellers",  "Analytics",    "Top selling products with quantity sold chart.",    _GREEN),
+            ("breakdowns",   "Breakdowns",   "Payment methods, Dine-In vs Take-Out, and order status charts.", THEME["brown"]),
         ]
         for i, (key, title, sub, accent) in enumerate(cards):
             r, c = divmod(i, 3)
@@ -401,6 +437,15 @@ class ReportsView(tk.Frame):
         def load(*_args):
             dc = _date_clause()
             try:
+                # For ITEM_VOID we use (oi.qty * oi.unit_price) because the
+                # void process zeroes out oi.subtotal — so subtotal alone
+                # would always show ₱0.00. The qty / unit_price columns are
+                # left intact and represent the original line amount.
+                #
+                # For FULL_ORDER we sum (qty * unit_price) across every line
+                # of the original order so the report reflects the original
+                # gross value of the voided receipt regardless of any prior
+                # item-level voids that mutated subtotal / orders.total.
                 rows = self.db.fetchall(
                     f"""
                     SELECT vr.created_at,
@@ -408,10 +453,11 @@ class ReportsView(tk.Frame):
                            vr.void_type,
                            vr.voided_by_username,
                            vr.reason,
-                           o.total      AS order_total,
-                           oi.subtotal  AS item_subtotal
+                           (SELECT COALESCE(SUM(qty * unit_price), 0)
+                              FROM order_items
+                             WHERE order_id = vr.original_order_id) AS order_original_amount,
+                           COALESCE(oi.qty * oi.unit_price, 0)       AS item_original_amount
                     FROM void_records vr
-                    LEFT JOIN orders      o  ON o.id  = vr.original_order_id
                     LEFT JOIN order_items oi ON oi.id = vr.order_item_id
                     WHERE {dc}
                     ORDER BY datetime(vr.created_at) DESC
@@ -441,10 +487,10 @@ class ReportsView(tk.Frame):
                 vt = str(r["void_type"] or "").upper()
                 if vt == "FULL_ORDER":
                     type_label = "Full Order"
-                    amount = float(r["order_total"] or 0.0)
+                    amount = float(r["order_original_amount"] or 0.0)
                 else:
                     type_label = "Item Void"
-                    amount = float(r["item_subtotal"] or 0.0)
+                    amount = float(r["item_original_amount"] or 0.0)
                     tot_items += 1
                 tot_count  += 1
                 tot_amount += amount
@@ -461,6 +507,339 @@ class ReportsView(tk.Frame):
             kpi_vars[1].set(_money(tot_amount))
             kpi_vars[2].set(str(tot_items))
             count_lbl.configure(text=f"{tot_count} voided record{'s' if tot_count != 1 else ''}")
+
+        period_var.trace_add("write", load)
+        from_ent.bind("<Return>", load)
+        to_ent.bind("<Return>", load)
+        load()
+
+    # ── Breakdowns tab (ported from dashboard, with date filters) ─────────────
+    def _build_breakdowns_tab(self, parent: tk.Frame) -> None:
+        """Payment Methods, Dine-In vs Take-Out, and Order Status charts.
+        Honours the same Today / Week / Month / Year / Custom date filters as
+        the other report tabs and renders matplotlib charts using the brown
+        aesthetic palette.
+        """
+        outer = tk.Frame(parent, bg=_BG)
+        outer.pack(fill="both", expand=True)
+        outer.rowconfigure(2, weight=1)
+        outer.columnconfigure(0, weight=1)
+
+        _FILTER_BG = "#f5f0e8"
+        _LABEL_FG  = "#3d2b1f"
+        _SEL_BG    = "#8c6e3b"
+        _SEL_FG    = "white"
+        _UNSEL_BG  = _FILTER_BG
+        _UNSEL_FG  = _LABEL_FG
+
+        # ── Filter bar (Today / Week / Month / Year + custom date range) ──
+        bar = tk.Frame(outer, bg=_FILTER_BG,
+                       highlightthickness=1, highlightbackground=_BORDER)
+        bar.grid(row=0, column=0, sticky="ew", padx=24, pady=(12, 0))
+
+        tk.Label(bar, text="Period:", bg=_FILTER_BG, fg=_LABEL_FG,
+                 font=("Segoe UI", 9)).pack(side="left", padx=(12, 6), pady=8)
+
+        period_var = tk.StringVar(value="month")
+        _period_btns: dict[str, tk.Button] = {}
+
+        def _set_period(val: str) -> None:
+            period_var.set(val)
+            for v, b in _period_btns.items():
+                b.configure(
+                    bg=_SEL_BG if v == val else _UNSEL_BG,
+                    fg=_SEL_FG if v == val else _UNSEL_FG,
+                )
+
+        for lbl, val in [("Today", "today"), ("This Week", "week"),
+                          ("This Month", "month"), ("This Year", "year"),
+                          ("All Time", "all")]:
+            is_def = (val == "month")
+            btn = tk.Button(
+                bar, text=lbl, command=lambda v=val: _set_period(v),
+                bg=_SEL_BG if is_def else _UNSEL_BG,
+                fg=_SEL_FG if is_def else _UNSEL_FG,
+                activebackground=_SEL_BG, activeforeground=_SEL_FG,
+                relief="flat", bd=0, padx=12, pady=5, cursor="hand2",
+                font=("Segoe UI", 9, "bold"),
+            )
+            btn.pack(side="left", padx=2, pady=8)
+            _period_btns[val] = btn
+
+        tk.Label(bar, text="From:", bg=_FILTER_BG, fg=_LABEL_FG,
+                 font=("Segoe UI", 9)).pack(side="left", padx=(14, 4), pady=8)
+        from_var = tk.StringVar()
+        from_ent = tk.Entry(bar, textvariable=from_var, width=12,
+                            bd=0, bg=THEME["panel2"], fg=_TEXT,
+                            insertbackground=_TEXT, insertwidth=2)
+        from_ent.pack(side="left", ipady=5, pady=8)
+        _bind_date_picker(from_ent, from_var)
+
+        tk.Label(bar, text="To:", bg=_FILTER_BG, fg=_LABEL_FG,
+                 font=("Segoe UI", 9)).pack(side="left", padx=(8, 4), pady=8)
+        to_var = tk.StringVar()
+        to_ent = tk.Entry(bar, textvariable=to_var, width=12,
+                          bd=0, bg=THEME["panel2"], fg=_TEXT,
+                          insertbackground=_TEXT, insertwidth=2)
+        to_ent.pack(side="left", ipady=5, pady=8)
+        _bind_date_picker(to_ent, to_var)
+
+        # ── KPI cards ─────────────────────────────────────────────────────
+        kpi_frame = tk.Frame(outer, bg=_BG)
+        kpi_frame.grid(row=1, column=0, sticky="ew", padx=24, pady=(12, 0))
+        for i in range(3):
+            kpi_frame.columnconfigure(i, weight=1, uniform="bkdkpi")
+
+        kpi_vars = [tk.StringVar(value="—") for _ in range(3)]
+        kpi_labels = ["Completed Orders", "Total Sales", "Payment Methods"]
+        kpi_accents = [_SB, _GREEN, THEME["brown"]]
+        for i, (lbl, var, accent) in enumerate(zip(kpi_labels, kpi_vars, kpi_accents)):
+            pad_left = 0 if i == 0 else 10
+            cell = tk.Frame(kpi_frame, bg=_BG)
+            cell.grid(row=0, column=i, sticky="nsew", padx=(pad_left, 0))
+            card = tk.Frame(cell, bg=_PANEL,
+                            highlightthickness=1, highlightbackground=_BORDER)
+            card.pack(fill="both", expand=True)
+            tk.Frame(card, bg=accent, height=4).pack(fill="x")
+            tk.Label(card, text=lbl, bg=_PANEL, fg=_MUTED,
+                     font=("Segoe UI", 9), anchor="w"
+                     ).pack(anchor="w", padx=14, pady=(10, 2))
+            tk.Label(card, textvariable=var, bg=_PANEL, fg=accent,
+                     font=("Segoe UI", 18, "bold"), anchor="w"
+                     ).pack(anchor="w", padx=14, pady=(0, 12))
+
+        # ── Chart grid (3 cards side-by-side, wraps to two rows on narrow widths) ──
+        grid_card = tk.Frame(outer, bg=_BG)
+        grid_card.grid(row=2, column=0, sticky="nsew", padx=24, pady=12)
+        grid_card.rowconfigure(0, weight=1)
+        for c in range(3):
+            grid_card.columnconfigure(c, weight=1, uniform="bkdcol")
+
+        # Brown palette used across all three charts
+        _BROWN_PALETTE = [
+            "#6b4a3a", "#8c6e3b", "#a07855", "#b8905c",
+            "#c4975a", "#d4a96a", "#e8b87a", "#f0c890",
+        ]
+
+        def _make_card(col: int, title: str) -> tuple[tk.Frame, tk.Frame]:
+            card = tk.Frame(grid_card, bg=_PANEL,
+                            highlightthickness=1, highlightbackground=_BORDER)
+            card.grid(row=0, column=col, sticky="nsew",
+                      padx=(0 if col == 0 else 8, 0))
+            tk.Label(card, text=title, bg=_PANEL, fg=_TEXT,
+                     font=("Segoe UI", 11, "bold"), anchor="w"
+                     ).pack(anchor="w", padx=14, pady=(12, 4))
+            host = tk.Frame(card, bg=_PANEL)
+            host.pack(fill="both", expand=True, padx=8, pady=(0, 10))
+            return card, host
+
+        _, pay_host    = _make_card(0, "Payment Methods")
+        _, otype_host  = _make_card(1, "Dine-In vs Take-Out")
+        _, status_host = _make_card(2, "Order Status")
+
+        empty_lbl = tk.Label(outer, text="", bg=_BG, fg=_MUTED,
+                              font=("Segoe UI", 9, "italic"))
+
+        # ── Period clause (matches other report tabs) ─────────────────────
+        def _date_clause() -> str:
+            p = period_var.get()
+            df = (from_var.get() or "").strip()
+            dt2 = (to_var.get() or "").strip()
+            if df and dt2:
+                return (f"DATE(datetime,'localtime') BETWEEN "
+                        f"DATE('{df}') AND DATE('{dt2}')")
+            if p == "today":
+                return "DATE(datetime,'localtime') = DATE('now','localtime')"
+            if p == "week":
+                return "DATE(datetime,'localtime') >= DATE('now','localtime','-6 days')"
+            if p == "year":
+                return "strftime('%Y',datetime,'localtime') = strftime('%Y','now','localtime')"
+            if p == "all":
+                return "1=1"
+            return "strftime('%Y-%m',datetime,'localtime') = strftime('%Y-%m','now','localtime')"
+
+        # ── Render helpers ────────────────────────────────────────────────
+        def _clear(host: tk.Frame) -> None:
+            for w in host.winfo_children():
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
+
+        def _show_empty(host: tk.Frame, msg: str) -> None:
+            _clear(host)
+            tk.Label(host, text=msg, bg=_PANEL, fg=_MUTED,
+                     font=("Segoe UI", 10, "italic")
+                     ).pack(expand=True, fill="both")
+
+        def _draw_bar(host: tk.Frame, labels: list[str], values: list[float],
+                      value_fmt) -> None:
+            _clear(host)
+            if not labels or not any(v > 0 for v in values):
+                _show_empty(host, "No data for the selected period.")
+                return
+            try:
+                from matplotlib.figure import Figure
+                from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            except Exception:
+                _show_empty(host, "matplotlib not available.")
+                return
+            fig = Figure(figsize=(5.8, 4.4), dpi=100, constrained_layout=True)
+            fig.patch.set_facecolor("#FAFAF8")
+            ax = fig.add_subplot(111)
+            ax.set_facecolor("#FAFAF8")
+            colors = [_BROWN_PALETTE[i % len(_BROWN_PALETTE)]
+                      for i in range(len(labels))]
+            bars = ax.bar(labels, values, color=colors,
+                          edgecolor="none", width=0.62)
+            mx = max(values) if values else 1.0
+            for b, v in zip(bars, values):
+                if v > 0:
+                    ax.text(b.get_x() + b.get_width() / 2,
+                            v + mx * 0.02,
+                            value_fmt(v),
+                            ha="center", va="bottom",
+                            fontsize=10, color="#3d2b1f",
+                            fontweight="bold")
+            ax.grid(axis="y", alpha=0.25, color="#cabba0", linestyle="--")
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.spines["left"].set_color("#cabba0")
+            ax.spines["bottom"].set_color("#cabba0")
+            ax.tick_params(axis="x", colors="#3d2b1f", labelsize=10, rotation=0)
+            ax.tick_params(axis="y", colors="#7b6b57", labelsize=9)
+            # Headroom above tallest bar so value labels never clip
+            ax.set_ylim(0, mx * 1.18 if mx > 0 else 1.0)
+            canvas = FigureCanvasTkAgg(fig, master=host)
+            canvas.draw_idle()
+            canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        def _draw_donut(host: tk.Frame, labels: list[str], values: list[float]) -> None:
+            _clear(host)
+            if not labels or not any(v > 0 for v in values):
+                _show_empty(host, "No data for the selected period.")
+                return
+            try:
+                from matplotlib.figure import Figure
+                from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            except Exception:
+                _show_empty(host, "matplotlib not available.")
+                return
+            fig = Figure(figsize=(5.8, 4.4), dpi=100, constrained_layout=True)
+            fig.patch.set_facecolor("#FAFAF8")
+            ax = fig.add_subplot(111)
+            ax.set_facecolor("#FAFAF8")
+            colors = [_BROWN_PALETTE[i % len(_BROWN_PALETTE)]
+                      for i in range(len(labels))]
+            wedges, _texts, autotexts = ax.pie(
+                values, colors=colors,
+                autopct=lambda p: f"{p:.1f}%" if p >= 4 else "",
+                startangle=90, pctdistance=0.78,
+                wedgeprops=dict(linewidth=2, edgecolor="white", width=0.42),
+            )
+            for at in autotexts:
+                at.set_fontsize(10)
+                at.set_color("white")
+                at.set_fontweight("bold")
+            ax.legend(
+                wedges,
+                [f"{lbl}  ({int(v)})" for lbl, v in zip(labels, values)],
+                loc="lower center",
+                bbox_to_anchor=(0.5, -0.05),
+                ncol=min(3, len(labels)),
+                frameon=False, fontsize=10,
+            )
+            ax.set_aspect("equal")
+            canvas = FigureCanvasTkAgg(fig, master=host)
+            canvas.draw_idle()
+            canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        def _money_short(v: float) -> str:
+            v = float(v or 0)
+            if v >= 1000:
+                return f"₱{v/1000:.1f}k"
+            return f"₱{v:.0f}"
+
+        # ── Loader ────────────────────────────────────────────────────────
+        def load(*_args):
+            dc = _date_clause()
+            # Payment methods
+            try:
+                pay_rows = self.db.fetchall(
+                    f"""
+                    SELECT COALESCE(NULLIF(payment_method,''), 'Unknown') AS method,
+                           COUNT(*)                  AS cnt,
+                           COALESCE(SUM(total), 0)   AS total
+                    FROM orders
+                    WHERE status='Completed' AND {dc}
+                    GROUP BY method
+                    ORDER BY total DESC;
+                    """
+                )
+                pay_rows = [dict(r) for r in pay_rows]
+            except Exception:
+                pay_rows = []
+
+            # Dine-In vs Take-Out
+            try:
+                ot_rows = self.db.fetchall(
+                    f"""
+                    SELECT COALESCE(NULLIF(order_type,''), 'DINE_IN') AS otype,
+                           COUNT(*) AS cnt
+                    FROM orders
+                    WHERE status='Completed' AND {dc}
+                    GROUP BY otype;
+                    """
+                )
+                ot_rows = [dict(r) for r in ot_rows]
+            except Exception:
+                ot_rows = []
+
+            # Order status (does not filter on Completed because we want all)
+            try:
+                st_rows = self.db.fetchall(
+                    f"""
+                    SELECT status, COUNT(*) AS cnt
+                    FROM orders
+                    WHERE {dc}
+                    GROUP BY status;
+                    """
+                )
+                st_rows = [dict(r) for r in st_rows]
+            except Exception:
+                st_rows = []
+
+            # KPIs
+            total_orders = sum(int(r.get("cnt") or 0) for r in pay_rows)
+            total_sales  = sum(float(r.get("total") or 0) for r in pay_rows)
+            kpi_vars[0].set(str(total_orders))
+            kpi_vars[1].set(_money(total_sales))
+            kpi_vars[2].set(str(len(pay_rows)))
+
+            # Payment Methods — bar chart with ₱ values
+            pm_labels = [str(r.get("method") or "—")[:12] for r in pay_rows]
+            pm_values = [float(r.get("total") or 0)        for r in pay_rows]
+            _draw_bar(pay_host, pm_labels, pm_values, _money_short)
+
+            # Dine-In vs Take-Out — donut by order count
+            ot_map = {(r.get("otype") or "DINE_IN"): int(r.get("cnt") or 0)
+                      for r in ot_rows}
+            ot_labels = ["Dine-In", "Take-Out"]
+            ot_values = [ot_map.get("DINE_IN", 0), ot_map.get("TAKE_OUT", 0)]
+            _draw_donut(otype_host, ot_labels, ot_values)
+
+            # Order Status — donut by order count
+            preferred = ["Completed", "Pending", "Cancelled"]
+            st_map = {str(r.get("status") or ""): int(r.get("cnt") or 0)
+                      for r in st_rows}
+            st_labels = [k for k in preferred if st_map.get(k, 0) > 0]
+            st_values = [st_map[k] for k in st_labels]
+            # Include any other status not in preferred list
+            for k, v in st_map.items():
+                if k and k not in preferred and v > 0:
+                    st_labels.append(k)
+                    st_values.append(v)
+            _draw_donut(status_host, st_labels, st_values)
 
         period_var.trace_add("write", load)
         from_ent.bind("<Return>", load)
@@ -1065,7 +1444,7 @@ class ReportsView(tk.Frame):
               background=[("selected", _RED), ("!selected", _PANEL)],
               foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])
 
-        dc_cols = ("type", "count", "discount", "net")
+        dc_cols = ("dt", "trx", "type", "discount", "net")
         tbl = ttk.Treeview(tbl_frame, columns=dc_cols, show="headings",
                            style="DC.Treeview")
         tbl.grid(row=0, column=0, sticky="nsew")
@@ -1074,10 +1453,11 @@ class ReportsView(tk.Frame):
         tbl.configure(yscrollcommand=ysb.set)
 
         for cid, hdr, w, anc, stretch in [
-            ("type",     "Discount Type",  160, "w",      True),
-            ("count",    "Orders",          80, "center", False),
-            ("discount", "Discount Amount", 130, "e",     False),
-            ("net",      "Net Sales",       130, "e",     False),
+            ("dt",       "Date & Time",     150, "center", False),
+            ("trx",      "Transaction #",   110, "center", False),
+            ("type",     "Discount Type",   170, "w",      True),
+            ("discount", "Discount Amount", 140, "e",      False),
+            ("net",      "Net Sales",       140, "e",      False),
         ]:
             tbl.heading(cid, text=hdr, anchor="center")
             tbl.column(cid, width=w, minwidth=60, anchor=anc, stretch=stretch)
@@ -1114,10 +1494,16 @@ class ReportsView(tk.Frame):
                     w.writerow(["Aissa's Kitchenette", "Discounts Report",
                                 f"Generated: {_dt.now().strftime('%Y-%m-%d %H:%M')}"])
                     w.writerow([])
-                    w.writerow(["Discount Type", "Orders", "Discount Amount", "Net Sales"])
+                    w.writerow(["Date & Time", "Transaction #",
+                                "Discount Type", "Discount Amount", "Net Sales"])
                     for r in rows_cache_ref:
-                        w.writerow([r["discount_type"], r["order_count"],
-                                    _money(r["total_discount"]), _money(r["net_total"])])
+                        w.writerow([
+                            str(r.get("dt") or "")[:16],
+                            f"#{r.get('order_id', '')}",
+                            r.get("type_label", r.get("discount_type", "")),
+                            _money(r.get("discount_amount") or 0),
+                            _money(r.get("net_total") or 0),
+                        ])
                 self._log_report_print("DISCOUNTS", path)
                 messagebox.showinfo("Export", f"Saved to:\n{path}")
             except Exception as e:
@@ -1135,38 +1521,32 @@ class ReportsView(tk.Frame):
                   font=("Segoe UI", 8, "bold"),
                   command=_export).pack(side="right")
 
-        def _date_clause() -> str:
-            p = period_var.get()
-            df = from_var.get().strip()
-            dt = to_var.get().strip()
-            if df and dt:
-                return f"DATE(o.datetime,'localtime') BETWEEN DATE('{df}') AND DATE('{dt}')"
-            if p == "today":
-                return "DATE(o.datetime,'localtime') = DATE('now','localtime')"
-            if p == "week":
-                return "DATE(o.datetime,'localtime') >= DATE('now','localtime','-6 days')"
-            if p == "year":
-                return "strftime('%Y',o.datetime,'localtime') = strftime('%Y','now','localtime')"
-            return "strftime('%Y-%m',o.datetime,'localtime') = strftime('%Y-%m','now','localtime')"
+        _type_labels = {
+            "PWD":     "PWD (20%)",
+            "SENIOR":  "Senior (20%)",
+            "SPECIAL": "Special Discount",
+            "NONE":    "No Discount Type",
+        }
 
         def load(*_args):
-            dc = _date_clause()
+            from app.db.dao import OrderDAO
+            p  = period_var.get()
+            df = from_var.get().strip()
+            dt_to = to_var.get().strip()
             try:
-                raw = self.db.fetchall(
-                    f"""
-                    SELECT COALESCE(NULLIF(discount_type,''), 'NONE') AS discount_type,
-                           COUNT(*)         AS order_count,
-                           SUM(discount)    AS total_discount,
-                           SUM(total)       AS net_total
-                    FROM orders o
-                    WHERE o.status = 'Completed'
-                      AND o.discount > 0
-                      AND {dc}
-                    GROUP BY discount_type
-                    ORDER BY total_discount DESC;
-                    """
+                raw = OrderDAO(self.db).list_discounted_orders(
+                    period=p,
+                    date_from=df or None,
+                    date_to=dt_to or None,
                 )
-                rows = [dict(r) for r in raw]
+                rows = []
+                for r in raw:
+                    row = dict(r)
+                    row["type_label"] = _type_labels.get(
+                        str(row.get("discount_type") or ""),
+                        str(row.get("discount_type") or "—"),
+                    )
+                    rows.append(row)
             except Exception:
                 rows = []
 
@@ -1184,32 +1564,28 @@ class ReportsView(tk.Frame):
 
             empty_lbl.place_forget()
 
-            total_count    = sum(int(r["order_count"]    or 0) for r in rows)
-            total_discount = sum(float(r["total_discount"] or 0) for r in rows)
-            total_net      = sum(float(r["net_total"]      or 0) for r in rows)
+            total_count    = len(rows)
+            total_discount = sum(float(r.get("discount_amount") or 0) for r in rows)
+            total_net      = sum(float(r.get("net_total") or 0) for r in rows)
 
             kpi_vars[0].set(str(total_count))
             kpi_vars[1].set(_money(total_discount))
             kpi_vars[2].set(_money(total_net))
 
-            _type_labels = {
-                "PWD":     "PWD (20%)",
-                "SENIOR":  "Senior (20%)",
-                "SPECIAL": "Special Discount",
-                "NONE":    "No Discount Type",
-            }
             for i, r in enumerate(rows):
                 tag = "odd" if i % 2 else "even"
-                label = _type_labels.get(str(r["discount_type"]), str(r["discount_type"]))
                 tbl.insert("", tk.END, tags=(tag,), values=(
-                    label,
-                    int(r["order_count"] or 0),
-                    _money(r["total_discount"]),
-                    _money(r["net_total"]),
+                    str(r.get("dt") or "")[:16],
+                    f"#{r.get('order_id', '')}",
+                    r["type_label"],
+                    _money(r.get("discount_amount") or 0),
+                    _money(r.get("net_total") or 0),
                 ))
 
-            n = len(rows)
-            count_lbl.configure(text=f"{total_count} discounted order{'s' if total_count != 1 else ''}, {n} type{'s' if n != 1 else ''}")
+            count_lbl.configure(
+                text=f"{total_count} discounted order"
+                     f"{'s' if total_count != 1 else ''}"
+            )
 
         period_var.trace_add("write", load)
         from_ent.bind("<Return>", load)

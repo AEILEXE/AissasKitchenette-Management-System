@@ -1,5 +1,5 @@
 ; Inno Setup 6 installer script for Aissa's Kitchenette POS System
-; Build with:  build.bat   (or: ISCC.exe /DMyAppVersion=2.0-beta installer.iss)
+; Build with:  build.bat   (or: ISCC.exe /DMyAppVersion=3.0 installer.iss)
 ;
 ; Install target: {localappdata}\Programs\AissasKitchenette
 ;   - App EXE and settings.json both live here
@@ -17,7 +17,7 @@
 ; The #ifndef guard below is the fallback for direct ISCC invocations.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "2.0-beta"
+  #define MyAppVersion "3.0"
 #endif
 
 #define MyAppName          "Aissa's Kitchenette"
@@ -49,11 +49,11 @@ WizardStyle=modern
 DisableWelcomePage=no
 
 ; Branding (EXE Properties > Details)
-VersionInfoVersion=2.0.0.0
+VersionInfoVersion=3.0.0.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion=2.0.0.0
+VersionInfoProductVersion=3.0.0.0
 
 ; Compression
 Compression=lzma2/ultra64
