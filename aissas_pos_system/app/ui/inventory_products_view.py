@@ -64,6 +64,8 @@ class InventoryProductsView(tk.Frame):
         self._hovered_iid: str | None = None
         self._iid_tags: dict[str, str] = {}   # iid → original tag name
         self._prod_sort: dict = {"col": None, "reverse": False}
+        self._checked: set[str] = set()       # iids of checked products
+        self._var_select_all = tk.BooleanVar(value=False)
 
         self._build()
         self.refresh()
@@ -75,6 +77,7 @@ class InventoryProductsView(tk.Frame):
     def _build(self):
         sc = ui_scale.get_scale()
         self.columnconfigure(0, weight=1)
+        self.rowconfigure(2, weight=0)   # bulk action bar
         self.rowconfigure(3, weight=1)   # table row expands
 
         # ── Header card ───────────────────────────────────────────────────────
@@ -180,6 +183,44 @@ class InventoryProductsView(tk.Frame):
         status_combo.pack(side="left")
         status_combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh())
 
+        # ── Bulk action bar ───────────────────────────────────────────────────
+        bulk_bar = tk.Frame(self, bg=THEME["bg"])
+        bulk_bar.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 4))
+
+        self._chk_all = tk.Checkbutton(
+            bulk_bar,
+            text="Select All",
+            variable=self._var_select_all,
+            bg=THEME["bg"], fg=THEME["text"],
+            activebackground=THEME["bg"],
+            font=("Segoe UI", ui_scale.scale_font(9)),
+            cursor="hand2",
+            command=self._toggle_select_all,
+        )
+        self._chk_all.pack(side="left", padx=(0, 12))
+
+        self._lbl_selected = tk.Label(
+            bulk_bar, text="0 selected",
+            bg=THEME["bg"], fg=THEME["muted"],
+            font=("Segoe UI", ui_scale.scale_font(9)),
+        )
+        self._lbl_selected.pack(side="left", padx=(0, 12))
+
+        self._btn_delete_sel = tk.Button(
+            bulk_bar,
+            text="Delete Selected",
+            bg="#c0392b", fg="white",
+            activebackground="#a93226", activeforeground="white",
+            disabledforeground="white",
+            bd=0,
+            padx=ui_scale.s(12), pady=ui_scale.s(6),
+            cursor="hand2",
+            font=("Segoe UI", ui_scale.scale_font(9), "bold"),
+            state="disabled",
+            command=self._delete_selected,
+        )
+        self._btn_delete_sel.pack(side="left")
+
         # ── Table ─────────────────────────────────────────────────────────────
         self._build_table()
 
@@ -222,7 +263,7 @@ class InventoryProductsView(tk.Frame):
         tbl_card.rowconfigure(0, weight=1)
         tbl_card.columnconfigure(0, weight=1)
 
-        cols = ("id", "name", "category", "price", "available", "action")
+        cols = ("check", "id", "name", "category", "price", "available", "action")
         self.tbl = ttk.Treeview(
             tbl_card, columns=cols, show="headings",
             style="Prod.Treeview",
@@ -235,6 +276,7 @@ class InventoryProductsView(tk.Frame):
 
         # Column headers
         col_cfg = [
+            ("check",       "☐",            ui_scale.s(36),   "center", False),
             ("id",          "Product ID",   ui_scale.s(90),   "center", False),
             ("name",        "Name",         ui_scale.s(180),  "w",      True),
             ("category",    "Category",     ui_scale.s(120),  "w",      False),
@@ -244,7 +286,7 @@ class InventoryProductsView(tk.Frame):
         ]
         for cid, heading, width, anchor, stretch in col_cfg:
             self.tbl.heading(cid, text=heading, anchor="center",
-                             command=lambda c=cid: self._prod_sort_by(c))
+                             command=lambda c=cid: self._on_col_header_click(c))
             self.tbl.column(cid, width=width, minwidth=width // 2,
                             anchor=anchor, stretch=stretch)
 
@@ -257,8 +299,9 @@ class InventoryProductsView(tk.Frame):
         # We'll use per-cell visual hints through the status text content instead.
 
         # Bindings
-        self.tbl.bind("<Double-Button-1>", lambda _e: self.edit_selected())
+        self.tbl.bind("<Double-Button-1>", self._on_double_click)
         self.tbl.bind("<Return>",          lambda _e: self.edit_selected())
+        self.tbl.bind("<Button-1>",        self._on_single_click)
         self.tbl.bind("<Motion>",          self._on_hover)
         self.tbl.bind("<Leave>",           self._on_leave)
 
@@ -293,6 +336,83 @@ class InventoryProductsView(tk.Frame):
                 pass
         self._hovered_iid = None
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Checkbox / bulk-select helpers
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _on_col_header_click(self, col: str):
+        """Route header click: check column toggles all; others sort."""
+        if col == "check":
+            self._var_select_all.set(not self._var_select_all.get())
+            self._toggle_select_all()
+        else:
+            self._prod_sort_by(col)
+
+    def _on_single_click(self, event):
+        """Toggle checkbox when the check column cell is clicked."""
+        col = self.tbl.identify_column(event.x)
+        iid = self.tbl.identify_row(event.y)
+        if not iid:
+            return
+        if col == "#1":   # check column is first
+            if iid in self._checked:
+                self._checked.discard(iid)
+            else:
+                self._checked.add(iid)
+            self._update_check_ui()
+
+    def _on_double_click(self, event):
+        """Open editor on double-click, but ignore the check column."""
+        col = self.tbl.identify_column(event.x)
+        if col == "#1":
+            return
+        self.edit_selected()
+
+    def _toggle_select_all(self):
+        visible = set(self.tbl.get_children())
+        if self._var_select_all.get():
+            self._checked |= visible
+        else:
+            self._checked -= visible
+        self._update_check_ui()
+
+    def _update_check_ui(self):
+        """Refresh checkbox glyphs in every visible row and update button state."""
+        visible = list(self.tbl.get_children())
+        for iid in visible:
+            vals = list(self.tbl.item(iid, "values"))
+            vals[0] = "☑" if iid in self._checked else "☐"
+            self.tbl.item(iid, values=vals)
+        n = len(self._checked)
+        self._lbl_selected.configure(text=f"{n} selected")
+        if n > 0:
+            self._btn_delete_sel.configure(state="normal", bg="#c0392b", cursor="hand2")
+        else:
+            self._btn_delete_sel.configure(state="disabled", bg="#8e2419", cursor="arrow")
+        # Sync select-all checkbox state
+        if visible and all(iid in self._checked for iid in visible):
+            self._var_select_all.set(True)
+        else:
+            self._var_select_all.set(False)
+
+    def _delete_selected(self):
+        if not self._checked:
+            return
+        count = len(self._checked)
+        if not messagebox.askyesno(
+            "Delete Selected",
+            f"Delete {count} product{'s' if count != 1 else ''}?\n\nThis cannot be undone.",
+            icon="warning",
+        ):
+            return
+        for iid in list(self._checked):
+            try:
+                self.products.delete(int(iid))
+            except Exception:
+                pass
+        self._checked.clear()
+        self._on_product_saved(None)
+
     def _prod_sort_by(self, col: str) -> None:
         if self._prod_sort["col"] == col:
             self._prod_sort["reverse"] = not self._prod_sort["reverse"]
@@ -301,11 +421,11 @@ class InventoryProductsView(tk.Frame):
             self._prod_sort["reverse"] = False
         rev = self._prod_sort["reverse"]
         ind = " ▲" if not rev else " ▼"
-        _labels = {"id": "Product ID", "name": "Name", "category": "Category",
+        _labels = {"check": "☐", "id": "Product ID", "name": "Name", "category": "Category",
                    "price": "Price", "available": "Status", "action": ""}
         for cid, hdr in _labels.items():
             self.tbl.heading(cid, text=(hdr + ind) if cid == col else hdr,
-                             anchor="center", command=lambda c=cid: self._prod_sort_by(c))
+                             anchor="center", command=lambda c=cid: self._on_col_header_click(c))
         self.refresh()
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -322,7 +442,10 @@ class InventoryProductsView(tk.Frame):
     def refresh(self):
         self._hovered_iid = None
         self._iid_tags.clear()
-        for iid in self.tbl.get_children():
+        # Remove iids that no longer exist after a delete
+        existing_iids = set(self.tbl.get_children())
+        self._checked &= existing_iids
+        for iid in existing_iids:
             self.tbl.delete(iid)
 
         self._refresh_category_options()
@@ -338,6 +461,12 @@ class InventoryProductsView(tk.Frame):
         q      = (self.var_search.get() or "").strip().lower()
         cat    = self.var_category.get()
         status = self.var_status.get()
+        selected_cat_id = None
+        if cat != "All":
+            selected_cat_id = next(
+                (int(c["category_id"]) for c in cats if c["name"] == cat),
+                None,
+            )
 
         all_rows = self.products.list_all()
         filtered = []
@@ -354,8 +483,9 @@ class InventoryProductsView(tk.Frame):
                       and q not in desc.lower()
                       and q_id != pid_str):
                 continue
-            if cat != "All" and cat_name != cat:
-                continue
+            if selected_cat_id is not None:
+                if int(r["category_id"] or 0) != selected_cat_id:
+                    continue
             if status == "Available" and not active:
                 continue
             if status == "Unavailable" and active:
@@ -387,6 +517,7 @@ class InventoryProductsView(tk.Frame):
                 "", tk.END,
                 iid=str(pid),
                 values=(
+                    "☑" if str(pid) in self._checked else "☐",
                     f"#{pid}",
                     str(r["name"]), cat_display,
                     money(r["price"]),
@@ -396,6 +527,8 @@ class InventoryProductsView(tk.Frame):
                 tags=(tag,),
             )
             self._iid_tags[str(pid)] = tag
+
+        self._update_check_ui()
 
     def _selected_id(self) -> int | None:
         sel = self.tbl.selection()

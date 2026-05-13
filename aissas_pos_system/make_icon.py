@@ -1,44 +1,66 @@
 """
-make_icon.py — Convert assets/logo.png to assets/logo.ico
+make_icon.py — Generate assets/logo.ico from assets/logo.png or logo.jpg
 
-Run once before building the EXE:
+Run:
     python make_icon.py
 
-Produces assets/logo.ico with sizes: 16, 24, 32, 48, 64, 128, 256 px.
-PyInstaller and Windows taskbar both need a proper .ico file.
+Output:
+    assets/logo.ico (multi-size ICO for Windows + PyInstaller)
 """
+
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
 
-def main() -> None:
+def main():
     try:
         from PIL import Image
     except ImportError:
-        print("ERROR: Pillow is required.  Run:  pip install Pillow")
+        print("ERROR: Pillow is required. Install it using: pip install Pillow")
         sys.exit(1)
 
-    assets = Path(__file__).parent / "assets"
-    src = assets / "logo.png"
+    base_dir = Path(__file__).parent
+    assets_dir = base_dir / "assets"
 
-    if not src.exists():
-        # Also try .jpg
-        src = assets / "logo.jpg"
-    if not src.exists():
-        print(f"ERROR: Logo not found.  Expected:  {assets / 'logo.png'}  or  {assets / 'logo.jpg'}")
+    png_path = assets_dir / "logo.png"
+    jpg_path = assets_dir / "logo.jpg"
+
+    # Find source image
+    if png_path.exists():
+        src_path = png_path
+    elif jpg_path.exists():
+        src_path = jpg_path
+    else:
+        print(f"ERROR: No logo found in {assets_dir}")
+        print("Expected: logo.png or logo.jpg")
         sys.exit(1)
 
-    out = assets / "logo.ico"
+    output_path = assets_dir / "logo.ico"
 
-    img = Image.open(src).convert("RGBA")
+    try:
+        img = Image.open(src_path).convert("RGBA")
 
-    # PIL's ICO format accepts a `sizes` list and handles all the resizing internally.
-    # This is simpler and more reliable than the append_images approach.
-    sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
-    img.save(str(out), format="ICO", sizes=sizes)
-    print(f"Created  {out}  ({out.stat().st_size // 1024} KB)")
+        # Standard Windows icon sizes
+        sizes = [
+            (16, 16),
+            (24, 24),
+            (32, 32),
+            (48, 48),
+            (64, 64),
+            (128, 128),
+            (256, 256),
+        ]
+
+        img.save(output_path, format="ICO", sizes=sizes)
+
+        size_kb = output_path.stat().st_size // 1024
+        print(f"SUCCESS: Created {output_path} ({size_kb} KB)")
+
+    except Exception as e:
+        print(f"ERROR: Failed to generate icon -> {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

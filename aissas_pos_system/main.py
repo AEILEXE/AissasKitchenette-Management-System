@@ -19,13 +19,7 @@ if _is_frozen():
     _mpl_dir = os.path.join(os.path.dirname(_writable), "mpl_config")
     os.makedirs(_mpl_dir, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", _mpl_dir)
-    # Tell matplotlib where its bundled data files live inside _MEIPASS.
-    # Without this it throws FileNotFoundError on matplotlibrc and all
-    # charts in the Reports view fail silently.
-    os.environ.setdefault(
-        "MATPLOTLIBDATA",
-        os.path.join(sys._MEIPASS, "matplotlib", "mpl-data"),
-    )
+    # REMOVED: MATPLOTLIBDATA setup - may cause instability
     _log_path = os.path.join(os.path.dirname(_writable), "app.log")
 else:
     # Dev mode: write log next to the project root so crashes are diagnosable.
@@ -164,8 +158,11 @@ def init_db(db: Database) -> bool:
         db.connect()
 
     db.initialize_schema()
-    seed_admin_user(db)
-    seed_menu_if_empty(db)
+    try:
+        seed_admin_user(db)
+    except Exception as exc:
+        logging.warning("Failed to seed admin user: %s", exc)
+    # seed_menu_if_empty(db)  # DISABLED: Remove categories/products seeding for clean minimal build
     return True
 
 

@@ -67,6 +67,7 @@ class POSView(tk.Frame):
         self._draft_id_by_index: list[int] = []
         self._cat_buttons: dict[str, tk.Button] = {}
         self._selected_category: str = ""    # "" = no selection (main level shows all active)
+        self._selected_category_id: int | None = None
         self._cat_level: str = "main"        # "main" or "sub"
         self._cat_parent_id: int | None = None
         self._cat_parent_name: str = ""
@@ -1262,6 +1263,7 @@ class POSView(tk.Frame):
                     self._cat_parent_id = int(cat["category_id"])
                     self._cat_parent_name = name
                     self._selected_category = name
+                    self._selected_category_id = int(cat["category_id"])
                     self._all_products_cache = []
                     self._all_products_cache_cat = ""
                     self._refresh_categories()
@@ -1272,6 +1274,13 @@ class POSView(tk.Frame):
                 pass
         # Sub-level click on a subcategory — show only that sub's products
         self._set_active_category_btn(name)
+        self._selected_category_id = None
+        try:
+            c = self.cat_dao.get_by_name(name)
+            if c:
+                self._selected_category_id = int(c["category_id"])
+        except Exception:
+            self._selected_category_id = None
         self._update_breadcrumb()
         self._cancel_after(self._cat_click_after)
         self._cat_click_after = self._after(100, lambda: self._do_category_load(name))
@@ -1282,6 +1291,7 @@ class POSView(tk.Frame):
         self._cat_parent_id = None
         self._cat_parent_name = ""
         self._selected_category = ""
+        self._selected_category_id = None
         self._all_products_cache = []
         self._all_products_cache_cat = ""
         self._refresh_categories()
@@ -1324,10 +1334,11 @@ class POSView(tk.Frame):
 
     def _load_products_for_category(self) -> None:
         """Fetch products from DB in a background thread; continue on main thread."""
-        cat_name   = self._selected_category or ""
-        cat_level  = self._cat_level
-        parent_id  = self._cat_parent_id
-        parent_nm  = self._cat_parent_name or ""
+        cat_name       = self._selected_category or ""
+        cat_level      = self._cat_level
+        parent_id      = self._cat_parent_id
+        parent_nm      = self._cat_parent_name or ""
+        selected_cat_id = self._selected_category_id
         self._load_gen += 1
         gen = self._load_gen
 
@@ -1339,24 +1350,22 @@ class POSView(tk.Frame):
                 thread_db.connect()
                 t_cat_dao = CategoryDAO(thread_db)
                 t_prod_dao = ProductDAO(thread_db)
-                if not cat_name:
-                    # No selection — show all active products
+                if selected_cat_id is None:
+                    # No category selected — show all active products.
                     rows = t_prod_dao.list_all_active()
                 elif cat_level == "main":
-                    # Main-level: this category + any subcategories
-                    c = t_cat_dao.get_by_name(cat_name)
-                    if c:
-                        c_id = int(c["category_id"])
-                        subs = t_cat_dao.list_subcategories(c_id)
-                        if subs:
-                            all_ids = [c_id] + [int(s["category_id"]) for s in subs]
-                            rows = t_prod_dao.list_by_categories(all_ids)
-                        else:
-                            rows = t_prod_dao.list_by_category(c_id)
-                    # No fallback to all products — empty list shows empty state
+                    # Main-level: use the selected category ID only, plus its
+                    # explicitly linked subcategories if any.
+                    c_id = int(selected_cat_id)
+                    subs = t_cat_dao.list_subcategories(c_id)
+                    if subs:
+                        all_ids = [c_id] + [int(s["category_id"]) for s in subs]
+                        rows = t_prod_dao.list_by_categories(all_ids)
+                    else:
+                        rows = t_prod_dao.list_by_category(c_id)
                 else:
-                    # Sub-level: prefer parent_id when the displayed selection is
-                    # the parent itself (no real subcategory click yet).
+                    # Sub-level: if the displayed selection is still the parent,
+                    # include only the parent and its direct children.
                     if cat_name == parent_nm and parent_id is not None:
                         subs = t_cat_dao.list_subcategories(int(parent_id))
                         if subs:
@@ -1364,11 +1373,10 @@ class POSView(tk.Frame):
                             rows = t_prod_dao.list_by_categories(ids)
                         else:
                             rows = t_prod_dao.list_by_category(int(parent_id))
+                    elif selected_cat_id is not None:
+                        rows = t_prod_dao.list_by_category(int(selected_cat_id))
                     else:
-                        c = t_cat_dao.get_by_name(cat_name)
-                        rows = (
-                            t_prod_dao.list_by_category(int(c["category_id"])) if c else []
-                        )
+                        rows = []
             except Exception as exc:
                 err_msg = str(exc)
                 rows = []

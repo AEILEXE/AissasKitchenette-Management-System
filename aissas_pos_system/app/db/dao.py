@@ -339,6 +339,7 @@ class ProductDAO:
             """
             SELECT p.id AS product_id,
                    p.name,
+                   p.category_id AS category_id,
                    COALESCE(c.name, '') AS category,
                    p.description,
                    p.tags,

@@ -121,11 +121,19 @@ def _do_seed(db) -> None:
     # Step 1 — build main categories and their IDs
     main_ids: dict[str, int] = {}
     for main_name in dict.fromkeys(row[0] for row in _MENU):
-        cid = db.execute_id(
-            "INSERT INTO categories (name, parent_id) VALUES (?, NULL);",
+        # Check if main category already exists (prevents UNIQUE constraint error)
+        existing = db.fetchone(
+            "SELECT id FROM categories WHERE name=? AND parent_id IS NULL;",
             (main_name,),
         )
-        main_ids[main_name] = cid
+        if existing:
+            main_ids[main_name] = int(existing["id"])
+        else:
+            cid = db.execute_id(
+                "INSERT INTO categories (name, parent_id) VALUES (?, NULL);",
+                (main_name,),
+            )
+            main_ids[main_name] = cid
 
     # Step 2 — build subcategories
     sub_ids: dict[tuple[str, str], int] = {}
@@ -134,32 +142,50 @@ def _do_seed(db) -> None:
         key = (main_name, sub_name)
         if key not in seen_subs:
             seen_subs.add(key)
-            cid = db.execute_id(
-                "INSERT INTO categories (name, parent_id) VALUES (?, ?);",
+            # Check if subcategory already exists
+            existing = db.fetchone(
+                "SELECT id FROM categories WHERE name=? AND parent_id=?;",
                 (sub_name, main_ids[main_name]),
             )
-            sub_ids[key] = cid
+            if existing:
+                sub_ids[key] = int(existing["id"])
+            else:
+                cid = db.execute_id(
+                    "INSERT INTO categories (name, parent_id) VALUES (?, ?);",
+                    (sub_name, main_ids[main_name]),
+                )
+                sub_ids[key] = cid
 
     # Step 3 — insert products under their subcategory
     for main_name, sub_name, prod_name, price, image_path in _MENU:
         cat_id = sub_ids[(main_name, sub_name)]
-        db.execute(
-            "INSERT INTO products "
-            "(category_id, name, price, stock, active, low_stock, image_path) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?);",
-            (cat_id, prod_name, float(price), 50, 1, 5, image_path),
+        # Check if product already exists in this category
+        existing = db.fetchone(
+            "SELECT id FROM products WHERE category_id=? AND name=?;",
+            (cat_id, prod_name),
         )
+        if not existing:
+            db.execute(
+                "INSERT INTO products "
+                "(category_id, name, price, stock, active, low_stock, image_path) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?);",
+                (cat_id, prod_name, float(price), 50, 1, 5, image_path),
+            )
 
     print("[OK] Menu seeded successfully (hierarchical structure).")
 
 
 def seed_menu_if_empty(db) -> None:
-    """Seed official menu only when the products table is empty."""
-    row = db.fetchone("SELECT COUNT(*) AS c FROM products;")
-    if row and int(row["c"]) > 0:
-        print("[INFO] Products not empty — skipping seed.")
+    """Seed official menu only when the categories table is empty."""
+    # Check if ANY categories exist — if so, assume seeding already ran
+    row = db.fetchone("SELECT COUNT(*) AS c FROM categories;")
+    category_count = int(row["c"]) if row else 0
+    
+    if category_count > 0:
+        print("[INFO] Categories already exist — skipping seed.")
         return
-    print("[INFO] Products empty — seeding official menu...")
+    
+    print("[INFO] Categories empty — seeding official menu...")
     _do_seed(db)
 
 

@@ -87,7 +87,7 @@ Name: "{app}"
 
 [Files]
 ; Main executable — one-file PyInstaller bundle
-Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\main.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
 
 
 [Icons]
