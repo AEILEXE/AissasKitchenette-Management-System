@@ -19,7 +19,8 @@ if _is_frozen():
     _mpl_dir = os.path.join(os.path.dirname(_writable), "mpl_config")
     os.makedirs(_mpl_dir, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", _mpl_dir)
-    # REMOVED: MATPLOTLIBDATA setup - may cause instability
+    # Set MATPLOTLIBDATA to the bundled matplotlib data
+    os.environ.setdefault("MATPLOTLIBDATA", os.path.join(sys._MEIPASS, "matplotlib", "mpl-data"))
     _log_path = os.path.join(os.path.dirname(_writable), "app.log")
 else:
     # Dev mode: write log next to the project root so crashes are diagnosable.

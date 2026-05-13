@@ -91,6 +91,19 @@ BASE_DIR    = _BUNDLE_DIR    # receipt_service uses this for font lookup
 PROJECT_DIR = _WRITABLE_ROOT
 
 
+def resource_path(relative_path: str) -> str:
+    """
+    Get absolute path to resource, works for dev and for PyInstaller bundle.
+    """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except AttributeError:
+        # If not bundled, use the current directory
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+
 # ── RESTAURANT POS THEME — Modern Light Café Palette ────────────────────
 THEME = {
     # ── Core Palette ──────────────────────────────────────────────────────
