@@ -87,7 +87,7 @@ Name: "{app}"
 
 [Files]
 ; Main executable — one-file PyInstaller bundle
-Source: "dist\main.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
+Source: "dist\AissasKitchenette.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
 
 
 [Icons]
