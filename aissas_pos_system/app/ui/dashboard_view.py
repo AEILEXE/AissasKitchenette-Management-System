@@ -16,15 +16,17 @@ from app.db.dao import OrderDAO, ProductDAO, DraftDAO
 from app.services.auth_service import AuthService
 from app.utils import money
 
-_SB    = THEME["sidebar"]    # warm coffee brown
-_RED   = THEME["primary"]    # warm wood brown
-_GOLD  = THEME["accent"]     # terra cotta accent
-_NEU   = THEME["accent"]
-_BG    = THEME["bg"]
-_PANEL = THEME["panel"]
-_TEXT  = THEME["text"]
-_MUTED = THEME["muted"]
-_BORDER= THEME["border"]
+_SB     = THEME["sidebar"]    # warm light beige sidebar
+_RED    = THEME["primary"]    # warm wood brown
+_GOLD   = THEME["accent"]     # terra cotta accent
+_NEU    = THEME["accent"]
+_BG     = THEME["bg"]
+_PANEL  = THEME["panel"]
+_TEXT   = THEME["text"]
+_MUTED  = THEME["muted"]
+_BORDER = THEME["border"]
+# Text colour that stays readable on the light sidebar background
+_SB_TEXT = THEME.get("text_on_sidebar", "#5C3A1E")
 
 
 def _safe(row, key, default=None):
@@ -59,7 +61,7 @@ def _apply_dash_style() -> None:
     )
     s.configure(f"{_DASH_STYLE}.Heading",
         font=("Segoe UI", 9, "bold"),
-        background=_SB,
+        background=THEME["primary"],   # brown table header (rule 7 — allowed)
         foreground="#FFFFFF",
         relief="flat",
         padding=(8, 7),
@@ -94,11 +96,12 @@ class DashboardView(tk.Frame):
 
         self._poll_after: int | None = None
         self._poll_version: int = -1
+        self._draw_afters: "list[str]" = []
 
         _apply_dash_style()
         self._build()
         self._start_polling()
-        self.bind("<Destroy>", lambda _e: self._cancel_poll())
+        self.bind("<Destroy>", lambda _e: (self._cancel_poll(), self._cancel_draw_afters()))
 
     # ── Scrollable shell ──────────────────────────────────────────────────
 
@@ -329,13 +332,13 @@ class DashboardView(tk.Frame):
 
         tk.Label(
             hdr_inner, text="Dashboard  —  Overview",
-            bg=_SB, fg="#FFFFFF",
+            bg=_SB, fg="#4B2F2F",
             font=("Segoe UI", 16, "bold"),
         ).grid(row=0, column=0, sticky="w")
 
         tk.Label(
             hdr_inner, text=_dt.datetime.now().strftime("%A, %B %d, %Y"),
-            bg=_SB, fg="#F5DFB8",
+            bg=_SB, fg="#4B2F2F",
             font=("Segoe UI", 9),
         ).grid(row=1, column=0, sticky="w")
 
@@ -377,7 +380,7 @@ class DashboardView(tk.Frame):
              _RED, "\U0001f4b0", self.go_reports),
             ("Orders Today",       str(today_count),
              "completed orders  →  View completed",
-             _SB, "\U0001f9fe", self.go_completed),
+             _RED, "\U0001f4b0", self.go_completed),
             ("Pending Orders",     str(pending_cnt),
              "awaiting payment  →  View pending",
              THEME["accent"], "⏳", self.go_pending),
@@ -397,14 +400,14 @@ class DashboardView(tk.Frame):
         tk.Label(
             banner,
             text="  This Month's Revenue",
-            bg=_SB, fg="#F5DFB8",
+            bg=_SB, fg="#4B2F2F",
             font=("Segoe UI", 9),
         ).pack(side="left", padx=(12, 0), pady=10)
 
         tk.Label(
             banner,
             text=money(weekly_sales),
-            bg=_SB, fg="#FFFFFF",
+            bg=_SB, fg="#4B2F2F",
             font=("Segoe UI", 14, "bold"),
         ).pack(side="left", padx=(6, 0), pady=10)
 
@@ -553,60 +556,68 @@ class DashboardView(tk.Frame):
                         bar_color: str, value_fmt=str,
                         height: int = 180, padding=(40, 16, 12, 28)) -> None:
         """Render a simple bar chart inside an existing canvas. Pure Tk."""
-        canvas.update_idletasks()
-        w = max(int(canvas.winfo_width() or canvas.winfo_reqwidth()), 200)
-        h = max(int(canvas.winfo_height() or height), height)
-        canvas.delete("all")
+        # Entire body is guarded — any TclError from a mid-destruction canvas
+        # is silently swallowed rather than propagated to the user.
+        try:
+            if not canvas.winfo_exists():
+                return
+            w = max(int(canvas.winfo_width() or canvas.winfo_reqwidth()), 200)
+            h = max(int(canvas.winfo_height() or height), height)
+            if not canvas.winfo_exists():
+                return
+            canvas.delete("all")
 
-        pad_l, pad_t, pad_r, pad_b = padding
-        plot_w = max(20, w - pad_l - pad_r)
-        plot_h = max(20, h - pad_t - pad_b)
+            pad_l, pad_t, pad_r, pad_b = padding
+            plot_w = max(20, w - pad_l - pad_r)
+            plot_h = max(20, h - pad_t - pad_b)
 
-        nums = [float(v or 0) for v in values]
-        max_v = max(nums) if nums else 0.0
-        if max_v <= 0:
-            canvas.create_text(w / 2, h / 2,
-                               text="No data for the selected period",
-                               fill=_MUTED, font=("Segoe UI", 9, "italic"))
+            nums = [float(v or 0) for v in values]
+            max_v = max(nums) if nums else 0.0
+            if max_v <= 0:
+                canvas.create_text(w / 2, h / 2,
+                                   text="No data for the selected period",
+                                   fill=_MUTED, font=("Segoe UI", 9, "italic"))
+                return
+
+            # Y-axis line
+            canvas.create_line(pad_l, pad_t, pad_l, pad_t + plot_h,
+                               fill=_BORDER)
+            canvas.create_line(pad_l, pad_t + plot_h, pad_l + plot_w, pad_t + plot_h,
+                               fill=_BORDER)
+
+            # Y label (max)
+            canvas.create_text(pad_l - 4, pad_t,
+                               text=value_fmt(max_v), anchor="e",
+                               fill=_MUTED, font=("Segoe UI", 8))
+            canvas.create_text(pad_l - 4, pad_t + plot_h,
+                               text="0", anchor="e",
+                               fill=_MUTED, font=("Segoe UI", 8))
+
+            n = max(1, len(nums))
+            slot = plot_w / n
+            bw   = max(8, slot * 0.6)
+
+            for i, v in enumerate(nums):
+                x_center = pad_l + slot * i + slot / 2
+                x0 = x_center - bw / 2
+                x1 = x_center + bw / 2
+                bh = (v / max_v) * plot_h if max_v else 0
+                y1 = pad_t + plot_h
+                y0 = y1 - bh
+                canvas.create_rectangle(x0, y0, x1, y1,
+                                        fill=bar_color, outline="")
+                # Value label above bar
+                if v > 0:
+                    canvas.create_text((x0 + x1) / 2, y0 - 4,
+                                       text=value_fmt(v), anchor="s",
+                                       fill=_TEXT, font=("Segoe UI", 8))
+                # X label
+                canvas.create_text((x0 + x1) / 2, y1 + 4,
+                                   text=str(labels[i] if i < len(labels) else ""),
+                                   anchor="n",
+                                   fill=_MUTED, font=("Segoe UI", 8))
+        except Exception:
             return
-
-        # Y-axis line
-        canvas.create_line(pad_l, pad_t, pad_l, pad_t + plot_h,
-                           fill=_BORDER)
-        canvas.create_line(pad_l, pad_t + plot_h, pad_l + plot_w, pad_t + plot_h,
-                           fill=_BORDER)
-
-        # Y label (max)
-        canvas.create_text(pad_l - 4, pad_t,
-                           text=value_fmt(max_v), anchor="e",
-                           fill=_MUTED, font=("Segoe UI", 8))
-        canvas.create_text(pad_l - 4, pad_t + plot_h,
-                           text="0", anchor="e",
-                           fill=_MUTED, font=("Segoe UI", 8))
-
-        n = max(1, len(nums))
-        slot = plot_w / n
-        bw   = max(8, slot * 0.6)
-
-        for i, v in enumerate(nums):
-            x_center = pad_l + slot * i + slot / 2
-            x0 = x_center - bw / 2
-            x1 = x_center + bw / 2
-            bh = (v / max_v) * plot_h if max_v else 0
-            y1 = pad_t + plot_h
-            y0 = y1 - bh
-            canvas.create_rectangle(x0, y0, x1, y1,
-                                     fill=bar_color, outline="")
-            # Value label above bar
-            if v > 0:
-                canvas.create_text((x0 + x1) / 2, y0 - 4,
-                                    text=value_fmt(v), anchor="s",
-                                    fill=_TEXT, font=("Segoe UI", 8))
-            # X label
-            canvas.create_text((x0 + x1) / 2, y1 + 4,
-                                text=str(labels[i] if i < len(labels) else ""),
-                                anchor="n",
-                                fill=_MUTED, font=("Segoe UI", 8))
 
     def _build_trend_charts(self, wrap, series: list, PAD: int) -> None:
         if not series:
@@ -651,15 +662,24 @@ class DashboardView(tk.Frame):
         cv2 = tk.Canvas(card2, bg=_PANEL, height=190, highlightthickness=0)
         cv2.pack(fill="x", padx=8, pady=(0, 10))
 
-        # Re-render on resize so the chart fills its card
+        # Re-render on resize so the chart fills its card.
+        # Guards prevent crashes when canvas is destroyed before callback fires.
         def _draw1(_e=None):
-            self._draw_bar_chart(cv1, labels, sales, _RED, _money_short)
+            try:
+                if cv1.winfo_exists():
+                    self._draw_bar_chart(cv1, labels, sales, _RED, _money_short)
+            except Exception:
+                pass
         def _draw2(_e=None):
-            self._draw_bar_chart(cv2, labels, qtys, _SB, lambda v: f"{int(v)}")
+            try:
+                if cv2.winfo_exists():
+                    self._draw_bar_chart(cv2, labels, qtys, _RED, lambda v: f"{int(v)}")
+            except Exception:
+                pass
         cv1.bind("<Configure>", _draw1, add="+")
         cv2.bind("<Configure>", _draw2, add="+")
-        self.after(60, _draw1)
-        self.after(60, _draw2)
+        self._draw_afters.append(self.after(60, _draw1))
+        self._draw_afters.append(self.after(60, _draw2))
 
     def _build_breakdown_row(self, wrap, payments, order_types,
                               status_counts, PAD: int) -> None:
@@ -685,14 +705,18 @@ class DashboardView(tk.Frame):
         p_labels = [str(r.get("method") or "—")[:10] for r in payments]
         p_values = [float(r.get("total") or 0) for r in payments]
         def _draw_p(_e=None):
-            def _fmt(v):
-                v = float(v)
-                if v >= 1000: return f"₱{v/1000:.1f}k"
-                return f"₱{v:.0f}"
-            self._draw_bar_chart(cv_p, p_labels, p_values,
-                                  THEME["accent"], _fmt)
+            try:
+                if not cv_p.winfo_exists():
+                    return
+                def _fmt(v):
+                    v = float(v)
+                    if v >= 1000: return f"₱{v/1000:.1f}k"
+                    return f"₱{v:.0f}"
+                self._draw_bar_chart(cv_p, p_labels, p_values, THEME["accent"], _fmt)
+            except Exception:
+                pass
         cv_p.bind("<Configure>", _draw_p, add="+")
-        self.after(60, _draw_p)
+        self._draw_afters.append(self.after(60, _draw_p))
 
         # Dine vs Takeout
         ocard = tk.Frame(sec, bg=_PANEL, highlightthickness=1,
@@ -710,10 +734,14 @@ class DashboardView(tk.Frame):
         o_labels = ["Dine-In", "Take-Out"]
         o_values = [o_map.get("DINE_IN", 0), o_map.get("TAKE_OUT", 0)]
         def _draw_o(_e=None):
-            self._draw_bar_chart(cv_o, o_labels, o_values,
-                                  _RED, lambda v: f"{int(v)}")
+            try:
+                if cv_o.winfo_exists():
+                    self._draw_bar_chart(cv_o, o_labels, o_values,
+                                         _RED, lambda v: f"{int(v)}")
+            except Exception:
+                pass
         cv_o.bind("<Configure>", _draw_o, add="+")
-        self.after(60, _draw_o)
+        self._draw_afters.append(self.after(60, _draw_o))
 
         # Status counts (Pending / Completed / Cancelled)
         scard = tk.Frame(sec, bg=_PANEL, highlightthickness=1,
@@ -727,10 +755,14 @@ class DashboardView(tk.Frame):
         s_labels = ["Completed", "Pending", "Cancelled"]
         s_values = [int(status_counts.get(k, 0) or 0) for k in s_labels]
         def _draw_s(_e=None):
-            self._draw_bar_chart(cv_s, s_labels, s_values,
-                                  THEME["success"], lambda v: f"{int(v)}")
+            try:
+                if cv_s.winfo_exists():
+                    self._draw_bar_chart(cv_s, s_labels, s_values,
+                                         THEME["success"], lambda v: f"{int(v)}")
+            except Exception:
+                pass
         cv_s.bind("<Configure>", _draw_s, add="+")
-        self.after(60, _draw_s)
+        self._draw_afters.append(self.after(60, _draw_s))
 
     # ── Top Sellers ───────────────────────────────────────────────────────
 
@@ -765,7 +797,7 @@ class DashboardView(tk.Frame):
             ).pack(anchor="w", padx=16)
             return
 
-        hdr = tk.Frame(card, bg=_SB)
+        hdr = tk.Frame(card, bg=THEME["primary"])   # brown header — contrast OK
         hdr.pack(fill="x")
         hdr.columnconfigure(1, weight=1)
 
@@ -780,7 +812,7 @@ class DashboardView(tk.Frame):
             px = (14 if ci == 0 else 6, 14 if ci == 3 else 6)
             lbl = tk.Label(
                 hdr, text=txt,
-                bg=_SB, fg="#FFFFFF",
+                bg=THEME["primary"], fg="#FFFFFF",
                 font=("Segoe UI", 8, "bold"),
                 anchor=anc, **kw,
             )
@@ -981,6 +1013,14 @@ class DashboardView(tk.Frame):
                 pass
             self._poll_after = None
 
+    def _cancel_draw_afters(self) -> None:
+        for aid in self._draw_afters:
+            try:
+                self.after_cancel(aid)
+            except Exception:
+                pass
+        self._draw_afters = []
+
     def _poll_tick(self) -> None:
         self._poll_after = None
         if not self.winfo_exists():
@@ -999,6 +1039,7 @@ class DashboardView(tk.Frame):
     # ── Refresh ───────────────────────────────────────────────────────────
 
     def _refresh(self):
+        self._cancel_draw_afters()
         _apply_dash_style()
         wrap = getattr(self, "_wrap", None)
         if wrap is None or not wrap.winfo_exists():
@@ -1058,12 +1099,12 @@ class VoidsPopup(tk.Toplevel):
         self.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
 
     def _build(self):
-        # Header
-        hdr = tk.Frame(self, bg=_SB)
+        # Header — use brown bg so white text is readable
+        hdr = tk.Frame(self, bg=THEME["primary"])
         hdr.pack(fill="x")
-        tk.Frame(hdr, bg=_RED, width=5).pack(side="left", fill="y")
+        tk.Frame(hdr, bg=THEME["accent"], width=5).pack(side="left", fill="y")
         tk.Label(hdr, text="Voided Orders — Today",
-                 bg=_SB, fg="#FFFFFF",
+                 bg=THEME["primary"], fg="#FFFFFF",
                  font=("Segoe UI", 13, "bold"),
                  padx=14, pady=12).pack(side="left")
 
@@ -1108,8 +1149,8 @@ class VoidsPopup(tk.Toplevel):
                     borderwidth=0, relief="flat")
         s.configure("Voids.Treeview.Heading",
                     font=("Segoe UI", 9, "bold"),
-                    background=_SB, foreground="#FFFFFF", relief="flat",
-                    padding=(8, 7))
+                    background=THEME["primary"], foreground="#FFFFFF",
+                    relief="flat", padding=(8, 7))
         s.map("Voids.Treeview",
               background=[("selected", _RED), ("!selected", _PANEL)],
               foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])

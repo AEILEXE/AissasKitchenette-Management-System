@@ -65,7 +65,7 @@ class ReportsView(tk.Frame):
         hdr_bar.pack(fill="x")
         tk.Frame(hdr_bar, bg=_RED, width=5).pack(side="left", fill="y")
         tk.Label(hdr_bar, text="Reports & Analytics",
-                 bg=_SB, fg="#FFFFFF",
+                 bg=_SB, fg="#792D2D",
                  font=("Segoe UI", 14, "bold"),
                  padx=14, pady=12).pack(side="left")
 
@@ -353,7 +353,7 @@ class ReportsView(tk.Frame):
 
         kpi_vars = [tk.StringVar(value="—") for _ in range(3)]
         kpi_labels = ["Voided Transactions", "Total Voided Amount", "Items Voided"]
-        kpi_accents = [THEME["danger"], _RED, _SB]
+        kpi_accents = [THEME["danger"], _RED, THEME["primary_dark"]]
         for i, (lbl, var, accent) in enumerate(zip(kpi_labels, kpi_vars, kpi_accents)):
             outer_c = tk.Frame(kpi_frame, bg=_BG)
             outer_c.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 10, 0))
@@ -378,8 +378,8 @@ class ReportsView(tk.Frame):
                     background=_PANEL, fieldbackground=_PANEL, foreground=_TEXT,
                     borderwidth=0, relief="flat")
         s.configure("VH.Treeview.Heading", font=("Segoe UI", 9, "bold"),
-                    background=_SB, foreground="#FFFFFF",
-                    relief="flat", padding=(8, 7))
+            background=_SB, foreground="#2B2B2B",
+            relief="flat", padding=(8, 7))
         s.map("VH.Treeview",
               background=[("selected", _RED), ("!selected", _PANEL)],
               foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])
@@ -1087,11 +1087,11 @@ class ReportsView(tk.Frame):
                     borderwidth=0, relief="flat")
         s.configure("TS.Treeview.Heading",
                     font=("Segoe UI", 9, "bold"),
-                    background=_SB, foreground="#FFFFFF", relief="flat",
+                    background=_SB, foreground="#2B2B2B", relief="flat",
                     padding=(8, 7))
         s.map("TS.Treeview",
               background=[("selected", _RED), ("!selected", _PANEL)],
-              foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])
+              foreground=[("selected", "#702C2C"), ("!selected", _TEXT)])
 
         ts_cols = ("rank", "name", "category", "qty", "revenue")
         tbl = ttk.Treeview(tbl_frame, columns=ts_cols, show="headings",
@@ -1411,7 +1411,7 @@ class ReportsView(tk.Frame):
 
         kpi_vars = [tk.StringVar(value="—") for _ in range(3)]
         kpi_labels = ["Discounted Orders", "Total Discount Amount", "Net Discounted Sales"]
-        kpi_accents = [_SB, _RED, _GREEN]
+        kpi_accents = [_RED, _RED, _GREEN]
         for i, (lbl, var, accent) in enumerate(zip(kpi_labels, kpi_vars, kpi_accents)):
             pad_left = 0 if i == 0 else 10
             outer_c = tk.Frame(kpi_frame, bg=_BG)
@@ -1438,8 +1438,8 @@ class ReportsView(tk.Frame):
                     background=_PANEL, fieldbackground=_PANEL, foreground=_TEXT,
                     borderwidth=0, relief="flat")
         s.configure("DC.Treeview.Heading",
-                    font=("Segoe UI", 9, "bold"),
-                    background=_SB, foreground="#FFFFFF", relief="flat", padding=(8, 7))
+            font=("Segoe UI", 9, "bold"),
+            background=_SB, foreground="#2B2B2B", relief="flat", padding=(8, 7))
         s.map("DC.Treeview",
               background=[("selected", _RED), ("!selected", _PANEL)],
               foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])
@@ -1696,11 +1696,11 @@ class ReportsView(tk.Frame):
                     borderwidth=0, relief="flat")
         s.configure("RM.Treeview.Heading",
                     font=("Segoe UI", 9, "bold"),
-                    background=_SB, foreground="#FFFFFF", relief="flat",
+                    background=_SB, foreground="#703131", relief="flat",
                     padding=(8, 7))
         s.map("RM.Treeview",
               background=[("selected", _RED), ("!selected", _PANEL)],
-              foreground=[("selected", "#FFFFFF"), ("!selected", _TEXT)])
+              foreground=[("selected", "#752B2B"), ("!selected", _TEXT)])
 
         rm_cols = ("dt", "material", "mat_type", "action", "qty_change", "notes")
         tbl = ttk.Treeview(tbl_frame, columns=rm_cols, show="headings",

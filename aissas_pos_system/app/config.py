@@ -71,7 +71,7 @@ DB_MODE, NETWORK_DB_PATH = _load_db_settings()
 # ── Read-only bundled assets (safe in both modes) ─────────────────────────
 ASSETS_DIR = _BUNDLE_DIR / "assets"
 ICONS_DIR  = ASSETS_DIR / "icons"
-LOGO_PATH  = ASSETS_DIR / "logo.png"
+LOGO_PATH  = ASSETS_DIR / "logo dark.png"
 
 # ── Writable directories (persistent; never in the temp bundle dir) ────────
 DATA_DIR         = _WRITABLE_ROOT / "data"
@@ -91,20 +91,20 @@ BASE_DIR    = _BUNDLE_DIR    # receipt_service uses this for font lookup
 PROJECT_DIR = _WRITABLE_ROOT
 
 
-# ── RESTAURANT POS THEME — Balanced Warm Café Palette ───────────────────
+# ── RESTAURANT POS THEME — Modern Light Café Palette ────────────────────
 THEME = {
     # ── Core Palette ──────────────────────────────────────────────────────
-    "bg":           "#F4EFEA",   # warm cream background
-    "bg_warm":      "#F4EFEA",   # unified background
+    "bg":           "#FFF8E7",   # very light cream background
+    "bg_warm":      "#FFF8E7",   # unified background
     "panel":        "#FFFFFF",   # white card panels
 
-    # Sidebar & Topbar — Rich Warm Brown
-    "sidebar":       "#8B5E3C",   # rich warm coffee brown
-    "sidebar_active":"#C08A6B",   # terracotta active highlight
-    "sidebar_hover": "#7A5030",   # deeper hover brown
-    "topbar":        "#8B5E3C",
+    # Sidebar & Topbar — Light Warm Beige (replaces overly dark brown)
+    "sidebar":       "#EED9C4",   # warm light beige sidebar
+    "sidebar_active":"#8B5E3C",   # rich brown for active nav item
+    "sidebar_hover": "#D4BFA0",   # slightly darker beige on hover
+    "topbar":        "#EED9C4",
 
-    # Primary — Warm Wood Brown
+    # Primary — Warm Wood Brown (buttons, highlights)
     "primary":      "#8B5E3C",   # warm wood brown
     "primary_dark": "#7A5030",   # darker brown (hover)
     "primary_light":"#B8855C",   # lighter warm brown
@@ -121,8 +121,8 @@ THEME = {
     "text_light":   "#FFFFFF",
     "muted":        "#6A6A6A",   # neutral muted gray
     "border":       "#D9C5B2",   # soft warm border
-    "border_focus": "#C08A6B",   # terracotta focus border
-    "beige":        "#EDE4D8",   # warm beige for inputs
+    "border_focus": "#8B5E3C",   # brown focus border
+    "beige":        "#EED9C4",   # warm beige (new: replaces EDE4D8)
 
     # Status colors
     "success":      "#4A7C59",   # muted green
@@ -142,25 +142,25 @@ THEME = {
     "select_bg":    "#8B5E3C",
     "select_fg":    "#FFFFFF",
 
-    # Legacy keys — map to new warm palette so existing code works unchanged
+    # Legacy keys — map to new palette so existing code works unchanged
     "brown":        "#8B5E3C",   # PRIMARY warm brown
     "brown_dark":   "#7A5030",   # darker brown (hover)
     "brown2":       "#C08A6B",   # terracotta accent
 }
 
 THEME["header_bg"]      = THEME["primary_dark"]
-THEME["nav_bg"]         = THEME["primary"]
-THEME["input_bg"]       = THEME["beige"]
+THEME["nav_bg"]         = THEME["sidebar"]         # light beige navbar
+THEME["input_bg"]       = "#FFF8E7"                # light cream inputs
 THEME["card_bg"]        = THEME["panel"]
-THEME["panel2"]         = THEME["beige"]
-THEME["secondary"]      = THEME["beige"]
+THEME["panel2"]         = "#FFF8E7"                # light cream secondary panels
+THEME["secondary"]      = "#FFF8E7"
 
 THEME["text_on_primary"] = "#FFFFFF"
-THEME["text_on_accent"]  = "#1C1C1C"
+THEME["text_on_accent"]  = "#FFFFFF"
 THEME["text_on_danger"]  = "#FFFFFF"
 THEME["text_on_success"] = "#FFFFFF"
 THEME["text_on_warning"] = "#1C1C1C"
-THEME["text_on_sidebar"] = "#FFFFFF"
+THEME["text_on_sidebar"] = "#5C3A1E"   # dark brown text on light beige sidebar
 
 
 # ── Defaults / Seeding ─────────────────────────────────────────────────────

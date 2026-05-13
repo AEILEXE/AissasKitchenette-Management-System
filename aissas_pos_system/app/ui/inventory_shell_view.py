@@ -13,7 +13,10 @@ from app.ui.inventory_products_view import InventoryProductsView, InventoryCateg
 from app.ui.inventory_raw_materials_view import InventoryRawMaterialsView
 from app.ui.transactions_view import TransactionDetailsDialog
 from app.utils import money
-from app.constants import P_MANAGE_PRODS, P_MANAGE_USERS, P_DATABASE, P_EXPORT, P_REPORTS
+from app.constants import (
+    P_MANAGE_PRODS, P_MANAGE_USERS, P_DATABASE, P_EXPORT, P_REPORTS,
+    P_INV_VIEW, P_INV_RAW_VIEW,
+)
 
 
 def _safe(r, key, default=None):
@@ -71,28 +74,39 @@ class InventoryShellView(tk.Frame):
     # ── Top navigation bar ────────────────────────────────────────────────────
 
     def _build_topnav(self):
+        _sb_text = THEME.get("text_on_sidebar", "#5C3A1E")
         nav = tk.Frame(self, bg=THEME["sidebar"])
         nav.pack(fill="x")
 
+        # Left accent stripe
+        tk.Frame(nav, bg=THEME["accent"], width=4).pack(side="left", fill="y")
+
         tk.Label(
             nav, text="Inventory",
-            bg=THEME["sidebar"], fg="white",
+            bg=THEME["sidebar"], fg=_sb_text,
             font=("Segoe UI", 12, "bold"),
-        ).pack(side="left", padx=(16, 20), pady=12)
+        ).pack(side="left", padx=(12, 20), pady=12)
+
+        # Thin divider
+        tk.Frame(nav, bg=THEME["border"], width=1).pack(side="left", fill="y", pady=8)
 
         tab_items = [
             ("products",      "Products",      self.show_products),
             ("categories",    "Categories",    self.show_categories),
             ("raw_materials", "Raw Materials", self.show_raw_materials),
         ]
+        # Only show Raw Materials tab when user can view it
+        can_raw = self.auth.has_permission(P_INV_VIEW) or self.auth.has_permission(P_INV_RAW_VIEW)
         for key, text, cmd in tab_items:
+            if key == "raw_materials" and not can_raw:
+                continue
             btn = tk.Button(
                 nav, text=text,
                 command=cmd,
                 bg=THEME["sidebar"],
-                fg="#B0BEC5",
-                activebackground=THEME["sidebar"],
-                activeforeground="white",
+                fg=_sb_text,
+                activebackground=THEME["sidebar_hover"],
+                activeforeground=_sb_text,
                 bd=0, padx=18, pady=12,
                 cursor="hand2",
                 font=("Segoe UI", 10),
@@ -102,18 +116,21 @@ class InventoryShellView(tk.Frame):
             self._tab_btns[key] = btn
 
     def _set_active(self, key: str):
+        _sb_text = THEME.get("text_on_sidebar", "#5C3A1E")
         self._active = key
         for k, btn in self._tab_btns.items():
             if k == key:
                 btn.configure(
                     bg=THEME["primary"],
                     fg="white",
+                    activeforeground="white",
                     font=("Segoe UI", 10, "bold")
                 )
             else:
                 btn.configure(
                     bg=THEME["sidebar"],
-                    fg="#B0BEC5",
+                    fg=_sb_text,
+                    activeforeground=_sb_text,
                     font=("Segoe UI", 10)
                 )
 

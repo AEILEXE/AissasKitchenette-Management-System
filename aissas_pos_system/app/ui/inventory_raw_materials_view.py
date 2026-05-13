@@ -13,6 +13,11 @@ from app.config import THEME
 from app.db.database import Database
 from app.services.auth_service import AuthService
 from app.ui.dialogs import show_toast
+from app.constants import (
+    P_INV_RAW_VIEW, P_INV_RAW_ADD, P_INV_RAW_EDIT,
+    P_INV_RAW_DELETE, P_INV_RAW_STOCK, P_INV_RAW_REPORTS,
+    P_INV_VIEW,
+)
 
 
 def _safe(row, key, default=None):
@@ -21,6 +26,18 @@ def _safe(row, key, default=None):
         return default if v is None else v
     except Exception:
         return default
+
+
+def _walk_set_bg(widget, color, stop_at=None):
+    """Recursively set bg on a widget tree, skipping `stop_at` subtree."""
+    if widget is stop_at:
+        return
+    try:
+        widget.configure(bg=color)
+    except Exception:
+        pass
+    for child in widget.winfo_children():
+        _walk_set_bg(child, color, stop_at=stop_at)
 
 
 def _open_date_picker(parent: tk.Widget, var: tk.StringVar) -> None:
@@ -538,9 +555,35 @@ class InventoryRawMaterialsView(tk.Frame):
         # Mode: "menu" | "list" | "low" | "edit" | "deduct" | "logs"
         self._mode: str = "menu"
 
+        # Permission helpers
+        self._can_view    = auth.has_permission(P_INV_RAW_VIEW) or auth.has_permission(P_INV_VIEW)
+        self._can_add     = auth.has_permission(P_INV_RAW_ADD)
+        self._can_edit    = auth.has_permission(P_INV_RAW_EDIT)
+        self._can_delete  = auth.has_permission(P_INV_RAW_DELETE)
+        self._can_stock   = auth.has_permission(P_INV_RAW_STOCK)
+        self._can_reports = auth.has_permission(P_INV_RAW_REPORTS)
+
+        if not self._can_view:
+            self._build_access_denied()
+            return
+
         # Build menu picker + list panel; show menu first.
         self._build_root()
         self._show_menu()
+
+    def _build_access_denied(self):
+        f = tk.Frame(self, bg=THEME["bg"])
+        f.pack(fill="both", expand=True)
+        tk.Label(
+            f, text="🔒  Access Denied",
+            bg=THEME["bg"], fg=THEME["danger"],
+            font=("Segoe UI", 18, "bold"),
+        ).place(relx=0.5, rely=0.45, anchor="center")
+        tk.Label(
+            f, text="You do not have permission to view Raw Materials.",
+            bg=THEME["bg"], fg=THEME["muted"],
+            font=("Segoe UI", 10),
+        ).place(relx=0.5, rely=0.55, anchor="center")
 
     # ── Build ──────────────────────────────────────────────────────────────────
 
@@ -683,52 +726,225 @@ class InventoryRawMaterialsView(tk.Frame):
         for w in outer.winfo_children():
             w.destroy()
 
-        tk.Label(outer, text="Raw Materials", bg=THEME["bg"], fg=THEME["text"],
-                 font=("Segoe UI", 22, "bold")).pack(anchor="w", padx=22, pady=(20, 4))
-        tk.Label(outer, text="Pick what you want to do. Each action opens its own panel.",
-                 bg=THEME["bg"], fg=THEME["muted"],
-                 font=("Segoe UI", 10)).pack(anchor="w", padx=22, pady=(0, 16))
+        # ── Scrollable shell — prevents cards being clipped on small screens ──
+        _vsb = ttk.Scrollbar(outer, orient="vertical")
+        _vsb.pack(side="right", fill="y")
+        _cv = tk.Canvas(outer, bg=THEME["bg"], highlightthickness=0,
+                        yscrollcommand=_vsb.set)
+        _cv.pack(side="left", fill="both", expand=True)
+        _vsb.configure(command=_cv.yview)
+        inner = tk.Frame(_cv, bg=THEME["bg"])
+        _win_id = _cv.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda _e: _cv.configure(scrollregion=_cv.bbox("all")))
+        _cv.bind("<Configure>",
+                 lambda e: _cv.itemconfigure(_win_id, width=e.width))
+        def _mw_scroll(e):
+            if _cv.winfo_exists():
+                _cv.yview_scroll(-1 if e.delta > 0 else 1, "units")
+        _cv.bind("<Enter>", lambda _e: _cv.bind_all("<MouseWheel>", _mw_scroll))
+        _cv.bind("<Leave>", lambda _e: _cv.unbind_all("<MouseWheel>"))
 
-        grid = tk.Frame(outer, bg=THEME["bg"])
-        grid.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+        # ── Page header ───────────────────────────────────────────────────────
+        hdr = tk.Frame(inner, bg=THEME["bg"])
+        hdr.pack(fill="x", padx=22, pady=(20, 0))
+
+        tk.Label(
+            hdr, text="Raw Materials Inventory",
+            bg=THEME["bg"], fg=THEME["text"],
+            font=("Segoe UI", 22, "bold"),
+        ).pack(side="left")
+
+        # Live stats badge
+        try:
+            total = self.db.fetchone("SELECT COUNT(*) AS c FROM raw_materials WHERE active=1;")
+            low   = self.db.fetchone(
+                "SELECT COUNT(*) AS c FROM raw_materials "
+                "WHERE active=1 AND low_stock > 0 AND quantity <= low_stock;")
+            expired = self.db.fetchone(
+                "SELECT COUNT(*) AS c FROM raw_materials "
+                "WHERE active=1 AND expiration_date IS NOT NULL "
+                "AND date(expiration_date) < date('now');")
+            total_n   = int(total["c"])   if total   else 0
+            low_n     = int(low["c"])     if low     else 0
+            expired_n = int(expired["c"]) if expired else 0
+        except Exception:
+            total_n = low_n = expired_n = 0
+
+        badge_frame = tk.Frame(hdr, bg=THEME["bg"])
+        badge_frame.pack(side="right")
+
+        def _badge(parent, val, label, bg, fg):
+            f = tk.Frame(parent, bg=bg, padx=10, pady=4)
+            f.pack(side="left", padx=(0, 8))
+            tk.Label(f, text=str(val), bg=bg, fg=fg,
+                     font=("Segoe UI", 14, "bold")).pack()
+            tk.Label(f, text=label, bg=bg, fg=fg,
+                     font=("Segoe UI", 7)).pack()
+
+        _badge(badge_frame, total_n,   "Active",  THEME["success_bg"], THEME["success"])
+        if low_n > 0:
+            _badge(badge_frame, low_n, "Low",     THEME["warning_bg"], THEME["warning"])
+        if expired_n > 0:
+            _badge(badge_frame, expired_n, "Expired", THEME["danger_bg"], THEME["danger"])
+
+        tk.Label(
+            inner,
+            text="Select an action below. Each panel focuses on a specific task.",
+            bg=THEME["bg"], fg=THEME["muted"],
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", padx=22, pady=(4, 18))
+
+        # ── Divider ───────────────────────────────────────────────────────────
+        tk.Frame(inner, bg=THEME["border"], height=1).pack(fill="x", padx=22, pady=(0, 18))
+
+        # ── Action cards grid ─────────────────────────────────────────────────
+        grid = tk.Frame(inner, bg=THEME["bg"])
+        grid.pack(fill="x", padx=18, pady=(0, 24))
         for c in range(3):
             grid.columnconfigure(c, weight=1, uniform="rmcards")
 
-        cards = [
-            ("Add Raw Material",        "Create a new raw material entry.",
-             THEME["success"], self._add_material_from_menu),
-            ("Update / Edit",           "Edit details of an existing material.",
-             THEME["primary"], lambda: self._show_list("edit")),
-            ("Deduct / Use Stock",      "Reduce quantity used for cooking, spoilage, etc.",
-             THEME["warning"], lambda: self._show_list("deduct")),
-            ("Stock List",              "Browse and search the full materials list.",
-             THEME["accent"], lambda: self._show_list("list")),
-            ("Low Stock",               "Items at or below their low-stock alert.",
-             THEME["danger"], lambda: self._show_list("low")),
-            ("Movement History",        "Audit log of every stock movement.",
-             THEME["brown"], self._show_logs),
+        # Only show cards the user is permitted to use
+        all_cards = [
+            # (icon, title, subtitle, badge_label, badge_color, accent, cmd, perm_ok)
+            ("📦", "Add Raw Material",
+             "Register a new ingredient or supply item.",
+             "ADD", THEME["success"],
+             THEME["success"],
+             self._add_material_from_menu,
+             self._can_add),
+            ("✏️", "Update / Edit",
+             "Modify name, unit, quantity, or expiry of an existing material.",
+             "EDIT", THEME["primary"],
+             THEME["primary"],
+             lambda: self._show_list("edit"),
+             self._can_edit),
+            ("➕", "Add Stock",
+             "Record a delivery or restock for any ingredient.",
+             "STOCK", THEME["accent"],
+             THEME["accent"],
+             lambda: self._show_list("list"),
+             self._can_stock),
+            ("➖", "Deduct / Use",
+             "Deduct quantities used for cooking, spoilage, or waste.",
+             "USE", THEME["warning"],
+             THEME["warning"],
+             lambda: self._show_list("deduct"),
+             self._can_stock),
+            ("⚠️", "Low Stock Alerts",
+             "Items at or below their low-stock threshold — reorder soon.",
+             "ALERTS", THEME["danger"],
+             THEME["danger"],
+             lambda: self._show_list("low"),
+             self._can_view),
+            ("📋", "Full Stock List",
+             "Browse and search all raw materials with filters and sorting.",
+             "VIEW", THEME["muted"],
+             THEME["brown"],
+             lambda: self._show_list("list"),
+             self._can_view),
+            ("📜", "Movement History",
+             "Audit log of every stock addition and deduction.",
+             "HISTORY", "#7c3aed",
+             "#7c3aed",
+             self._show_logs,
+             self._can_reports),
         ]
-        for i, (title, sub, accent, cmd) in enumerate(cards):
+
+        visible = [(ic, ti, su, bl, bc, ac, cm) for ic, ti, su, bl, bc, ac, cm, ok in all_cards if ok]
+
+        for i, (icon, title, subtitle, badge_lbl, badge_color, accent, cmd) in enumerate(visible):
             r, c = divmod(i, 3)
-            card = tk.Frame(grid, bg=THEME["panel"],
-                            highlightthickness=1, highlightbackground=THEME["border"],
-                            cursor="hand2")
-            card.grid(row=r, column=c, sticky="nsew", padx=8, pady=8)
-            tk.Frame(card, bg=accent, height=4).pack(fill="x")
-            tk.Label(card, text=title, bg=THEME["panel"], fg=THEME["text"],
-                     font=("Segoe UI", 13, "bold"), anchor="w"
-                     ).pack(anchor="w", padx=16, pady=(14, 4))
-            tk.Label(card, text=sub, bg=THEME["panel"], fg=THEME["muted"],
-                     font=("Segoe UI", 9), anchor="w", justify="left",
-                     wraplength=240).pack(anchor="w", padx=16, pady=(0, 14))
-            tk.Label(card, text="Open  →", bg=THEME["panel"], fg=accent,
-                     font=("Segoe UI", 9, "bold")
-                     ).pack(anchor="e", padx=16, pady=(0, 12))
-            for w in (card, *card.winfo_children()):
-                w.bind("<Button-1>", lambda _e, c=cmd: c())
-            for w in card.winfo_children():
-                for ch in w.winfo_children():
-                    ch.bind("<Button-1>", lambda _e, c=cmd: c())
+
+            # Outer shadow frame (simulated depth)
+            shadow = tk.Frame(grid, bg=THEME["border"])
+            shadow.grid(row=r, column=c, sticky="nsew", padx=8, pady=8)
+
+            card = tk.Frame(shadow, bg=THEME["panel"], cursor="hand2")
+            card.pack(fill="both", expand=True, padx=1, pady=1)
+
+            # Top accent bar
+            accent_bar = tk.Frame(card, bg=accent, height=5)
+            accent_bar.pack(fill="x")
+
+            # Footer — packed first with side="bottom" so its space is
+            # reserved before body gets fill="both"/expand=True.
+            # This prevents the body from consuming all card height and
+            # clipping the "Open →" label at the bottom.
+            footer = tk.Frame(card, bg=THEME["panel"])
+            footer.pack(side="bottom", fill="x", padx=18, pady=(6, 14))
+            tk.Label(
+                footer, text="Open  →",
+                bg=THEME["panel"], fg=accent,
+                font=("Segoe UI", 9, "bold"),
+                cursor="hand2",
+            ).pack(side="right")
+
+            # Body padding — fills the remaining space between accent bar and footer
+            body = tk.Frame(card, bg=THEME["panel"])
+            body.pack(fill="both", expand=True, padx=18, pady=14)
+
+            # Icon + badge row
+            top_row = tk.Frame(body, bg=THEME["panel"])
+            top_row.pack(fill="x", pady=(0, 8))
+
+            tk.Label(
+                top_row, text=icon,
+                bg=THEME["panel"], fg=accent,
+                font=("Segoe UI", 24),
+            ).pack(side="left")
+
+            badge_pill = tk.Frame(top_row, bg=THEME["bg"], padx=8, pady=2)
+            badge_pill.pack(side="right")
+            tk.Label(
+                badge_pill, text=badge_lbl,
+                bg=THEME["bg"], fg=badge_color,
+                font=("Segoe UI", 7, "bold"),
+            ).pack()
+
+            # Title
+            tk.Label(
+                body, text=title,
+                bg=THEME["panel"], fg=THEME["text"],
+                font=("Segoe UI", 13, "bold"),
+                anchor="w",
+            ).pack(anchor="w")
+
+            # Subtitle
+            tk.Label(
+                body, text=subtitle,
+                bg=THEME["panel"], fg=THEME["muted"],
+                font=("Segoe UI", 9),
+                anchor="w", justify="left",
+                wraplength=230,
+            ).pack(anchor="w", pady=(4, 10))
+
+            # Divider
+            tk.Frame(body, bg=THEME["border"], height=1).pack(fill="x", pady=(2, 0))
+
+            # Bind click on all widgets in card
+            for widget in (card, shadow, accent_bar, body, top_row, footer, *body.winfo_children(), *top_row.winfo_children(), *footer.winfo_children()):
+                try:
+                    widget.bind("<Button-1>", lambda _e, c=cmd: c())
+                except Exception:
+                    pass
+
+            # Hover effect — recursive so grandchildren update too;
+            # accent_bar is skipped so it keeps its accent colour.
+            def _enter(e, frm=card, ab=accent_bar):
+                try:
+                    _walk_set_bg(frm, THEME["bg"], stop_at=ab)
+                except Exception:
+                    pass
+
+            def _leave(e, frm=card, ab=accent_bar):
+                try:
+                    _walk_set_bg(frm, THEME["panel"], stop_at=ab)
+                except Exception:
+                    pass
+
+            card.bind("<Enter>", _enter)
+            card.bind("<Leave>", _leave)
 
     def _add_material_from_menu(self):
         """Open Add dialog directly from the menu, then return to menu."""
@@ -837,7 +1053,8 @@ class InventoryRawMaterialsView(tk.Frame):
                                            padx=TBPADX, pady=TBPADY, bd=0,
                                            relief="flat", cursor="hand2",
                                            font=TBFONT)
-        self._btn_add_material.pack(side="left", padx=(0, 6))
+        if self._can_add:
+            self._btn_add_material.pack(side="left", padx=(0, 6))
 
         self._btn_edit = tk.Button(left, text="Edit", command=self._edit_material,
                                    padx=TBPADX, pady=TBPADY, bd=0,
@@ -911,15 +1128,15 @@ class InventoryRawMaterialsView(tk.Frame):
                         borderwidth=0, relief="flat")
         style.configure("RM.Treeview.Heading",
                         font=("Segoe UI", 9, "bold"),
-                        background=THEME["beige"],
-                        foreground=THEME["text"],
+                        background=THEME["primary"],
+                        foreground="#FFFFFF",
                         relief="flat", padding=(10, 8))
         style.map("RM.Treeview",
                   background=[("selected", "#5C3D2E")],
                   foreground=[("selected", "#FFFFFF")])
         style.map("RM.Treeview.Heading",
-                  background=[("active", THEME["border"])],
-                  foreground=[("active", THEME["text"])])
+                  background=[("active", THEME["primary_dark"])],
+                  foreground=[("active", "#FFFFFF")])
 
         self.tree = ttk.Treeview(tf, columns=self.COLS, show="headings",
                                  style="RM.Treeview", height=18)
@@ -1164,25 +1381,30 @@ class InventoryRawMaterialsView(tk.Frame):
         self.refresh_materials()
 
     def _update_action_btns(self, selected: bool, is_active: bool = True):
-        """Enable/style selection-dependent buttons based on whether a row is selected."""
+        """Enable/style selection-dependent buttons based on row selection and permissions."""
         if selected:
-            self._btn_edit.configure(
-                state="normal", bg=THEME["primary"], fg="white", cursor="hand2")
-            self._btn_add_stock.configure(
-                state="normal", bg=THEME["success"], fg="white", cursor="hand2")
-            self._btn_deduct.configure(
-                state="normal", bg=THEME["warning"], fg="white", cursor="hand2")
-            self._btn_history.configure(
-                state="normal", bg=THEME["accent"], fg="white", cursor="hand2")
-            self._toggle_btn.configure(
-                state="normal",
-                text="Deactivate" if is_active else "Activate",
-                bg=THEME["warning"] if is_active else THEME["success"],
-                fg="white",
-                cursor="hand2",
-            )
-            self._btn_delete.configure(
-                state="normal", bg=THEME["danger"], fg="white", cursor="hand2")
+            if self._can_edit:
+                self._btn_edit.configure(
+                    state="normal", bg=THEME["primary"], fg="white", cursor="hand2")
+            if self._can_stock:
+                self._btn_add_stock.configure(
+                    state="normal", bg=THEME["success"], fg="white", cursor="hand2")
+                self._btn_deduct.configure(
+                    state="normal", bg=THEME["warning"], fg="white", cursor="hand2")
+            if self._can_reports:
+                self._btn_history.configure(
+                    state="normal", bg=THEME["accent"], fg="white", cursor="hand2")
+            if self._can_edit:
+                self._toggle_btn.configure(
+                    state="normal",
+                    text="Deactivate" if is_active else "Activate",
+                    bg=THEME["warning"] if is_active else THEME["success"],
+                    fg="white",
+                    cursor="hand2",
+                )
+            if self._can_delete:
+                self._btn_delete.configure(
+                    state="normal", bg=THEME["danger"], fg="white", cursor="hand2")
         else:
             for btn in (self._btn_edit, self._btn_add_stock, self._btn_deduct,
                         self._btn_history, self._toggle_btn, self._btn_delete):
@@ -1346,6 +1568,10 @@ class InventoryRawMaterialsView(tk.Frame):
     # ── CRUD ───────────────────────────────────────────────────────────────────
 
     def _add_material(self):
+        if not self._can_add:
+            messagebox.showerror("Access Denied",
+                                 "You do not have permission to add raw materials.")
+            return
         dlg = _MaterialDialog(self, self.db)
         if not dlg.result:
             return
@@ -1383,6 +1609,10 @@ class InventoryRawMaterialsView(tk.Frame):
                 messagebox.showerror("Error", f"Could not add material:\n{exc}")
 
     def _edit_material(self):
+        if not self._can_edit:
+            messagebox.showerror("Access Denied",
+                                 "You do not have permission to edit raw materials.")
+            return
         mid = self._selected_id()
         if mid is None:
             return
@@ -1417,6 +1647,10 @@ class InventoryRawMaterialsView(tk.Frame):
                 messagebox.showerror("Error", f"Could not update material:\n{exc}")
 
     def _toggle_active(self):
+        if not self._can_edit:
+            messagebox.showerror("Access Denied",
+                                 "You do not have permission to edit raw materials.")
+            return
         mid = self._selected_id()
         if mid is None:
             return
@@ -1439,6 +1673,10 @@ class InventoryRawMaterialsView(tk.Frame):
             messagebox.showerror("Error", f"Could not update:\n{exc}")
 
     def _delete_material(self):
+        if not self._can_delete:
+            messagebox.showerror("Access Denied",
+                                 "You do not have permission to delete raw materials.")
+            return
         mid = self._selected_id()
         if mid is None:
             return
@@ -1459,6 +1697,10 @@ class InventoryRawMaterialsView(tk.Frame):
     # ── Stock movements ────────────────────────────────────────────────────────
 
     def _add_stock(self):
+        if not self._can_stock:
+            messagebox.showerror("Access Denied",
+                                 "You do not have permission to update raw material stock.")
+            return
         mid = self._selected_id()
         if mid is None:
             return
@@ -1497,6 +1739,10 @@ class InventoryRawMaterialsView(tk.Frame):
             messagebox.showerror("Error", "Could not add stock. Please try again.")
 
     def _deduct_stock(self):
+        if not self._can_stock:
+            messagebox.showerror("Access Denied",
+                                 "You do not have permission to update raw material stock.")
+            return
         mid = self._selected_id()
         if mid is None:
             return

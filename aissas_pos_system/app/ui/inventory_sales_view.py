@@ -41,8 +41,59 @@ class InventorySalesView(tk.Frame):
         self.var_to   = tk.StringVar()
         self._custom_bar: tk.Frame | None = None
 
+        # ── Scrollable wrapper ────────────────────────────────────────────────
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+
+        self._scroll_canvas = tk.Canvas(self, bg=THEME["bg"],
+                                        highlightthickness=0)
+        self._scroll_canvas.grid(row=0, column=0, sticky="nsew")
+
+        _vsb = ttk.Scrollbar(self, orient="vertical",
+                             command=self._scroll_canvas.yview)
+        _vsb.grid(row=0, column=1, sticky="ns")
+        self._scroll_canvas.configure(yscrollcommand=_vsb.set)
+
+        # Inner frame — _build() grids everything here instead of on self
+        self._inner = tk.Frame(self._scroll_canvas, bg=THEME["bg"])
+        self._inner_id = self._scroll_canvas.create_window(
+            (0, 0), window=self._inner, anchor="nw"
+        )
+
+        # Resize helpers
+        self._inner.bind("<Configure>", self._on_inner_configure)
+        self._scroll_canvas.bind("<Configure>", self._on_canvas_configure)
+
+        # Mouse-wheel scrolling (Windows / Linux / macOS)
+        self._scroll_canvas.bind_all("<MouseWheel>",   self._on_mousewheel)
+        self._scroll_canvas.bind_all("<Button-4>",     self._on_mousewheel)
+        self._scroll_canvas.bind_all("<Button-5>",     self._on_mousewheel)
+
         self._build()
         self._refresh_data()
+
+    # ── Scroll helpers ────────────────────────────────────────────────────────
+
+    def _on_inner_configure(self, _event=None):
+        self._scroll_canvas.configure(
+            scrollregion=self._scroll_canvas.bbox("all")
+        )
+
+    def _on_canvas_configure(self, event):
+        self._scroll_canvas.itemconfig(self._inner_id, width=event.width)
+
+    def _on_mousewheel(self, event):
+        # Only scroll when the pointer is over this canvas
+        if str(event.widget).startswith(str(self._scroll_canvas)):
+            return
+        if event.num == 4:
+            self._scroll_canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self._scroll_canvas.yview_scroll(1, "units")
+        else:
+            self._scroll_canvas.yview_scroll(
+                int(-1 * (event.delta / 120)), "units"
+            )
 
     # ──────────────────────────────────────────────────────────────────────────
     # Layout
@@ -52,11 +103,14 @@ class InventorySalesView(tk.Frame):
         f  = ui_scale.scale_font
         sp = ui_scale.s
 
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)   # chart row expands
+        # Layout is on the scrollable inner frame, not on self
+        _inner = self._inner
+        _inner.columnconfigure(0, weight=1)
+        # chart row still gets a minimum height; scroll canvas handles vertical expansion
+        _inner.rowconfigure(3, minsize=420)
 
         # ── Page header ───────────────────────────────────────────────────────
-        hdr = tk.Frame(self, bg=THEME["bg"])
+        hdr = tk.Frame(_inner, bg=THEME["bg"])
         hdr.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 10))
         hdr.columnconfigure(0, weight=1)
 
@@ -93,7 +147,7 @@ class InventorySalesView(tk.Frame):
         self._update_toggle_style()
 
         # ── Custom date range bar (visible only when view_type = "Custom") ───
-        self._custom_bar = tk.Frame(self, bg=THEME["panel"],
+        self._custom_bar = tk.Frame(_inner, bg=THEME["panel"],
                                      highlightthickness=1,
                                      highlightbackground=THEME["border"])
         # Not gridded yet — _set_view_type controls visibility.
@@ -143,7 +197,7 @@ class InventorySalesView(tk.Frame):
                   ).pack(side="left", padx=(8, 12), pady=8)
 
         # ── KPI cards row ─────────────────────────────────────────────────────
-        self.kpi_row = tk.Frame(self, bg=THEME["bg"])
+        self.kpi_row = tk.Frame(_inner, bg=THEME["bg"])
         self.kpi_row.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 12))
         for i in range(3):
             self.kpi_row.columnconfigure(i, weight=1, uniform="kpi")
@@ -161,7 +215,7 @@ class InventorySalesView(tk.Frame):
 
         # ── Chart card ────────────────────────────────────────────────────────
         chart_card = tk.Frame(
-            self, bg=THEME["panel"],
+            _inner, bg=THEME["panel"],
             highlightthickness=1, highlightbackground=THEME["border"],
         )
         chart_card.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 10))
@@ -181,15 +235,16 @@ class InventorySalesView(tk.Frame):
         self._chart_title_lbl.grid(row=0, column=0, sticky="w")
 
         # Chart canvas container
-        self.canvas_frame = tk.Frame(chart_card, bg="white")
+        self.canvas_frame = tk.Frame(chart_card, bg="white", height=400)
         self.canvas_frame.grid(row=1, column=0, sticky="nsew", padx=2, pady=(0, 2))
+        self.canvas_frame.pack_propagate(False)
 
         # ── Payment breakdown card ────────────────────────────────────────────
         # Mirrors the dashboard's "Payment Methods" widget but scoped to the
         # currently-selected period (Daily / Weekly / Monthly / Yearly /
         # Custom).  Refreshed by _refresh_data() alongside the KPI cards.
         self._pay_card = tk.Frame(
-            self, bg=THEME["panel"],
+            _inner, bg=THEME["panel"],
             highlightthickness=1, highlightbackground=THEME["border"],
         )
         self._pay_card.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 10))
@@ -215,7 +270,7 @@ class InventorySalesView(tk.Frame):
         # ── Export bar (only shown if user has export permission) ─────────────
         if self.auth.has_permission(P_EXPORT):
             export_bar = tk.Frame(
-                self, bg=THEME["panel"],
+                _inner, bg=THEME["panel"],
                 highlightthickness=1, highlightbackground=THEME["border"],
             )
             export_bar.grid(row=5, column=0, sticky="ew", padx=18, pady=(0, 16))
@@ -600,8 +655,8 @@ class InventorySalesView(tk.Frame):
         charts_container.rowconfigure(0, weight=1)
         charts_container.grid_propagate(False)
 
-        # ── Bar chart figure ──────────────────────────────────────────────────
-        fig_bar = Figure(figsize=(7, 4.5), dpi=80, constrained_layout=True)
+                # ── Bar chart figure ──────────────────────────────────────────────────
+        fig_bar = Figure(figsize=(9, 7), dpi=100, constrained_layout=True)
         fig_bar.patch.set_facecolor("#FAFAFA")
         ax = fig_bar.add_subplot(111)
 
@@ -680,7 +735,7 @@ class InventorySalesView(tk.Frame):
 
         if has_pie:
             # ── Pie chart figure (separate, side-by-side with bar chart) ─────
-            fig_pie = Figure(figsize=(5.5, 4.5), dpi=80, constrained_layout=True)
+            fig_pie = Figure(figsize=(7, 7), dpi=100, constrained_layout=True)
             fig_pie.patch.set_facecolor("#FAFAFA")
             ax_pie = fig_pie.add_subplot(111)
 

@@ -30,12 +30,13 @@ from app.ui.reports_view import ReportsView
 from app.ui.backup_view import BackupView
 from app.ui.account_settings_view import AccountSettingsDialog
 
-# ── Nav colours (warm café palette) ─────────────────────────────────────────
-_SB        = THEME["sidebar"]         # #5C3D2E  warm coffee brown
-_SB_ACTIVE = THEME["sidebar_active"]  # #D4956A  terra cotta
-_SB_HOVER  = THEME["sidebar_hover"]   # #7A5244  deeper warm brown
-_SB_TEXT   = "#FFFFFF"
-_TOPBAR_H  = 48
+# ── Nav colours (light café palette) ────────────────────────────────────────
+_SB             = THEME["sidebar"]         # #EED9C4  warm light beige
+_SB_ACTIVE      = THEME["sidebar_active"]  # #8B5E3C  brown for active item
+_SB_HOVER       = THEME["sidebar_hover"]   # #D4BFA0  slightly darker beige
+_SB_TEXT        = THEME.get("text_on_sidebar", "#5C3A1E")  # dark brown for light bg
+_SB_TEXT_ACTIVE = "#FFFFFF"                # white on active dark-brown button
+_TOPBAR_H       = 48
 
 
 def _format_display_name(user) -> str:
@@ -191,6 +192,11 @@ class AppWindow:
         self.nav_title = None
         self.user_label = None
         self.settings_btn = None
+        if self.settings_menu is not None:
+            try:
+                self.settings_menu.destroy()
+            except Exception:
+                pass
         self.settings_menu = None
 
     def _btn(
@@ -228,11 +234,17 @@ class AppWindow:
             active = (k == key)
             btn.configure(
                 bg=_SB_ACTIVE if active else _SB,
+                fg=_SB_TEXT_ACTIVE if active else _SB_TEXT,
+                activebackground=_SB_HOVER,
+                activeforeground=_SB_TEXT_ACTIVE if active else _SB_TEXT,
                 relief=tk.FLAT,
             )
         if self.settings_btn:
+            is_settings = (key == "settings")
             self.settings_btn.configure(
-                bg=_SB_ACTIVE if key == "settings" else _SB,
+                bg=_SB_ACTIVE if is_settings else _SB,
+                fg=_SB_TEXT_ACTIVE if is_settings else _SB_TEXT,
+                activeforeground=_SB_TEXT_ACTIVE if is_settings else _SB_TEXT,
             )
 
     def _show_shell(self, visible: bool) -> None:
@@ -264,7 +276,7 @@ class AppWindow:
     def _build_nav(self) -> None:
         self._clear_nav()
 
-        # Left warm accent stripe
+        # Left warm accent stripe (terracotta)
         tk.Frame(self.nav, bg=THEME["accent"], width=4).pack(side=tk.LEFT, fill=tk.Y)
 
         # Logo / brand
@@ -287,9 +299,9 @@ class AppWindow:
                 self.nav,
                 text="Aissa's Kitchenette",
                 bg=_SB,
-                fg="#FFFFFF",
+                fg=_SB_TEXT,
                 activebackground=_SB_HOVER,
-                activeforeground="#FAF7F2",
+                activeforeground=_SB_TEXT,
                 bd=0,
                 cursor="hand2",
                 font=("Segoe UI", 11, "bold"),
@@ -301,7 +313,7 @@ class AppWindow:
         self.nav_title.pack(side=tk.LEFT, padx=(4, 8))
 
         # Thin vertical divider after logo
-        tk.Frame(self.nav, bg="#7A6050", width=1).pack(side=tk.LEFT, fill=tk.Y, pady=8)
+        tk.Frame(self.nav, bg=THEME["border"], width=1).pack(side=tk.LEFT, fill=tk.Y, pady=8)
 
         # Nav tabs — Dashboard is the primary landing tab
         self._btn("dash", "  Dashboard  ", self.show_dashboard)
@@ -337,19 +349,19 @@ class AppWindow:
         )
         self.settings_btn.pack(side=tk.RIGHT, padx=2)
 
-        # User label
+        # User label — dark text on light sidebar
         self.user_label = tk.Label(
             self.nav,
             text="",
             bg=_SB,
-            fg="#F5DFB8",
+            fg=_SB_TEXT,
             font=("Segoe UI", 9),
             padx=14,
         )
         self.user_label.pack(side=tk.RIGHT)
 
         # Divider before user label
-        tk.Frame(self.nav, bg="#7A6050", width=1).pack(side=tk.RIGHT, fill=tk.Y, pady=8)
+        tk.Frame(self.nav, bg=THEME["border"], width=1).pack(side=tk.RIGHT, fill=tk.Y, pady=8)
 
         self.settings_menu = Menu(
             self.root,

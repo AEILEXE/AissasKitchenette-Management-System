@@ -28,6 +28,14 @@ P_INV_VIEW        = "can_view_inventory"
 P_AUDIT_LOG       = "can_view_audit_log"
 P_EDIT_COMPLETED  = "can_edit_completed_orders"
 
+# ── Raw Inventory granular permissions ────────────────────────────────────────
+P_INV_RAW_VIEW    = "can_view_raw_inventory"
+P_INV_RAW_ADD     = "can_add_raw_inventory"
+P_INV_RAW_EDIT    = "can_edit_raw_inventory"
+P_INV_RAW_DELETE  = "can_delete_raw_inventory"
+P_INV_RAW_STOCK   = "can_update_raw_stock"
+P_INV_RAW_REPORTS = "can_view_raw_inventory_reports"
+
 # Complete ordered list used for UI + DB seeding
 ALL_PERMISSION_KEYS: list[str] = [
     P_SELL,
@@ -44,26 +52,38 @@ ALL_PERMISSION_KEYS: list[str] = [
     P_EXPORT,
     P_DATABASE,
     P_INV_VIEW,
+    P_INV_RAW_VIEW,
+    P_INV_RAW_ADD,
+    P_INV_RAW_EDIT,
+    P_INV_RAW_DELETE,
+    P_INV_RAW_STOCK,
+    P_INV_RAW_REPORTS,
     P_EDIT_COMPLETED,
 ]
 
 # Human-readable labels for UI
 PERMISSION_LABELS: dict[str, str] = {
-    P_SELL:           "Sell (POS access)",
-    P_DISCOUNT:       "Apply discounts",
-    P_VOID:           "Void / cancel transactions",
-    P_VOID_APPROVE:   "Approve void (Manager PIN)",
-    P_REPORTS:        "View basic reports",
-    P_REPORTS_FULL:   "View full reports (VAT/profit/raw materials)",
-    P_PROFIT:         "View profit / cost info",
-    P_MANAGE_PRODS:   "Manage products",
-    P_EDIT_PRICE:     "Edit product prices",
-    P_MANAGE_USERS:   "Manage users",
-    P_SETTINGS:       "Access settings",
-    P_EXPORT:         "Export data (CSV / PDF)",
-    P_DATABASE:       "Manage database (backup/restore)",
-    P_INV_VIEW:       "View inventory",
-    P_EDIT_COMPLETED: "Edit completed transactions",
+    P_SELL:             "Sell (POS access)",
+    P_DISCOUNT:         "Apply discounts",
+    P_VOID:             "Void / cancel transactions",
+    P_VOID_APPROVE:     "Approve void (Manager PIN)",
+    P_REPORTS:          "View basic reports",
+    P_REPORTS_FULL:     "View full reports (VAT/profit/raw materials)",
+    P_PROFIT:           "View profit / cost info",
+    P_MANAGE_PRODS:     "Manage products",
+    P_EDIT_PRICE:       "Edit product prices",
+    P_MANAGE_USERS:     "Manage users",
+    P_SETTINGS:         "Access settings",
+    P_EXPORT:           "Export data (CSV / PDF)",
+    P_DATABASE:         "Manage database (backup/restore)",
+    P_INV_VIEW:         "View inventory",
+    P_INV_RAW_VIEW:     "Raw Inventory — View",
+    P_INV_RAW_ADD:      "Raw Inventory — Add material",
+    P_INV_RAW_EDIT:     "Raw Inventory — Edit material",
+    P_INV_RAW_DELETE:   "Raw Inventory — Delete material",
+    P_INV_RAW_STOCK:    "Raw Inventory — Update stock (add/deduct)",
+    P_INV_RAW_REPORTS:  "Raw Inventory — View reports & history",
+    P_EDIT_COMPLETED:   "Edit completed transactions",
 }
 
 # Default permissions per role (used for initial DB seed + fallback)
@@ -77,31 +97,36 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, set[str]] = {
         P_REPORTS, P_REPORTS_FULL, P_PROFIT,
         P_MANAGE_PRODS, P_EDIT_PRICE,
         P_SETTINGS, P_EXPORT, P_INV_VIEW,
+        P_INV_RAW_VIEW, P_INV_RAW_ADD, P_INV_RAW_EDIT,
+        P_INV_RAW_DELETE, P_INV_RAW_STOCK, P_INV_RAW_REPORTS,
         P_EDIT_COMPLETED,
     },
 
-    # CASHIER — POS + Transactions only.
-    # No inventory access (P_INV_VIEW removed) and no user management.
+    # CASHIER — POS + Transactions only. No inventory access.
     ROLE_CASHIER: {
         P_SELL, P_DISCOUNT,
     },
 
     # INVENTORY STAFF — inventory + raw materials + basic reports.
-    # No POS (P_SELL absent), no user management.
+    # No POS, no user management, no delete of raw materials.
     ROLE_INVENTORY: {
         P_INV_VIEW, P_MANAGE_PRODS,
-        P_REPORTS,
-        P_EXPORT,
+        P_REPORTS, P_EXPORT,
+        P_INV_RAW_VIEW, P_INV_RAW_ADD, P_INV_RAW_EDIT,
+        P_INV_RAW_STOCK, P_INV_RAW_REPORTS,
+        # Note: P_INV_RAW_DELETE NOT granted — staff cannot permanently delete
     },
 }
 
 # ── Permission groups — for organised UI display ──────────────────────────
 PERMISSION_GROUPS: dict[str, list[str]] = {
-    "POS":          [P_SELL, P_DISCOUNT, P_VOID, P_VOID_APPROVE],
-    "Reports":      [P_REPORTS, P_REPORTS_FULL, P_PROFIT],
-    "Inventory":    [P_INV_VIEW, P_MANAGE_PRODS, P_EDIT_PRICE],
-    "Transactions": [P_EDIT_COMPLETED],
-    "Settings":     [P_MANAGE_USERS, P_SETTINGS, P_EXPORT, P_DATABASE],
+    "POS":              [P_SELL, P_DISCOUNT, P_VOID, P_VOID_APPROVE],
+    "Reports":          [P_REPORTS, P_REPORTS_FULL, P_PROFIT],
+    "Inventory":        [P_INV_VIEW, P_MANAGE_PRODS, P_EDIT_PRICE],
+    "Raw Inventory":    [P_INV_RAW_VIEW, P_INV_RAW_ADD, P_INV_RAW_EDIT,
+                         P_INV_RAW_DELETE, P_INV_RAW_STOCK, P_INV_RAW_REPORTS],
+    "Transactions":     [P_EDIT_COMPLETED],
+    "Settings":         [P_MANAGE_USERS, P_SETTINGS, P_EXPORT, P_DATABASE],
 }
 
 # ── Backward-compatible aliases ────────────────────────────────────────────

@@ -1178,7 +1178,7 @@ class InventoryCategoriesView(tk.Frame):
             command=self._create_category,
         ).grid(row=0, column=1, rowspan=2, sticky="e")
 
-        # ── Action bar (Edit + Delete, enabled on selection) ──────────────
+        # ── Action bar (Edit + Delete — always visible and enabled) ──────────
         action_bar = tk.Frame(self, bg=THEME["bg"])
         action_bar.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 6))
 
@@ -1190,7 +1190,6 @@ class InventoryCategoriesView(tk.Frame):
             bd=0, padx=sp(14), pady=sp(7),
             cursor="hand2",
             font=("Segoe UI", f(9), "bold"),
-            state="disabled",
             command=self._edit_selected,
         )
         self._edit_btn.pack(side="left", padx=(0, 6))
@@ -1203,17 +1202,28 @@ class InventoryCategoriesView(tk.Frame):
             bd=0, padx=sp(14), pady=sp(7),
             cursor="hand2",
             font=("Segoe UI", f(9), "bold"),
-            state="disabled",
             command=self._delete_selected,
         )
         self._del_btn.pack(side="left")
 
+        # Refresh button
+        tk.Button(
+            action_bar,
+            text="↻ Refresh",
+            bg=THEME["panel2"], fg=THEME["text"],
+            activebackground=THEME["border"],
+            bd=0, padx=sp(12), pady=sp(7),
+            cursor="hand2",
+            font=("Segoe UI", f(9)),
+            command=self.refresh,
+        ).pack(side="left", padx=(10, 0))
+
         tk.Label(
             action_bar,
-            text="Select a row, then Edit or Delete. Double-click to edit.",
+            text="Select a row then Edit or Delete. Double-click to edit.",
             bg=THEME["bg"], fg=THEME["muted"],
             font=("Segoe UI", f(8), "italic"),
-        ).pack(side="left", padx=(10, 0))
+        ).pack(side="left", padx=(14, 0))
 
         # ── Table ─────────────────────────────────────────────────────────
         self._build_table()
@@ -1341,20 +1351,36 @@ class InventoryCategoriesView(tk.Frame):
                                 tags=("main",),
                                 values=(f"#{cid}", name, "Main", "—", count))
 
-        if self._del_btn:
-            self._del_btn.configure(state="disabled")
-        if getattr(self, "_edit_btn", None):
-            self._edit_btn.configure(state="disabled")
+        # Reset button highlights (no selection after refresh)
+        self._on_select()
 
     # ── Event handlers ────────────────────────────────────────────────────────
 
     def _on_select(self, _event=None):
+        """Highlight active selection in action buttons; buttons stay always enabled."""
         sel = self.tbl.selection()
-        state = "normal" if sel else "disabled"
-        if self._del_btn is not None:
-            self._del_btn.configure(state=state)
-        if getattr(self, "_edit_btn", None) is not None:
-            self._edit_btn.configure(state=state)
+        if sel:
+            if getattr(self, "_edit_btn", None):
+                self._edit_btn.configure(
+                    bg=THEME["primary"],
+                    relief="flat",
+                )
+            if self._del_btn:
+                self._del_btn.configure(
+                    bg=THEME["danger"],
+                    relief="flat",
+                )
+        else:
+            if getattr(self, "_edit_btn", None):
+                self._edit_btn.configure(
+                    bg=THEME["primary_light"],
+                    relief="flat",
+                )
+            if self._del_btn:
+                self._del_btn.configure(
+                    bg="#C7766F",
+                    relief="flat",
+                )
 
     def _create_category(self):
         dlg = _CategoryDialog(self, self.db)
@@ -1383,6 +1409,10 @@ class InventoryCategoriesView(tk.Frame):
     def _edit_selected(self):
         sel = self.tbl.selection()
         if not sel:
+            try:
+                show_toast(self, "Select a category row first.", kind="warning")
+            except Exception:
+                messagebox.showinfo("No Selection", "Select a category to edit.", parent=self)
             return
         cat_id = int(sel[0])
         cur = self.db.fetchone(
@@ -1429,8 +1459,10 @@ class InventoryCategoriesView(tk.Frame):
     def _delete_selected(self):
         sel = self.tbl.selection()
         if not sel:
-            messagebox.showinfo("No Selection", "Select a category to delete.",
-                                parent=self)
+            try:
+                show_toast(self, "Select a category row first.", kind="warning")
+            except Exception:
+                messagebox.showinfo("No Selection", "Select a category to delete.", parent=self)
             return
 
         cat_id   = int(sel[0])
