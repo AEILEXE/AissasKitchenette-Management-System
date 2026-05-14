@@ -130,11 +130,4 @@ food business.
 
 ---
 
-## License
-
-This project is licensed under the MIT License.
-See [LICENSE](LICENSE) for details.
-
----
-
 *Aissa's Kitchenette POS & Management System v3.0*
