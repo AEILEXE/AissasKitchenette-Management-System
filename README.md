@@ -9,7 +9,6 @@
 ![Tkinter](https://img.shields.io/badge/UI-Tkinter-lightgrey)
 ![SQLite](https://img.shields.io/badge/Database-SQLite-003B57?logo=sqlite)
 ![PyInstaller](https://img.shields.io/badge/Build-PyInstaller-purple)
-![License](https://img.shields.io/badge/License-MIT-green)
 ![Version](https://img.shields.io/badge/Version-3.0-orange)
 
 ---
