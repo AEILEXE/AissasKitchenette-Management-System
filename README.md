@@ -46,12 +46,6 @@
 
 ---
 
-## Screenshots
-
-> *(Add screenshots here)*
-
----
-
 ## Installation
 
 ### Option A — Installer (recommended)
