@@ -1,13 +1,14 @@
 # Aissas Kitchenette POS System - Requirements
+# Python 3.10+ required
 
-# Core dependencies
-# Tkinter is built-in with Python (may require separate package on some Linux distros)
-Pillow>=9.0.0
-matplotlib>=3.5.0
-reportlab>=3.5.0
-openpyxl>=3.0.0
-# tkcalendar removed — replaced with built-in pure-Tkinter DatePickerDialog
+# Core UI & image
+Pillow>=9.0.0           # product thumbnails, login images, logo rendering
+matplotlib>=3.5.0       # sales charts in Reports and Inventory views
+reportlab>=3.5.0        # PDF receipt generation
+openpyxl>=3.0.0         # Excel export from Reports
+# Note: the recommender engine (app/ml/recommender.py) is pure Python — no scikit-learn needed.
+# Note: tkinter is built-in with Python (on Linux: sudo apt install python3-tk)
 
-# Optional / packaging
+# Packaging (build-time only — not needed at runtime)
 pyinstaller>=5.0.0
 pyinstaller-hooks-contrib>=2023.0  # auto-bundles matplotlib mpl-data and other hook-heavy libs

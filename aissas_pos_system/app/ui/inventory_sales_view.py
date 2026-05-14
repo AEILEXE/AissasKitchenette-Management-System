@@ -107,7 +107,7 @@ class InventorySalesView(tk.Frame):
         _inner = self._inner
         _inner.columnconfigure(0, weight=1)
         # chart row still gets a minimum height; scroll canvas handles vertical expansion
-        _inner.rowconfigure(3, minsize=420)
+        _inner.rowconfigure(3, minsize=520)
 
         # ── Page header ───────────────────────────────────────────────────────
         hdr = tk.Frame(_inner, bg=THEME["bg"])
@@ -235,7 +235,7 @@ class InventorySalesView(tk.Frame):
         self._chart_title_lbl.grid(row=0, column=0, sticky="w")
 
         # Chart canvas container
-        self.canvas_frame = tk.Frame(chart_card, bg="white", height=400)
+        self.canvas_frame = tk.Frame(chart_card, bg="white", height=500)
         self.canvas_frame.grid(row=1, column=0, sticky="nsew", padx=2, pady=(0, 2))
         self.canvas_frame.pack_propagate(False)
 
@@ -621,6 +621,7 @@ class InventorySalesView(tk.Frame):
             ).pack(expand=True)
             return
 
+        import matplotlib
         from matplotlib.figure import Figure  # deferred — avoids freeze on first tab open
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg  # noqa: F811
         import numpy as _np
@@ -647,17 +648,20 @@ class InventorySalesView(tk.Frame):
 
         has_pie = bool(category_data)
 
-        # Fresh container every render — no residual grid/pack config carries over.
-        # canvas_frame always uses pack for this single child; chart canvases use
-        # grid inside charts_container so the geometry manager is never mixed.
         charts_container = tk.Frame(self.canvas_frame, bg="white")
         charts_container.pack(fill="both", expand=True)
-        charts_container.rowconfigure(0, weight=1)
-        charts_container.grid_propagate(False)
 
-                # ── Bar chart figure ──────────────────────────────────────────────────
-        fig_bar = Figure(figsize=(9, 7), dpi=100, constrained_layout=True)
-        fig_bar.patch.set_facecolor("#FAFAFA")
+        # ── Bar chart figure ──────────────────────────────────────────────────
+        matplotlib.rcParams.update({
+            'figure.facecolor': '#FFFFFF',
+            'axes.facecolor':   '#F9F9F9',
+            'text.color':       '#333333',
+            'axes.labelcolor':  '#333333',
+            'xtick.color':      '#333333',
+            'ytick.color':      '#333333',
+        })
+        fig_bar = Figure(figsize=(7, 4), tight_layout=True)
+        fig_bar.patch.set_facecolor('#FFFFFF')
         ax = fig_bar.add_subplot(111)
 
         # ── Bar chart ─────────────────────────────────────────────────────────
@@ -669,7 +673,7 @@ class InventorySalesView(tk.Frame):
 
         bars = ax.bar(labels, values, color=bar_colors, edgecolor="none", linewidth=0,
                       width=0.65)
-        ax.set_facecolor("#FAFAFA")
+        ax.set_facecolor("#F9F9F9")
 
         # Value labels on bars
         max_val = max(values) if values else 1
@@ -682,14 +686,16 @@ class InventorySalesView(tk.Frame):
                     fontsize=7, color="#5a3e28",
                 )
 
-        ax.set_xlabel("Period", fontsize=9, color="#555")
-        ax.set_ylabel("Sales (₱)", fontsize=9, color="#555")
+        ax.set_xlabel("Period", fontsize=9, color="#333333")
+        ax.set_ylabel("Sales (₱)", fontsize=9, color="#333333")
+        ax.xaxis.label.set_color("#333333")
+        ax.yaxis.label.set_color("#333333")
         ax.grid(axis="y", alpha=0.25, color="#ccc", linestyle="--")
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-        ax.spines["left"].set_color("#ddd")
-        ax.spines["bottom"].set_color("#ddd")
-        ax.tick_params(colors="#555", labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#CCCCCC")
+        ax.tick_params(colors="#333333", labelsize=8)
 
         # Always rotate x-axis labels 45° — prevents overlap regardless of bar count
         _x_fontsize = 7 if n_bars > 12 else 8
@@ -730,14 +736,30 @@ class InventorySalesView(tk.Frame):
             except Exception:
                 pass
 
-        canvas_bar = FigureCanvasTkAgg(fig_bar, master=charts_container)
-        canvas_bar.draw_idle()
+        bar_frame = tk.Frame(charts_container, bg="#FFFFFF")
+        bar_frame.pack(fill="both", expand=True, side="left")
+
+        canvas_bar = FigureCanvasTkAgg(fig_bar, master=bar_frame)
+        widget_bar = canvas_bar.get_tk_widget()
+        widget_bar.configure(bg="#FFFFFF")
+        widget_bar.pack(fill="both", expand=True)
+        charts_container.update_idletasks()
+        canvas_bar.draw()
 
         if has_pie:
             # ── Pie chart figure (separate, side-by-side with bar chart) ─────
-            fig_pie = Figure(figsize=(7, 7), dpi=100, constrained_layout=True)
-            fig_pie.patch.set_facecolor("#FAFAFA")
+            matplotlib.rcParams.update({
+                'figure.facecolor': '#FFFFFF',
+                'axes.facecolor':   '#FFFFFF',
+                'text.color':       '#333333',
+                'axes.labelcolor':  '#333333',
+                'xtick.color':      '#333333',
+                'ytick.color':      '#333333',
+            })
+            fig_pie = Figure(figsize=(5, 6))
+            fig_pie.patch.set_facecolor('#FFFFFF')
             ax_pie = fig_pie.add_subplot(111)
+            ax_pie.set_facecolor('#FFFFFF')
 
             pie_labels = list(category_data.keys())
             pie_vals   = list(category_data.values())
@@ -745,8 +767,6 @@ class InventorySalesView(tk.Frame):
                 "#8c6e3b", "#c4975a", "#e8b87a", "#a07855",
                 "#d4a96a", "#6b4b2a", "#b8905c", "#9a7040",
             ][:len(pie_vals)]
-            # Use legend() for category names — prevents overlapping text
-            # when there are many slices; autopct stays on the wedge interior.
             wedges, _, autotexts = ax_pie.pie(
                 pie_vals,
                 colors=pie_colors,
@@ -759,31 +779,34 @@ class InventorySalesView(tk.Frame):
                 at.set_fontsize(8)
                 at.set_color("white")
                 at.set_fontweight("bold")
+            short_labels = [
+                lbl[:15] + "…" if len(lbl) > 15 else lbl
+                for lbl in pie_labels
+            ]
             ax_pie.legend(
-                wedges, pie_labels,
-                loc="lower center",
+                wedges, short_labels,
+                loc="upper center",
                 bbox_to_anchor=(0.5, -0.08),
-                ncol=min(4, len(pie_labels)),
-                fontsize=8,
+                ncol=3,
+                fontsize=7,
                 frameon=False,
-                handlelength=1.0,
+                labelcolor='#333333',
             )
             ax_pie.set_title("Revenue by Category", fontsize=11,
                              color="#3d2b1f", fontweight="bold", pad=12)
-            ax_pie.set_facecolor("#FAFAFA")
             ax_pie.set_aspect('equal')
+            fig_pie.subplots_adjust(top=0.88, bottom=0.22, left=0.05, right=0.95)
 
-            canvas_pie = FigureCanvasTkAgg(fig_pie, master=charts_container)
-            canvas_pie.draw_idle()
+            pie_frame = tk.Frame(charts_container, bg="#FFFFFF", width=420, height=520)
+            pie_frame.pack(fill="both", expand=True, side="left")
+            pie_frame.pack_propagate(False)
 
-            # Equal-weight side-by-side columns inside the fresh container
-            charts_container.columnconfigure(0, weight=1, uniform="charts")
-            charts_container.columnconfigure(1, weight=1, uniform="charts")
-            canvas_bar.get_tk_widget().grid(row=0, column=0, sticky="nsew")
-            canvas_pie.get_tk_widget().grid(row=0, column=1, sticky="nsew")
-        else:
-            charts_container.columnconfigure(0, weight=1, uniform="charts")
-            canvas_bar.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+            canvas_pie = FigureCanvasTkAgg(fig_pie, master=pie_frame)
+            widget_pie = canvas_pie.get_tk_widget()
+            widget_pie.configure(bg="#FFFFFF")
+            widget_pie.pack(fill="both", expand=True)
+            pie_frame.update_idletasks()
+            canvas_pie.draw()
 
         try:
             canvas_bar.mpl_connect("motion_notify_event", _on_hover)

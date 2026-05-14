@@ -133,7 +133,7 @@ class ReportsView(tk.Frame):
 
     def _start_polling(self) -> None:
         self._cancel_poll()
-        self._poll_after = self.after(self._POLL_INTERVAL_MS, self._poll_tick)
+        self._poll_after = self.after(1000, self._poll_tick)
 
     def _cancel_poll(self) -> None:
         if self._poll_after is not None:
@@ -212,22 +212,27 @@ class ReportsView(tk.Frame):
         tab_frame.pack(fill="both", expand=True)
         self._tab_frames[key] = tab_frame
 
-        if key == "sales":
-            self._build_sales_tab(tab_frame)
-        elif key == "top_sellers":
-            self._build_top_sellers_tab(tab_frame)
-        elif key == "discounts":
-            self._build_discounts_tab(tab_frame)
-        elif key == "raw_materials":
-            self._build_raw_materials_tab(tab_frame)
-        elif key == "void_history":
-            self._build_void_history_tab(tab_frame)
-        elif key == "breakdowns":
-            self._build_breakdowns_tab(tab_frame)
-        elif key == "home":
-            self._build_home_picker(tab_frame)
-        else:
-            self._build_reports_tab(tab_frame)
+        try:
+            if key == "sales":
+                self._build_sales_tab(tab_frame)
+            elif key == "top_sellers":
+                self._build_top_sellers_tab(tab_frame)
+            elif key == "discounts":
+                self._build_discounts_tab(tab_frame)
+            elif key == "raw_materials":
+                self._build_raw_materials_tab(tab_frame)
+            elif key == "void_history":
+                self._build_void_history_tab(tab_frame)
+            elif key == "breakdowns":
+                self._build_breakdowns_tab(tab_frame)
+            elif key == "home":
+                self._build_home_picker(tab_frame)
+            else:
+                self._build_reports_tab(tab_frame)
+        except Exception as e:
+            print(f"[_show_tab] {e}")
+            tk.Label(tab_frame, text=f"Failed to load tab '{key}':\n{e}",
+                     bg=_BG, fg="red", font=("Segoe UI", 10)).pack(pady=40)
 
     # ── Home picker (type-first landing) ──────────────────────────────────────
     def _build_home_picker(self, parent: tk.Frame) -> None:
@@ -679,12 +684,20 @@ class ReportsView(tk.Frame):
                 _show_empty(host, "No data for the selected period.")
                 return
             try:
+                import matplotlib
                 from matplotlib.figure import Figure
                 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
             except Exception:
                 _show_empty(host, "matplotlib not available.")
                 return
-            fig = Figure(figsize=(5.8, 4.4), dpi=100, constrained_layout=True)
+            matplotlib.rcParams.update(matplotlib.rcParamsDefault)
+            matplotlib.rcParams['figure.facecolor'] = '#FFFFFF'
+            matplotlib.rcParams['axes.facecolor'] = '#F9F9F9'
+            matplotlib.rcParams['text.color'] = '#333333'
+            matplotlib.rcParams['axes.labelcolor'] = '#333333'
+            matplotlib.rcParams['xtick.color'] = '#333333'
+            matplotlib.rcParams['ytick.color'] = '#333333'
+            fig = Figure(figsize=(5.8, 4.4), dpi=100, tight_layout=True)
             fig.patch.set_facecolor("#FAFAF8")
             ax = fig.add_subplot(111)
             ax.set_facecolor("#FAFAF8")
@@ -711,8 +724,10 @@ class ReportsView(tk.Frame):
             # Headroom above tallest bar so value labels never clip
             ax.set_ylim(0, mx * 1.18 if mx > 0 else 1.0)
             canvas = FigureCanvasTkAgg(fig, master=host)
-            canvas.draw_idle()
+            canvas.get_tk_widget().configure(bg="#FFFFFF")
             canvas.get_tk_widget().pack(fill="both", expand=True)
+            host.update_idletasks()
+            canvas.draw()
 
         def _draw_donut(host: tk.Frame, labels: list[str], values: list[float]) -> None:
             _clear(host)
@@ -720,12 +735,20 @@ class ReportsView(tk.Frame):
                 _show_empty(host, "No data for the selected period.")
                 return
             try:
+                import matplotlib
                 from matplotlib.figure import Figure
                 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
             except Exception:
                 _show_empty(host, "matplotlib not available.")
                 return
-            fig = Figure(figsize=(5.8, 4.4), dpi=100, constrained_layout=True)
+            matplotlib.rcParams.update(matplotlib.rcParamsDefault)
+            matplotlib.rcParams['figure.facecolor'] = '#FFFFFF'
+            matplotlib.rcParams['axes.facecolor'] = '#F9F9F9'
+            matplotlib.rcParams['text.color'] = '#333333'
+            matplotlib.rcParams['axes.labelcolor'] = '#333333'
+            matplotlib.rcParams['xtick.color'] = '#333333'
+            matplotlib.rcParams['ytick.color'] = '#333333'
+            fig = Figure(figsize=(5.8, 4.4), dpi=100, tight_layout=True)
             fig.patch.set_facecolor("#FAFAF8")
             ax = fig.add_subplot(111)
             ax.set_facecolor("#FAFAF8")
@@ -751,8 +774,10 @@ class ReportsView(tk.Frame):
             )
             ax.set_aspect("equal")
             canvas = FigureCanvasTkAgg(fig, master=host)
-            canvas.draw_idle()
+            canvas.get_tk_widget().configure(bg="#FFFFFF")
             canvas.get_tk_widget().pack(fill="both", expand=True)
+            host.update_idletasks()
+            canvas.draw()
 
         def _money_short(v: float) -> str:
             v = float(v or 0)
@@ -1146,26 +1171,43 @@ class ReportsView(tk.Frame):
                          ).pack(expand=True)
                 return
             try:
+                import matplotlib
                 from matplotlib.figure import Figure
                 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+                matplotlib.rcParams.update(matplotlib.rcParamsDefault)
+                matplotlib.rcParams['figure.facecolor'] = '#FFFFFF'
+                matplotlib.rcParams['axes.facecolor'] = '#F9F9F9'
+                matplotlib.rcParams['text.color'] = '#333333'
+                matplotlib.rcParams['axes.labelcolor'] = '#333333'
+                matplotlib.rcParams['xtick.color'] = '#333333'
+                matplotlib.rcParams['ytick.color'] = '#333333'
                 names = [str(r["name"])[:18] for r in top][::-1]
                 qtys  = [int(r["total_qty"] or 0) for r in top][::-1]
-                fig = Figure(figsize=(7, 2.4), dpi=92, facecolor=_PANEL)
+                fig = Figure(figsize=(7, 2.4), dpi=92, tight_layout=True)
+                fig.patch.set_facecolor("#FFFFFF")
                 ax = fig.add_subplot(111)
-                ax.set_facecolor(_PANEL)
+                ax.set_facecolor("#F9F9F9")
                 bars = ax.barh(names, qtys, color="#2e7d32", edgecolor="#1b5e20")
-                ax.set_xlabel("Qty Sold", fontsize=8, color=_TEXT)
+                ax.set_xlabel("Qty Sold", fontsize=8, color="#333333")
+                ax.xaxis.label.set_color("#333333")
+                ax.tick_params(labelsize=8, colors="#333333")
                 for spine in ("top", "right"):
                     ax.spines[spine].set_visible(False)
-                ax.tick_params(labelsize=8, colors=_TEXT)
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("#CCCCCC")
                 for bar, v in zip(bars, qtys):
                     ax.text(bar.get_width() + max(qtys) * 0.01,
                             bar.get_y() + bar.get_height() / 2,
-                            str(v), va="center", fontsize=8, color=_TEXT)
-                fig.tight_layout(pad=0.6)
+                            str(v), va="center", fontsize=8, color="#333333")
+                try:
+                    fig.tight_layout(pad=0.6)
+                except Exception:
+                    pass
                 canvas_widget = FigureCanvasTkAgg(fig, master=host)
-                canvas_widget.draw()
+                canvas_widget.get_tk_widget().configure(bg="#FFFFFF")
                 canvas_widget.get_tk_widget().pack(fill="both", expand=True)
+                host.update_idletasks()
+                canvas_widget.draw()
                 self._ts_chart_canvas = canvas_widget
             except Exception:
                 # Fallback: pure-Tkinter bar list when matplotlib unavailable

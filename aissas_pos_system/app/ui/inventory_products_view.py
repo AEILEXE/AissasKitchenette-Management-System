@@ -433,11 +433,12 @@ class InventoryProductsView(tk.Frame):
     # ──────────────────────────────────────────────────────────────────────────
 
     def _refresh_category_options(self):
-        cats = self.categories.list_categories()
+        cats = self.categories.list_main_categories()
         names = ["All"] + [c["name"] for c in cats]
         self.cat_combo["values"] = names
         if self.var_category.get() not in names:
             self.var_category.set("All")
+        return cats
 
     def refresh(self):
         self._hovered_iid = None
@@ -448,7 +449,7 @@ class InventoryProductsView(tk.Frame):
         for iid in existing_iids:
             self.tbl.delete(iid)
 
-        self._refresh_category_options()
+        cats = self._refresh_category_options()
 
         # Build category-name -> hierarchy-path map so the list can show
         # "Drinks > Hot Coffee" instead of just "Hot Coffee".
@@ -461,12 +462,16 @@ class InventoryProductsView(tk.Frame):
         q      = (self.var_search.get() or "").strip().lower()
         cat    = self.var_category.get()
         status = self.var_status.get()
-        selected_cat_id = None
+
+        # Build set of category IDs that match the filter (main + all its subs)
+        selected_cat_ids: set[int] = set()
         if cat != "All":
-            selected_cat_id = next(
-                (int(c["category_id"]) for c in cats if c["name"] == cat),
-                None,
-            )
+            sel = next((c for c in cats if c["name"] == cat), None)
+            if sel:
+                main_id = int(sel["category_id"])
+                selected_cat_ids.add(main_id)
+                for sub in self.categories.list_subcategories(main_id):
+                    selected_cat_ids.add(int(sub["category_id"]))
 
         all_rows = self.products.list_all()
         filtered = []
@@ -483,8 +488,8 @@ class InventoryProductsView(tk.Frame):
                       and q not in desc.lower()
                       and q_id != pid_str):
                 continue
-            if selected_cat_id is not None:
-                if int(r["category_id"] or 0) != selected_cat_id:
+            if selected_cat_ids:
+                if int(r["category_id"] or 0) not in selected_cat_ids:
                     continue
             if status == "Available" and not active:
                 continue

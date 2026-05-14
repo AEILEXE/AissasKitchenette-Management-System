@@ -56,18 +56,6 @@ _MENU: list[tuple[str, str, str, int, str]] = [
 
     ("Pasta", "Pesto Pasta", "Chicken Pesto", 95, "product_images/chickenpesto.png"),
 
-    # ── SANDWICHES, WRAPS & QUESADILLAS ──────────────────────────────────────
-    ("Sandwiches, Wraps & Quesadillas", "Sandwiches", "Ham and Egg Sandwich",        75, "product_images/hamnegg.png"),
-    ("Sandwiches, Wraps & Quesadillas", "Sandwiches", "Korean Spam Sandwich",        95, "product_images/koreanspamsandwich.png"),
-    ("Sandwiches, Wraps & Quesadillas", "Sandwiches", "Beef Steak Hickory Sandwich", 95, "product_images/beefsteakhickorysandwich.png"),
-
-    ("Sandwiches, Wraps & Quesadillas", "Quesadillas", "Beef Quesadilla",            80, "product_images/beefquesadilla.png"),
-    ("Sandwiches, Wraps & Quesadillas", "Quesadillas", "Chicken Quesadilla",         80, "product_images/chickensisigquesadilla.png"),
-    ("Sandwiches, Wraps & Quesadillas", "Quesadillas", "Mexican Chicken Quesadilla", 85, "product_images/mexicanchickenquesadilla.png"),
-    ("Sandwiches, Wraps & Quesadillas", "Quesadillas", "Chicken Sisig Quesadilla",   80, "product_images/chickensisigquesadilla.png"),
-
-    ("Sandwiches, Wraps & Quesadillas", "Wraps", "Beef Shawarma", 95, "product_images/beefshawarma.png"),
-
     # ── FRIES & SNACKS ────────────────────────────────────────────────────────
     ("Fries & Snacks", "Fries", "Regular Fries",    50, "product_images/regularfries.png"),
     ("Fries & Snacks", "Fries", "Big Fries",         70, "product_images/bigfries.png"),
@@ -194,3 +182,24 @@ def seed_menu(db) -> None:
     db.execute("DELETE FROM products;")
     db.execute("DELETE FROM categories;")
     _do_seed(db)
+
+
+def remove_sandwiches_category(db) -> None:
+    """One-time migration: remove Sandwiches, Wraps & Quesadillas from live DBs."""
+    main = db.fetchone(
+        "SELECT id FROM categories WHERE name=? AND parent_id IS NULL;",
+        ("Sandwiches, Wraps & Quesadillas",),
+    )
+    if not main:
+        print("[INFO] Sandwiches category not found — nothing to remove.")
+        return
+    main_id = int(main["id"])
+    subs = db.fetchall(
+        "SELECT id FROM categories WHERE parent_id=?;", (main_id,)
+    )
+    for sub in subs:
+        db.execute("DELETE FROM products WHERE category_id=?;", (int(sub["id"]),))
+        db.execute("DELETE FROM categories WHERE id=?;", (int(sub["id"]),))
+    db.execute("DELETE FROM products WHERE category_id=?;", (main_id,))
+    db.execute("DELETE FROM categories WHERE id=?;", (main_id,))
+    print("[OK] Sandwiches, Wraps & Quesadillas removed from database.")

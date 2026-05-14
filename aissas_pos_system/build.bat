@@ -49,7 +49,7 @@ REM CLEAN
 REM =========================
 echo PRE CLEAN: Removing stale outputs and cache...
 
-if exist "dist\main.exe" del /f /q "dist\main.exe"
+if exist "dist\AissasKitchenette.exe" del /f /q "dist\AissasKitchenette.exe"
 if exist "dist\AissasKitchenette_Setup.exe" del /f /q "dist\AissasKitchenette_Setup.exe"
 
 for /d /r "app" %%d in (__pycache__) do (
@@ -97,7 +97,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist "dist\main.exe" (
+if not exist "dist\AissasKitchenette.exe" (
     echo ERROR: EXE not generated
     exit /b 1
 )
@@ -108,7 +108,7 @@ echo.
 REM =========================
 REM VERSION COPY
 REM =========================
-copy /y "dist\main.exe" "dist\AissasKitchenette_POS_v%APP_VERSION%.exe" >nul
+copy /y "dist\AissasKitchenette.exe" "dist\AissasKitchenette_POS_v%APP_VERSION%.exe" >nul
 
 echo Copied versioned EXE
 echo.
@@ -148,8 +148,8 @@ echo BUILD COMPLETE
 echo ================================================================
 echo.
 
-if exist "dist\main.exe" (
-    echo EXE: main.exe
+if exist "dist\AissasKitchenette.exe" (
+    echo EXE: AissasKitchenette.exe
 )
 
 if exist "dist\AissasKitchenette_POS_v%APP_VERSION%.exe" (

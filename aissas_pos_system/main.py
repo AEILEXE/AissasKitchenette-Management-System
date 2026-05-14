@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import matplotlib
+matplotlib.use("TkAgg")
+
 import logging
 import os
 import sys
@@ -175,7 +178,7 @@ def main() -> None:
     auth = AuthService(db)
 
     root = tk.Tk()
-    root.title(f"{APP_NAME} v{APP_VERSION}")
+    root.title("Aissa's Kitchenette — POS & Management System v3.0")
     root.minsize(1024, 650)
     root.configure(bg="#e6ddbd")   # permanent beige root bg — any exposed gap matches canvas
     # Start maximized before any UI is built so the first layout pass

@@ -403,6 +403,16 @@ class Database:
         # =====================================================================
         self._apply_product_image_backfill()
 
+        # =====================================================================
+        # MENU CLEANUP — remove Sandwiches, Wraps & Quesadillas category.
+        # Safe to re-run: exits early if the category is already gone.
+        # =====================================================================
+        try:
+            from app.db.seed_menu import remove_sandwiches_category
+            remove_sandwiches_category(self)
+        except Exception:
+            pass
+
     def _add_unique_reference_index(self) -> None:
         """
         Create a partial unique index on orders.reference_no.
